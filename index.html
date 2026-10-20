@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Activity Dashboard</title>
+<meta name="description" content="Activity Dashboard 00.02.000_261019 — local-file app">
+<link rel="icon" href="assets/icon-64.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <img id="avatar" class="avatar" src="assets/avatar.png" alt="AD">
+    <span id="avatar-fb" class="avatar-fb" aria-hidden="true">AD</span>
+    <span class="appname">Activity Dashboard</span>
+    <nav class="menubar" aria-label="Menu">
+      <div class="mitem"><button class="mtop" aria-haspopup="true" aria-expanded="false">File</button>
+        <div class="mmenu hidden" role="menu">
+          <button data-act="open" role="menuitem">Open snapshot…</button>
+          <button data-act="reload" role="menuitem">Reload snapshot</button><hr>
+          <button data-act="connect" role="menuitem">Connect Data folder…</button>
+          <button data-act="syncNow" role="menuitem">Sync now</button>
+          <button data-act="saveTimeFile" role="menuitem">Save my time file…</button>
+          <button data-act="openTimeFiles" role="menuitem">Open time files…</button>
+          <button data-act="repairClock" role="menuitem">Repair clock stamps…</button><hr>
+          <button data-act="logCall" role="menuitem">+ Log call…</button>
+          <button data-act="importLog" role="menuitem">Import notebook log (notebook-log.md)…</button><hr>
+          <button data-act="exportCSV" role="menuitem">Export time entries (CSV)…</button>
+          <button data-act="export" role="menuitem">Export local data…</button>
+          <button data-act="import" role="menuitem">Import local data…</button>
+          <button data-act="clear" role="menuitem">Clear local data…</button><hr>
+          <button data-act="print" role="menuitem">Print my sheet…</button>
+          <button data-act="printManager" role="menuitem">Print Manager's sheet…</button>
+        </div></div>
+      <div class="mitem"><button class="mtop" aria-haspopup="true" aria-expanded="false">View</button>
+        <div class="mmenu hidden" role="menu">
+          <button data-act="vDash" role="menuitem">Dashboard</button><button data-act="vWork" role="menuitem">Workload</button>
+          <button data-act="vPrint" role="menuitem">Print sheet (mine)</button><button data-act="vManager" role="menuitem">Manager's sheet (sanitized)</button>
+        </div></div>
+      <div class="mitem"><button class="mtop" aria-haspopup="true" aria-expanded="false">Help</button>
+        <div class="mmenu hidden" role="menu">
+          <button data-act="hQuick" role="menuitem">Quick Start</button><button data-act="hHelp" role="menuitem">Help</button>
+          <button data-act="hHow" role="menuitem">How Do I…</button><button data-act="hFaq" role="menuitem">FAQ</button><hr>
+          <button data-act="hRev" role="menuitem">Revision log</button>
+        </div></div>
+    </nav>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" data-view="dashboard">Dashboard</button><button class="tab" role="tab" data-view="workload">Workload</button>
+      <button class="tab" role="tab" data-view="print">Print sheet</button><button class="tab" role="tab" data-view="manager">Manager's sheet</button>
+    </div>
+  </div>
+  <div class="right">
+    <span id="exbadge" class="chip example hidden" title="Fictional example data. Real data loads from Dashboard/Data/inbox-snapshot.js.">⚠ EXAMPLE DATA</span>
+    <span id="asof" class="chip asof">Loading…</span>
+    <button id="sync" class="chip asof syncchip" data-act="syncNow" type="button">Sync…</button>
+    <span id="machine" class="chip faint"></span>
+    <span id="rev" class="rev mono"></span>
+  </div>
+</header>
+<div id="banner" class="hidden"></div>
+<main>
+  <section id="view-dashboard" class="view">
+    <div class="rowhead"><span class="cap">Status</span><span class="faint" style="font-size:11px"><span id="trend-since"></span> · <button id="trends-toggle" class="btn" style="padding:0 8px">Show trends ▾</button></span></div>
+    <div id="tiles-status" class="tiles s" style="margin-top:4px"></div>
+    <div class="cap" style="margin-top:8px">To Do lists</div>
+    <div id="tiles-lists" class="tiles l" style="margin-top:4px"></div>
+    <div id="trends" class="trends hidden" style="margin-top:8px"><span class="cap">Trend since start · weekly, latest snapshot each week</span><div id="trend-grid" class="tgrid"></div></div>
+    <div id="cal" class="cal" style="margin-top:8px"></div>
+    <div id="filterbar" class="filterbar" style="margin-top:8px"></div>
+    <div id="list" class="list" style="margin-top:6px"></div>
+    <div id="coldlist" style="margin-top:8px"></div>
+  </section>
+  <section id="view-workload" class="view hidden" style="display:flex;flex-direction:column;gap:8px"></section>
+  <section id="view-print" class="view hidden"><div class="sheettools faint" style="margin-bottom:6px">Preview of my weekly sheet (landscape, one page). File → Print my sheet… or Ctrl+P.</div><div class="sheetwrap"><div id="sheet-print"></div></div></section>
+  <section id="view-manager" class="view hidden"><div class="sheettools faint" style="margin-bottom:6px">Manager's sheet — SANITIZED FOR MANAGER — no pricing, bid details or confidential details. Open loops only; items tagged Withhold in To Do never appear; no Going Cold total. Print or save as PDF only. File → Print Manager's sheet….</div><div class="sheetwrap"><div id="sheet-manager"></div></div></section>
+</main>
+<div id="toast" class="chip hidden" role="status" style="position:fixed;bottom:16px;right:16px;padding:6px 12px;z-index:95;background:#000;border-color:var(--accent2)"></div>
+
+<div id="help" class="overlay" role="dialog" aria-label="Help">
+ <div class="helpbox">
+  <div class="helphd"><b>Activity Dashboard · Help</b><button id="help-close" class="btn">Close ✕</button></div>
+  <div class="helpbody">
+   <section id="help-quick"><h2>Quick Start</h2><ol>
+    <li>Open <code>index.html</code> in your OneDrive <code>Dashboard</code> folder in <b>Chrome or Edge</b> (Mac: <code>&lt;synced folder&gt;/Dashboard/</code>; work PC: usually <code>C:\Users\&lt;you&gt;\OneDrive\Dashboard\</code>).</li>
+    <li>First time on each computer: give it a short name (e.g. <b>mac</b>, <b>workpc</b>), then click the <b>⚠ Connect Data folder</b> chip and pick <code>Dashboard/Data</code>. Allow edit access. Time then syncs both ways through OneDrive.</li>
+    <li>The dashboard reads <code>Data/inbox-snapshot.js</code> (capital D) in that folder, copied there after each Inbox Exporter run. If it's missing you'll see the fictional example with an <b>⚠ EXAMPLE DATA</b> badge.</li>
+    <li>Check the <b>As of</b> stamp top right. Amber <b>⚠ Stale</b> means the snapshot is more than 24 hours old.</li>
+    <li>Click a total to filter the list; click it again (or <b>Clear</b>) to show everything.</li>
+    <li>Log time with <b>+15 / +30 / +60 / ⋯</b> on any line. Meeting time counts by itself; use <b>Adjust</b> under a meeting to change it. When two meetings overlap, press <b>Attended?</b> on the one you went to.</li>
+    <li>Calls and chats you didn't schedule: <b>+ Log call</b> (above the list), or write <code>- [log]</code> lines in your notebook log. They load by themselves from <code>Data/notebook-log.js</code> once it's synced, and <b>File → Import notebook log…</b> is the fallback.</li>
+    <li>Print: <b>File → Print my sheet…</b> or <b>Print Manager's sheet…</b> (landscape, one page).</li></ol></section>
+   <section id="help-help"><h2>Help</h2>
+    <h3>Totals</h3><p>Status row: Overdue, Due Today, This Week, I Owe, Owed to Me, Going Cold. To Do lists row: Follow-ups, Waiting on, Account touches, Travel. Each tile shows the count, the change from last week (▲ +n / ▼ −n / no change / n/a) and a small trend line. For Overdue, I Owe and Going Cold, a rise is shown in red. Hover a tile for its exact rule. <b>Show trends</b> opens all ten trend lines since the dashboard started.</p>
+    <h3>Week over week</h3><p>The current week's latest snapshot is compared with the previous week's latest snapshot. If the previous week has no snapshot, the nearest older week is used and marked *. With only one week of data you'll see n/a.</p>
+    <h3>Going Cold</h3><p>An open item with no activity in 14 or more days. Activity is the latest of: its To Do edit, time logged on that item (time on other items, calls or meetings doesn't count for it), or any meeting with its account (a meeting counts for every item on that account).</p>
+    <h3>List</h3><p>Grouped Overdue, Due Today, This Week (tomorrow through Sunday), Next. Each line is <i>Person/account: action · Weekday M/D</i> with its To Do list, account (★ = top tier) and a status word. Click a line for details. ⚡ = quick win (15 min or less). ❄ = going cold. ⊘ Withheld = tagged Withhold in To Do: shown on your own screen and print sheet (marked [WITHHELD]), never on Manager's sheet. Your photo appears on screen only, not on printed sheets.</p>
+    <h3>Calendar</h3><p>Today and tomorrow, 7 AM–6 PM CT. Overlapping events get an amber outline and <b>⚠ Conflict</b>.</p>
+    <h3>Syncing between your computers</h3><p>Each computer has a name and saves the time you log there in <code>Data/time-&lt;name&gt;.json</code>; it never writes another computer's file. Every computer reads all <code>time-*.json</code> files in Data (OneDrive conflict copies such as <code>time-mac-Laptop2.json</code> too) and merges them the same way, so both show the same totals. If the same entry was changed on both, the later change wins (same second: the alphabetically later machine name). The Data folder is checked every 60 seconds and when you come back to the tab. The sync chip (top right) shows the last sync and the machines seen; <b>⚠</b> means the folder isn't connected, needs your OK again (<b>Reconnect</b>), or a file couldn't be read (hover for which). Keep both computers' clocks set automatically: if a time stamp from a computer is more than 5 minutes in the future the chip shows <b>⚠ Clock ahead</b> and names it. Changes you make after seeing such a stamp still count (the dashboard's clock always moves past the newest stamp it has seen). Browsers without folder access (e.g. Safari): use <b>File → Save my time file…</b> into Data and <b>File → Open time files…</b>.</p>
+    <h3>Time and workload</h3><p>Time entries are never written to To Do; they sync between your computers through the Data folder (see above). Meeting time from the calendar <b>counts in the totals right away</b>; there's no pending step. Press <b>Adjust</b> under the meeting (or in Workload) to change minutes, audience, subject or account. <b>Overlapping meetings fill no time</b> until you press <b>Attended?</b> on one; only that meeting counts. Pick another to move the time, or choose <i>Not attended</i> in Adjust. Audience and subject are guessed (marked <span class="guess">guessed</span>, hover for why) from the attendee domains and title: internal domains → Internal - Domestic; international internal domains → Internal - International; a mapped account domain → its audience; otherwise Owner/operator. Subjects come from title words (training/webinar, software/product, design/review/submittal, travel/flight), otherwise Account strategy. When you change an audience, the dashboard remembers it for those domains.</p>
+    <h3>Calls and chats (unscheduled)</h3><p>Types: Phone, Teams chat, Teams call, Other. Use <b>+ Log call</b>, or add lines to your notebook log (<code>notebook-log.md</code>) like<br><code>- [log] YYYY-MM-DD HH:MM | 20m | Channel | Audience | Subject | Account | Person | note</code><br>e.g. <code>- [log] 2026-10-19 09:40 | 20m | Phone | Owner/operator | Technical/design support | Acme Fab | Priya M. | riser sizing question</code><br>Minutes can be 20, 20m, 1h or 1h15m. Channel is Phone, Teams chat, Teams call or Other. Audience, Subject, Account, Person and note may be left blank; a blank audience or subject is guessed (marked <span class="guess">guessed</span>). Person is a name only and must not contain "@". Dates and times must be real (e.g. no 25:99), and neither Person nor note may contain "@". Only lines that start with <code>- [log]</code> are read; every other line is ignored, and loading again won't duplicate entries.<br><b>Loading:</b> after each Inbox Exporter run, <code>tools/make_log_js.py</code> on the box turns <code>notebook-log.md</code> into <code>Data/notebook-log.js</code> (only the <code>- [log]</code> lines). It's copied into <code>Dashboard/Data/</code> in OneDrive and the dashboard loads it by itself. If it's missing, use <b>File → Import notebook log…</b> and pick <code>notebook-log.md</code>. Nothing ever changes, overwrites or git-ignores <code>notebook-log.md</code>; <code>notebook-log.md</code> isn't in the Dashboard folder at all.</p>
+    <h3>Going Cold list</h3><p>Under the item list, every going-cold item is listed with its last activity date and the number of days since, oldest first.</p>
+    <h3>Clearing and exporting</h3><p><b>File → Clear local data…</b> clears trend history and the opened snapshot, and <b>keeps your time entries</b>. To delete time entries too, tick <i>Also delete all time entries</i> and type DELETE. <b>File → Export time entries (CSV)…</b> saves every entry (date, minutes, hours, source, type, audience, subject, account, task, event, title, note).</p>
+    <h3>Not in this version</h3><p>The By-account view, account-based Going Cold and the "My next three things" ranking are planned for later; the Proposed tray is hidden in v1.</p>
+    <h3>Manager's sheet</h3><p>Labelled "SANITIZED FOR MANAGER — no pricing, bid details or confidential details". Open items only, with no hours, calendar, Going Cold total, notes or mail. Items you tag <b>Withhold</b> in To Do never print. Inbox Exporter only passes the tag through and never sets it.</p>
+    <h3>Removing time</h3><p>Removing a meeting's time in Workload is remembered: it doesn't come back on reload. Press <b>Removed · Count again</b> under the meeting to count it again.</p>
+    <h3>Example data in this browser</h3><p>While the example is showing, time you log is kept only until you reload, so example entries never mix with your real ones.</p></section>
+   <section id="help-howdoi"><h2>How Do I…</h2><input id="howdoi-input" type="search" placeholder="Type to filter, e.g. print, time, stale" aria-label="Filter How Do I">
+    <details><summary>…see only what's overdue?</summary>Click the <b>Overdue</b> tile. Click it again or press <b>Clear</b> to undo.</details>
+    <details><summary>…log 30 minutes on a task?</summary>Press <b>+30</b> on its line. For another amount, or to change audience, subject or account, press <b>⋯</b>.</details>
+    <details><summary>…change a meeting's time?</summary>It already counts. Click <b>✓ … Adjust</b> under the meeting (or Adjust in Workload), change it, then <b>Save</b>.</details>
+    <details><summary>…handle two overlapping meetings?</summary>Neither counts until you press <b>Attended?</b> on the one you went to. Only that one fills.</details>
+    <details><summary>…log a phone call or Teams chat?</summary><b>+ Log call</b>: pick Phone, Teams chat, Teams call or Other, plus minutes and the account.</details>
+    <details><summary>…import calls from my notebook?</summary>Write <code>- [log] 2026-10-19 13:15 | 25m | Teams call | | | Acme Fab | Priya M. | note</code> lines in your notebook log. They load by themselves from <code>Data/notebook-log.js</code>, or use File → Import notebook log…. Other lines are ignored.</details>
+    <details><summary>…export my time to a spreadsheet?</summary>File → Export time entries (CSV)…, or Export CSV in Workload.</details>
+    <details><summary>…clear data without losing time?</summary>File → Clear local data… keeps time entries unless you tick the delete box and type DELETE.</details>
+    <details><summary>…fix a wrong audience guess?</summary>In Workload, change the Audience dropdown on that entry. Future meetings with those domains will use your choice.</details>
+    <details><summary>…remove a time entry?</summary>Workload → the entry → <b>Remove</b>.</details>
+    <details><summary>…load a snapshot from somewhere else?</summary><b>File → Open snapshot…</b> and pick a <code>.js</code>, <code>.json</code> or <code>.csv</code> snapshot. The newer of the opened file and <code>Data/inbox-snapshot.js</code> is used. To change the default path, edit <code>config.js</code>.</details>
+    <details><summary>…print my weekly sheet or Manager's?</summary><b>File → Print my sheet…</b> / <b>Print Manager's sheet…</b>. Choose landscape; for a PDF pick "Save as PDF".</details>
+    <details><summary>…keep an item off Manager's sheet?</summary>Add the <b>Withhold</b> category to the task in Microsoft To Do. The next snapshot carries it through.</details>
+    <details><summary>…set up the dashboard on my second computer?</summary>Open the same <code>Dashboard/index.html</code> from OneDrive in Chrome or Edge, name the computer (e.g. <b>workpc</b>), click <b>⚠ Connect Data folder</b> and pick <code>Dashboard/Data</code>. Your other computer's time appears within a minute of OneDrive syncing.</details>
+    <details><summary>…reconnect the Data folder?</summary>If the chip says <b>⚠ Reconnect Data folder</b>, click it and press Allow. The browser sometimes asks again after a restart.</details>
+    <details><summary>…sync right now?</summary>Click the sync chip, or File → Sync now.</details>
+    <details><summary>…back up or move my time entries?</summary>They're already in <code>Data/time-*.json</code> in OneDrive. <b>File → Export local data…</b> still saves a JSON backup of this browser.</details>
+    <details><summary>…see trends?</summary>Press <b>Show trends</b> above the totals.</details></section>
+   <section id="help-faq"><h2>FAQ</h2>
+    <h3>Why does it say EXAMPLE DATA?</h3><p><code>Data/inbox-snapshot.js</code> wasn't found, so the fictional example loaded. Check that it's in <code>Dashboard/Data/</code> (capital D) and that OneDrive has synced the data folder.</p>
+    <h3>Why is the As of stamp amber?</h3><p>The snapshot is more than 24 hours old. The numbers may be out of date.</p>
+    <h3>Does it change my To Do lists?</h3><p>No. It only reads the snapshot. It writes only its own <code>Data/time-&lt;machine&gt;.json</code>.</p>
+    <h3>Why don't I see the other computer's time yet?</h3><p>OneDrive has to sync the file first (the work PC and Mac both need to be online), then the dashboard picks it up within 60 seconds. Check the sync chip lists both machine names.</p>
+    <h3>What's time-mac-Laptop2.json?</h3><p>A OneDrive conflict copy. The dashboard merges it with no duplicates; you can leave it or delete it once both computers have synced.</p>
+    <h3>What does ⚠ Clock ahead mean?</h3><p>Another computer's clock is more than 5 minutes fast. Your newer changes still win, but set that computer's clock to automatic. That computer shows <b>⚠ This computer's clock is ahead</b>. Changes stamped more than 24 hours ahead (<code>holdHours</code> in config.js) are <b>held</b>: not applied, and they don't move the dashboard's clock, until real time reaches them.</p>
+    <h3>Repair clock stamps (reset after a wrong clock)</h3><p>1. On the computer named in the warning, set the date and time to automatic and check it's right. 2. Open the dashboard there and choose <b>File → Repair clock stamps…</b>. It re-stamps that computer's future-dated changes and places them right after the last change it stamped correctly, in their original order. Anything the other computer changed after that point still wins, and so does a change it made in the gap; that's the safe side. Each repaired change replaces its original by id, so an old OneDrive conflict copy (e.g. <code>time-workpc-PC.json</code>) that still holds the original future-stamped change is ignored — it can't bring it back, now or later; you can delete such copies once both computers show the same totals. The dashboard rewrites its own <code>time-&lt;name&gt;.json</code> and reloads. Nothing is deleted. 3. Wait for OneDrive to sync and the other computer to poll (about a minute). The warning then clears on both computers. <b>Repair is refused</b> while this computer's clock looks <i>behind</i> another computer's (a stamp or file time from it is more than 5 minutes ahead): repairing then would back-date your edits. Fix both clocks first. A repaired change is never placed before its meeting's start (or its date), so it still beats the other computer's automatic meeting time, and never later than now.</p>
+    <h3>Can I import local data from the other computer?</h3><p>No. <b>File → Import local data…</b> takes only this computer's own time events; events from other machines are ignored (the message says how many). The other computer's time arrives through its own file in Data.</p>
+    <h3>Can two computers use the same name?</h3><p>No. Give each its own name; the name can't be changed later from the app.</p>
+    <h3>Is my data uploaded anywhere?</h3><p>No. It's a local file with no server, no sign-in and no network calls. Your real files stay in <code>Dashboard/Data/</code> in OneDrive; app updates never include a Data folder, so they can't overwrite them.</p>
+    <h3>Why n/a on the week-over-week line?</h3><p>There's no earlier week to compare yet.</p>
+    <h3>Some rows were skipped (⚠ Incomplete)?</h3><p>Those snapshot rows broke a rule (for example an unknown list). The banner lists them; the rest loaded.</p>
+    <h3>Why didn't my overlapping meetings add time?</h3><p>Overlaps fill nothing until you mark the one you attended.</p>
+    <h3>Why does it read notebook-log.js instead of notebook-log.md?</h3><p>A page opened as a local file can load a script but can't read a .md file by itself. So the box converts the <code>- [log]</code> lines into <code>notebook-log.js</code>. If that file isn't there, use File → Import notebook log….</p>
+    <h3>Will my time entries survive a browser cache clear?</h3><p>Yes, if the Data folder was connected: they're in <code>Data/time-&lt;machine&gt;.json</code>. You'll need to name the computer (use the same name) and reconnect the folder.</p></section>
+   <section id="help-rev"><h2>Revision log</h2><table><tr><th>Revision</th><th>Date</th><th>Changes</th></tr>
+    <tr><td class="mono">00.02.000_261019</td><td>Oct 19 2026</td><td>Two-machine time sync through OneDrive: connect the Dashboard/Data folder once per machine, name each machine, and each writes only Data/time-&lt;machine&gt;.json; all time files (and OneDrive conflict copies) merge the same way on every machine. Sync chip, 60 s polling, one-time move of 00.01 local time into this machine's file. QA fixes: hybrid clock with UTC stamps and ⚠ Clock ahead; migrated time keeps its own time; deterministic ties; removed log lines stay quiet; events must match their file's machine. Delta fixes: migrated meeting adjustments beat the automatic fill; far-future stamps held (24 h) and flagged on both machines; Repair clock stamps; import keeps only this machine's events. Delta 2: untouched 00.01 meeting fills stamped at the meeting start, real adjustments after it; Repair supersedes originals, keeps the other machine's later edits, and is refused while this clock looks behind. Removal wins: a meeting removed in 00.01 on one computer stays removed even if the other computer had adjusted it. Delta 3: Repair never back-dates to 1970 (uses the meeting start or entry date); account-only 00.01 edits count as changes; a corrupt 00.01 browser store is skipped with a warning; supersede links only within one machine. Delta 4: repaired changes never land before their meeting start; malformed 00.01 items are skipped with a warning.</td></tr>
+    <tr><td class="mono">00.01.000_261019</td><td>Oct 19 2026</td><td>First build. Local-file app; Inbox Exporter snapshot schema v1; status and To Do totals with week-over-week and trends; calendar strip with conflicts; deadline-grouped list with list and account tags; Going Cold (14 days, any activity); quick-add time; calendar time counts at once with Adjust, overlaps fill only the meeting marked Attended; + Log call (Phone, Teams chat, Teams call, Other); notebook log [log] lines (Notebook 2fdcdb3 format) autoloaded from Data/notebook-log.js with File → Import as fallback; guessed audience/subject; Going Cold item list; time-entry CSV export; Clear keeps time entries unless DELETE confirmed; Workload view; landscape print sheet and sanitized Manager sheet; File → Open snapshot, Export/Import local data; Help, How Do I, FAQ, Quick Start.</td></tr></table></section>
+  </div>
+ </div>
+</div>
+<script src="config.js"></script>
+<script src="js/rules.js"></script>
+<script src="js/sync.js"></script>
+<script src="js/db.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

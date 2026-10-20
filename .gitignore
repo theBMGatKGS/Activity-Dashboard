@@ -1,0 +1,6 @@
+# Box-side only (the deployed Dashboard folder is not a git repo). Real data never goes into git.
+Data/
+data/
+# Local-data exports
+dash-local-data-*.json
+dash-time-entries-*.csv
