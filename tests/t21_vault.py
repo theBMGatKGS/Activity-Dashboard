@@ -34,6 +34,15 @@ def fs_for(d):
     return fs
 Q = "?now=2026-10-19T08:00:00-05:00&machine="
 TOT = "JSON.stringify(DASH.app.state.entries.map(e => [e.id, e.minutes]).sort())"
+RAW = """new Promise(res => { const r = indexedDB.open('activity-dashboard'); r.onsuccess = () => { const out = {}, t = r.result.transaction('kv'), c = t.objectStore('kv').openCursor();
+  c.onsuccess = () => { const x = c.result; if (x) { out[x.key] = x.value; x.continue(); } };
+  t.oncomplete = () => res(JSON.stringify(out, (k, v) => (v && typeof v === 'object' && (v.constructor.name === 'CryptoKey' || v.kind === 'directory')) ? '[obj]' : v)); }; })"""
+SECRET_KEYS = ["ownEvents", "timeEntries", "calTombstones", "history", "audienceRules", "openedSnapshot"]
+def cache_clean(pg, extra=()):
+    raw = pg.evaluate(RAW); o = json.loads(raw)
+    leaks = [s for s in list(SECRETS) + ["Owner/operator", "i-pc-enc", "i-locked"] + list(extra) if s in raw]
+    plain = [k for k in SECRET_KEYS if k in o and o[k] is not None and not (isinstance(o[k], dict) and o[k].get("dashCache") == 1)]
+    return leaks, plain, o
 PASS1, PASS2 = "synthetic test passphrase one", "second passphrase from recovery"
 errors = []
 with sync_playwright() as p:
@@ -63,6 +72,8 @@ with sync_playwright() as p:
     blob = "".join((data / n).read_text() for n in names)
     check(not any(s in blob for s in SECRETS) and "Owner/operator" not in blob and '"events"' not in blob, f"migration: no readable data in the folder (checked {len(SECRETS)} synthetic names, audience labels, event JSON)")
     check(mac.evaluate(TOT) == before, "migration: same time entries as before encryption")
+    leaks, plain, o = cache_clean(mac)
+    check(not leaks and not plain and o.get("cacheEncrypted") is True and "ownEvents" in o, f"cache: existing plaintext browser cache encrypted on unlock, no synthetic names readable (leaks={leaks[:3]}, plain keys={plain})")
     check("🔐" in mac.inner_text("#sync"), "sync chip shows the folder is encrypted")
     # --- reload: unlock dialog, wrong passphrase, remember
     mac.reload(); mac.wait_for_selector("#vaultunlock")
@@ -79,6 +90,7 @@ with sync_playwright() as p:
     kr = json.loads((data / "keyring.json").read_text())
     check(kr.get("changed") is not None, "workpc: new passphrase saved in keyring.json")
     check(pc.evaluate(TOT) == mac.evaluate(TOT), "workpc and mac show identical entries")
+    leaks, plain, _ = cache_clean(pc); check(not leaks and not plain, "cache: second machine's browser cache is encrypted from the first write")
     pc.evaluate("""(() => { const S = DASH.app.state; S.entries.push({ id: 'i-pc-enc', taskId: 'EX-2', eventId: null, date: '2026-10-19', minutes: 25, audience: 'Integrator/partner', subject: 'Training/education', account: 'Account D', source: 'manual', confirmed: true }); return DASH.app.commit(); })()""")
     pc.evaluate("DASH.app.flush()"); mac.evaluate("DASH.app.syncNow()")
     check(mac.evaluate("DASH.app.state.entries.some(e => e.id === 'i-pc-enc' && e.minutes === 25)"), "sync: an edit on workpc reaches mac through the encrypted file")
@@ -101,12 +113,20 @@ with sync_playwright() as p:
     check("can't be decrypted" in probs, f"tamper: damaged file reported ({probs[:90]})")
     f.write_text(good); mac.evaluate("DASH.app.syncNow()"); check(mac.evaluate("DASH.app.state.problems.length") == 0, "tamper: restored file reads again")
     # --- lock stops everything
-    menu(mac, "encryption"); mac.wait_for_selector("#vaultmenu"); mac.click('[data-v="lock"]')
+    menu(mac, "encryption"); mac.wait_for_selector("#vaultmenu"); mac.click('[data-v="lock"]'); mac.wait_for_function("document.querySelector('#sync').textContent.includes('locked')")
     snapm = {n: (data / n).stat().st_mtime_ns for n in os.listdir(data)}
     mac.evaluate("(() => { const S = DASH.app.state; S.entries.push({ id: 'i-locked', date: '2026-10-19', minutes: 5, audience: 'Owner/operator', subject: 'Account strategy', source: 'manual', confirmed: true }); return DASH.app.commit(); })()")
     mac.evaluate("DASH.app.flush()"); mac.evaluate("DASH.app.syncNow()")
     check({n: (data / n).stat().st_mtime_ns for n in os.listdir(data)} == snapm and "locked" in mac.inner_text("#sync").lower(), "lock: nothing written while locked; chip says Data locked")
+    leaks, plain, _ = cache_clean(mac); check(not leaks and not plain, "cache: an edit made while locked is not cached in plaintext")
     mac.reload(); mac.wait_for_selector("#vaultunlock"); check(True, "lock: also forgets the remembered key (passphrase asked again)")
+    mac.click("#vault-later"); mac.wait_for_selector(".tile"); mac.evaluate("DASH.app.flush()")
+    check(mac.evaluate("DASH.app.state.entries.filter(e => e.source === 'manual').length") == 0, "locked (Not now): nothing is read from the encrypted cache")
+    leaks, plain, _ = cache_clean(mac); check(not leaks and not plain, "locked (Not now): nothing readable written to the cache")
+    mac.reload(); mac.wait_for_selector("#vaultunlock"); mac.fill("#vault-pass", PASS2); mac.click("#vault-ok"); ready(mac)
+    pc.evaluate("DASH.app.syncNow()")
+    check(mac.evaluate("DASH.app.state.own.length") > 0 and mac.evaluate(TOT) == pc.evaluate(TOT), "unlock again: the encrypted cache and folder read back")
+    check(not mac.evaluate("DASH.app.state.entries.some(e => e.id === 'i-locked')"), "an edit made while locked and then abandoned (reload) is not saved anywhere")
     # --- legacy browser cache + legacy time-log kind (synthetic names)
     app2 = tmp / "Dashboard2"; shutil.copytree(app, app2)
     (app2 / "config.local.js").write_text('Object.assign(window.DASH_CONFIG, { legacyDbNames: ["legacy-test-db"], legacyTimeKinds: ["legacy-time-log"], snapshotNames: ["legacy-snapshot.js"] });\n')
@@ -127,6 +147,7 @@ with sync_playwright() as p:
     check(lg.evaluate("DASH.app.state.entries.some(e => e.id === 'i-old1' && e.minutes === 35)"), "legacy cache: older build's time events copied")
     check(lg.evaluate("DASH.app.state.entries.some(e => e.id === 'i-other1')"), "legacy time-log kind accepted from another machine's file")
     check(lg.evaluate("DASH.app.state.snap && !DASH.app.state.snap.example"), "legacy snapshot file name + older variable name read")
+    leaks, plain, o = cache_clean(lg); check(isinstance(o.get("ownEvents"), list), "unencrypted folder: cache stays as in 00.02 (no key exists)")
     check((d2 / "time-oldpc.json").exists() and json.loads((d2 / "time-oldpc.json").read_text())["kind"] == "dash-time-log", "legacy: this machine writes the current format")
     b.close()
 check(not errors, "no page errors" + (f": {errors[:3]}" if errors else ""))

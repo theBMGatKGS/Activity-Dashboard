@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const R = DASH.rules, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.03.000_261021";
+  const REV = "00.03.001_261021";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -25,11 +25,12 @@
   async function boot() {
     wireMenus(); registerPWA();
     try { const lg = await DB.migrateLegacy(CFG.legacyDbNames || []); if (lg) S.legacyImported = lg; } catch (e) { banner("⚠ The older browser cache couldn't be copied: " + (e.message || e), true); }
-    S.history = (await DB.get("history")) || [];
-    S.own = (await DB.get("ownEvents")) || [];
+    await DB.loadFlags();
     await setupMachine();
     await connectStored();
-    if (S.dir) { await loadKeyring(); await ensureUnlocked(); }
+    if (S.dir) { await loadKeyring(); await ensureUnlocked(); }   // 00.03.001: unlock before reading the (encrypted) cache
+    S.history = (await DB.get("history")) || [];
+    S.own = (await DB.get("ownEvents")) || [];
     recompute();
     let raw = null, from = "";
     if (S.dir) { const r = await readDirSnapshot(); if (r) { raw = r; from = "Inbox Exporter snapshot"; } }
@@ -262,15 +263,23 @@
   async function loadKeyring() {
     try { const r = await readName(KEYRING); S.seen[KEYRING] = r.sig; const kr = V.parseKeyring(r.text);
       if (S.vault.kr && S.vault.kr.keyId !== kr.keyId) { S.vault.key = null; }   // a different keyring replaced this one
-      S.vault.kr = kr; return kr; }
+      S.vault.kr = kr; await DB.requireEncryption(); return kr; }
     catch (e) { if (e && e.name !== "NotFoundError") S.problems.push(`${KEYRING}: ${e.message || e}`); return null; }
   }
   async function ensureUnlocked() {
     if (!S.vault.kr || S.vault.key) return true;
-    try { const rem = await DB.get("vaultKey"); if (rem && rem.keyId === S.vault.kr.keyId && rem.key) { S.vault.key = rem.key; S.vault.remembered = true; return true; } } catch (e) { /* not remembered */ }
+    try { const rem = await DB.get("vaultKey"); if (rem && rem.keyId === S.vault.kr.keyId && rem.key) { S.vault.key = rem.key; S.vault.remembered = true; await activateCache(); return true; } } catch (e) { /* not remembered */ }
     const key = await unlockDialog();
-    if (!key) { S.vault.locked = true; banner("🔒 The Data folder is encrypted and locked. Nothing is read from or written to it until you unlock (File → Encryption…).", true); return false; }
-    S.vault.key = key; S.vault.locked = false; return true;
+    if (!key) { DB.setCipher(null); S.vault.locked = true; banner("🔒 The Data folder is encrypted and locked. Nothing is read from or written to it until you unlock (File → Encryption…).", true); return false; }
+    S.vault.key = key; S.vault.locked = false; await activateCache(); return true;
+  }
+  // 00.03.001: the browser cache uses the same data key (purpose "cache"). On unlock: plaintext cache values are encrypted in place,
+  // and anything this page holds in memory (e.g. edits made while locked) is merged back in.
+  async function activateCache() {
+    const key = S.vault.key, kr = S.vault.kr; if (!key || !kr) return;
+    DB.setCipher({ enc: t => V.encrypt(key, kr, "cache", t), dec: t => V.decrypt(key, kr, t, "cache") });
+    await DB.requireEncryption(); S.cacheConverted = await DB.encryptExisting();
+    if (S.own && S.own.length) { const o = (await DB.get("ownEvents")) || []; S.own = R2.dedupe(o.concat(S.own)); await DB.set("ownEvents", S.own); }
   }
   async function rememberKey(on) { if (on) { await DB.set("vaultKey", { keyId: S.vault.kr.keyId, key: S.vault.key }); S.vault.remembered = true; } else { await DB.set("vaultKey", undefined); S.vault.remembered = false; } }
   function dialog(id, html, wire) {
@@ -317,14 +326,16 @@
   }
   function recoveryDialog(rk, title) {
     return dialog("vaultrk", `<b class="vt">${title}</b>
-      <p>Write this recovery key down or save it somewhere off this computer, such as a password manager. It's the <b>only</b> way back in if the passphrase is forgotten. It's shown once.</p>
+      <p>Keep this recovery key in <b>two places</b>: your <b>password manager</b> and a <b>printed copy</b> stored somewhere safe. Not in the Data folder, OneDrive or email. It's the <b>only</b> way back in if the passphrase is forgotten, and it's shown once.</p>
       <div class="rkbox mono" id="rk-value">${esc(rk)}</div>
-      <div class="vbtns" style="justify-content:flex-start"><button class="btn" id="rk-copy">Copy</button><button class="btn" id="rk-save">Save as .txt…</button></div>
-      <label class="vchk"><input type="checkbox" id="rk-done"> I've stored the recovery key somewhere safe, not in the Data folder</label>
+      <div class="vbtns" style="justify-content:flex-start"><button class="btn" id="rk-copy">Copy</button><button class="btn" id="rk-print">Print…</button><button class="btn" id="rk-save">Save as .txt…</button></div>
+      <label class="vchk"><input type="checkbox" id="rk-done"> I've saved it in my password manager and printed a copy</label>
       <div class="vbtns"><button class="btn primary" id="rk-ok" disabled>Continue</button></div>`,
     (d, done) => {
       d.querySelector("#rk-done").onchange = e => { d.querySelector("#rk-ok").disabled = !e.target.checked; };
       d.querySelector("#rk-copy").onclick = () => { try { navigator.clipboard.writeText(rk); toast("Recovery key copied. Paste it into your password manager, then clear the clipboard."); } catch (e) { toast("Copy failed; write it down instead."); } };
+      d.querySelector("#rk-print").onclick = () => { const w = window.open("", "_blank", "width=600,height=400"); if (!w) { toast("Pop-up blocked: write the key down instead."); return; }
+        w.document.write(`<title>Recovery key</title><body style="font:16px sans-serif;padding:24px"><h2>Activity Dashboard recovery key</h2><p>Keyring id: ${esc(S.vault.kr ? S.vault.kr.keyId : "")}</p><p style="font:20px monospace">${esc(rk)}</p><p>Keep with your important papers. Not in the Data folder.</p></body>`); w.document.close(); w.focus(); w.print(); };
       d.querySelector("#rk-save").onclick = () => download("activity-dashboard-recovery-key.txt", null, `Activity Dashboard recovery key\nKeyring id: ${S.vault.kr ? S.vault.kr.keyId : ""}\n\n${rk}\n\nKeep this off the synced Data folder.\n`);
       d.querySelector("#rk-ok").onclick = () => done(true);
     });
@@ -333,7 +344,7 @@
     if (!S.dir || !S.granted) { banner("Connect the Data folder first (File → Connect Data folder…), then turn on encryption.", true); return; }
     if (await loadKeyring()) { toast("This Data folder is already encrypted (another computer turned it on)."); await ensureUnlocked(); S.seen = {}; await syncNow(true); return; }
     const setup = await dialog("vaultsetup", `<b class="vt">🔐 Encrypt the Data folder</b>
-      <p>Every data file in the connected Data folder is encrypted on this computer before it's saved (AES-256-GCM). Other computers need the same passphrase. The app can't recover a lost passphrase. Only the recovery key can.</p>
+      <p>Every data file in the connected Data folder, and this browser's own cache, is encrypted on this computer before it's saved (AES-256-GCM). Other computers need the same passphrase. The app can't recover a lost passphrase. Only the recovery key can, so next you'll save it in your password manager and print a copy.</p>
       ${passFields("Passphrase (12+ characters; a few unrelated words works well)", "Passphrase again")}
       <label class="vchk"><input type="checkbox" id="vs-remember"> Remember on this computer</label>
       <label class="vchk"><input type="checkbox" id="vs-delete" checked> After the encrypted copies are checked, delete the plaintext originals from the Data folder</label>
@@ -354,7 +365,7 @@
     await recoveryDialog(setup.recoveryKey, "Save your recovery key");
     if (await loadKeyring() && S.vault.kr.keyId !== setup.keyring.keyId) { banner("Another computer encrypted this folder at the same moment. Its keyring is kept; unlock with its passphrase.", true); S.vault.key = null; await ensureUnlocked(); return; }
     S.vault.kr = setup.keyring; S.vault.key = setup.key;
-    await writeText(KEYRING, JSON.stringify(setup.keyring, null, 1) + "\n");
+    await writeText(KEYRING, JSON.stringify(setup.keyring, null, 1) + "\n"); await activateCache();
     if (setup.remember) await rememberKey(true);
     const prefs = (await DB.get("prefs")) || {}; prefs.deletePlain = !!setup.del; await DB.set("prefs", prefs);
     S.seen = {}; await syncNow(true); await writeOwn();
@@ -409,7 +420,7 @@
       </div><div class="vbtns"><button class="btn primary" data-v="">Close</button></div>`,
     (d, done) => d.querySelectorAll("[data-v]").forEach(b => b.onclick = () => done(b.dataset.v)));
     if (act === "rem") { await rememberKey(!S.vault.remembered); toast(S.vault.remembered ? "Remembered on this computer." : "Forgotten: you'll be asked for the passphrase next time."); }
-    if (act === "lock") { await rememberKey(false); S.vault.key = null; S.vault.locked = true; banner("🔒 Locked. File → Encryption… to unlock.", true); renderSync(); }
+    if (act === "lock") { DB.setCipher(null); S.vault.key = null; await rememberKey(false); S.vault.locked = true; banner("🔒 Locked. File → Encryption… to unlock.", true); renderSync(); }
     if (act === "del") await deletePlainNow();
     if (act === "pass") {
       const r = await dialog("vaultpass", `<b class="vt">Change passphrase</b><label class="vlab">Current passphrase<input type="password" id="vc-old"></label>${passFields("New passphrase", "New passphrase again")}
@@ -835,10 +846,10 @@
   const ACTIONS = {
     open: () => pickFile(".js,.json,.csv", async (n, t) => { let raw; try { raw = parseSnapshotText(n, t); } catch (e) { banner("Could not read " + n + ": " + e.message, true); return; }
       if (await useSnapshot(raw, "opened file")) { await DB.set("openedSnapshot", raw); toast("Opened " + n); } }),
-    export: async () => download(`dash-local-data-${S.today}.json`, await DB.exportAll()),
+    export: async () => { if (S.vault.kr && !confirm("This saves your local data unencrypted (plain JSON) to Downloads. Continue?")) return; download(`dash-local-data-${S.today}.json`, await DB.exportAll()); },
     import: () => pickFile(".json", async (n, t) => { try { const r = await DB.importAll(JSON.parse(t)); toast(`Imported local data${r && r.dropped ? ` (${r.dropped} event(s) from other machines ignored)` : ""}. Reloading…`); setTimeout(reloadSafely, 600); } catch (e) { banner("Import failed: " + e.message, true); } }),
     clear: () => clearDialog(),
-    exportCSV: () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([R.timeEntriesCSV(S.entries)], { type: "text/csv" })); a.download = `dash-time-entries-${S.today}.csv`; a.click(); toast(`Exported ${S.entries.length} time entries (CSV).`); },
+    exportCSV: () => { if (S.vault.kr && !confirm("This saves your time entries unencrypted (CSV) to Downloads. Continue?")) return; const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([R.timeEntriesCSV(S.entries)], { type: "text/csv" })); a.download = `dash-time-entries-${S.today}.csv`; a.click(); toast(`Exported ${S.entries.length} time entries (CSV).`); },
     repairClock: () => repairClock(), encryption: () => encryptionDialog(), install: () => installApp(),
     connect: () => connectFolder(), syncNow: () => syncNow(true),
     saveTimeFile: () => { if (S.vault.kr && !confirm("This saves your time file unencrypted (plain JSON) to Downloads. Continue?")) return;  download(R2.fileName(S.machine), null, R2.serialize(S.machine, S.own, new Date().toISOString())); toast(`Saved ${R2.fileName(S.machine)}. Put it in the Data folder.`); },

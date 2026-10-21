@@ -1,5 +1,13 @@
 # Changelog — Activity Dashboard
 
+## 00.03.001_261021 (Oct 21 2026)
+- Browser cache encrypted: once a keyring is seen, `ownEvents`, `timeEntries`, `calTombstones`, `history`, `audienceRules` and `openedSnapshot` are written to IndexedDB only as `{dashCache:1, env}` AES-256-GCM envelopes (same data key, purpose `cache`). Flag `cacheEncrypted` makes this permanent for the browser.
+- On unlock (passphrase, recovery key, remembered key, or turning encryption on) existing plaintext cache values are re-written encrypted, and in-page edits are merged in. Boot now unlocks before it reads the cache.
+- While locked, cached data is neither read (envelopes return nothing) nor written (no plaintext fallback). Lock now drops the key before anything else, so no write can slip through.
+- Recovery-key dialog: recommends a password manager plus a printed copy; adds Print…; the checkbox now reads "I've saved it in my password manager and printed a copy". Setup text mentions the cache.
+- Export local data… and Export time entries (CSV) stay plain and ask for confirmation when the folder is encrypted.
+- Tests: t21 adds 8 cache checks (39 total) (raw IndexedDB scanned for synthetic names, audience labels and test ids; every secret key must be an envelope).
+
 ## 00.03.000_261021 (Oct 21 2026)
 - Encrypted Data folder (`js/vault.js`, Web Crypto only). File → Encryption… creates `Data/keyring.json`: one random AES-256-GCM data key, wrapped twice (passphrase slot: PBKDF2-SHA256, 600,000 iterations, 16-byte salt; recovery slot: same KDF over a random 160-bit recovery key shown once as 8 groups of 4 Crockford base32 characters). Unlocked keys are non-extractable CryptoKeys.
 - Every data file is stored as `<name>.enc` (kind `dash-encrypted` v1: random 96-bit IV per write, AAD = keyring id + purpose `time`/`snapshot`/`log`): `time-<machine>.json.enc`, `inbox-snapshot.json.enc`, `notebook-log.js.enc`. OneDrive conflict copies `time-mac.json-PC.enc` map to `time-mac-PC.json` as before.

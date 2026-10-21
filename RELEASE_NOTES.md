@@ -1,5 +1,10 @@
 # Release notes — Activity Dashboard
 
+## 00.03.001_261021 (Oct 21 2026)
+- The copy each browser keeps is now encrypted too, with the same key. Nothing readable stays on the computer once the folder is encrypted, and nothing is cached while locked.
+- The recovery key screen recommends a password manager plus a printed copy, and has a Print button.
+- Exports stay plain and ask first.
+
 ## 00.03.000_261021 (Oct 21 2026)
 Your data folder can now be encrypted, and the app can be installed.
 - File → Encryption… encrypts every data file in the connected Data folder in the browser (AES-256-GCM). Pick a passphrase; save the recovery key it shows once. Other computers unlock with the same passphrase (or the recovery key, then set a new passphrase).

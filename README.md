@@ -1,5 +1,5 @@
 # Activity Dashboard
-Revision **00.03.000_261021** · local-first app · encrypted Data folder (optional, in-browser AES-256-GCM) · installable (PWA) over https · no server, no sign-in, no network calls for data.
+Revision **00.03.001_261021** · local-first app · encrypted Data folder (optional, in-browser AES-256-GCM) · installable (PWA) over https · no server, no sign-in, no network calls for data.
 
 ## Use
 1. The app lives in **`<synced folder>/Dashboard/`** on the user's Mac. It is **not** in the notebook repo. To update, copy the new app files over the old ones; the deploy folder never contains `Data/`.
@@ -35,7 +35,9 @@ By-account view (planned 00.02), account-based Going Cold, the "My next three th
 - Keys: random AES-256 data key; wrapped by the passphrase (PBKDF2-SHA256, 600,000 iterations) and by a recovery key shown once. The passphrase and recovery key are never stored anywhere by the app. "Remember on this computer" keeps a non-extractable key in this browser's IndexedDB.
 - Older build: put its names in `config.local.js` (copy `config.local.example.js`; git-ignored) to copy its browser cache and read its time logs/snapshot once.
 - Exporters: `DASH_PASSPHRASE=… node tools/encrypt_file.js Data/keyring.json snapshot in.js Data/inbox-snapshot.json.enc`.
-- Not encrypted: this browser's own IndexedDB cache on each computer (as in 00.02), and CSV/JSON exports you save on purpose.
+- Browser cache (00.03.001): once the folder is encrypted, the cached time events, entries, trend history, learned audiences and opened snapshot are stored in IndexedDB only as AES-256-GCM envelopes under the same key (purpose `cache`). Plaintext cache is encrypted on unlock; while locked nothing of it is read or written. Machine name, folder grant and settings stay plain (no data).
+- Recovery key: keep it in a password manager **and** a printed copy (the setup dialog has Copy, Print… and Save as .txt…). Never in the Data folder, OneDrive or email.
+- Not encrypted: CSV/JSON exports you save on purpose (they ask first), and the cache of a folder that isn't encrypted.
 
 ## Install (00.03)
 `manifest.webmanifest` + `sw.js`. Served over https (e.g. GitHub Pages) Edge/Chrome offer Install; the service worker caches the app shell only (never `Data/`). Opened from disk (`file://`) it runs as before without the service worker.

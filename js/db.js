@@ -1,6 +1,8 @@
 /* Local storage for Activity Dashboard: IndexedDB "activity-dashboard", one key-value store.
    Keys: ownEvents (this machine's time events, also written to Data/time-<machine>.json), timeEntries (cache of merged entries;
    in 00.01 the only copy), calTombstones/audienceRules (00.01, migrated once), history, openedSnapshot, prefs, machine, dataDir (folder handle), migratedV2,
+   cacheEncrypted (00.03.001: once true, ownEvents/timeEntries/calTombstones/history/audienceRules/openedSnapshot are stored only as
+   AES-256-GCM envelopes {dashCache:1, env} under the Data folder's key; nothing of them is written while locked),
    vaultKey (00.03: only if "Remember on this computer": {keyId, key} with key a NON-extractable AES-GCM CryptoKey), legacyImported. Nothing ever leaves this browser except via File > Export local data. */
 (function (g) {
   "use strict";
@@ -18,11 +20,30 @@
     });
     return dbp;
   }
+  // 00.03.001: cached data (SECRET keys) is encrypted with the Data folder's key once the folder is encrypted. cipher = {enc, dec}
+  // (text <-> envelope text, AES-256-GCM via DASH.vault) is set by the app while unlocked. "cacheEncrypted" (plain flag) is set as
+  // soon as a keyring is seen: from then on a SECRET key is never written in the clear, and while locked it isn't written at all.
+  const SECRET = new Set(["ownEvents", "timeEntries", "calTombstones", "history", "audienceRules", "openedSnapshot"]);
+  let cipher = null, mustEncrypt = false;
+  const isEnv = v => !!(v && typeof v === "object" && v.dashCache === 1 && typeof v.env === "string");
+  function getRaw(k) {
+    return open().then(db => { if (!db) return mem[k];
+      return new Promise(res => { const q = db.transaction(STORE).objectStore(STORE).get(k); q.onsuccess = () => res(q.result); q.onerror = () => res(undefined); }); });
+  }
   async function get(k) {
-    const db = await open(); if (!db) return mem[k];
-    return new Promise(res => { const q = db.transaction(STORE).objectStore(STORE).get(k); q.onsuccess = () => res(q.result); q.onerror = () => res(undefined); });
+    const v = await getRaw(k);
+    if (!isEnv(v)) return v;
+    if (!cipher) return undefined;                                   // locked: encrypted cache stays unreadable
+    try { return JSON.parse(await cipher.dec(v.env)); } catch (e) { return undefined; }   // other keyring / damaged: ignore (data re-syncs from the folder)
   }
   async function set(k, v) {
+    if (SECRET.has(k) && v !== undefined && (cipher || mustEncrypt)) {
+      if (!cipher) return;                                           // locked: write nothing rather than plaintext
+      v = { dashCache: 1, env: await cipher.enc(JSON.stringify(v)) };
+    }
+    return setRaw(k, v);
+  }
+  async function setRaw(k, v) {
     const db = await open(); if (!db) { mem[k] = v; return; }
     return new Promise((res, rej) => { const t = db.transaction(STORE, "readwrite"); t.objectStore(STORE).put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); });
   }
@@ -69,5 +90,14 @@
     }
     return null;
   }
-  g.DASH = g.DASH || {}; g.DASH.db = { get, set, exportAll, importAll, clearAll, migrateLegacy, usingMemory: () => !!mem };
+  async function requireEncryption() { mustEncrypt = true; await setRaw("cacheEncrypted", true); }
+  async function loadFlags() { mustEncrypt = (await getRaw("cacheEncrypted")) === true; return mustEncrypt; }
+  function setCipher(c) { cipher = c || null; }
+  // On unlock: re-write every plaintext SECRET value encrypted. Returns how many were converted.
+  async function encryptExisting() {
+    if (!cipher) return 0; let n = 0;
+    for (const k of SECRET) { const v = await getRaw(k); if (v !== undefined && v !== null && !isEnv(v)) { await set(k, v); n++; } }
+    return n;
+  }
+  g.DASH = g.DASH || {}; g.DASH.db = { get, set, getRaw, exportAll, importAll, clearAll, migrateLegacy, setCipher, requireEncryption, loadFlags, encryptExisting, SECRET, usingMemory: () => !!mem };
 })(window);
