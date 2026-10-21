@@ -1,7 +1,7 @@
 /* Activity Dashboard service worker (00.03). Caches the app shell only, so the installed app opens offline.
    Never caches data: anything under Data/, config.local.js, keyring or .enc files always goes to the network (and data
    normally comes through the folder picker, which doesn't use fetch at all). Network first, so a new release shows on the next load. */
-const REV = "00.03.001_261021", CACHE = "dash-shell-" + REV;
+const REV = "00.03.002_261021", CACHE = "dash-shell-" + REV;
 const SHELL = ["./", "index.html", "app.css", "config.js", "manifest.webmanifest", "js/vault.js", "js/rules.js", "js/sync.js", "js/db.js", "js/app.js",
   "assets/avatar.png", "assets/icon-64.png", "assets/icon-192.png", "assets/icon-512.png", "assets/icon-maskable-512.png",
   "examples/example-snapshot.js", "docs/QUICK_START.md"];

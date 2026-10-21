@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const R = DASH.rules, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.03.001_261021";
+  const REV = "00.03.002_261021";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -29,6 +29,7 @@
     await setupMachine();
     await connectStored();
     if (S.dir) { await loadKeyring(); await ensureUnlocked(); }   // 00.03.001: unlock before reading the (encrypted) cache
+    await offerLegacyDelete();
     S.history = (await DB.get("history")) || [];
     S.own = (await DB.get("ownEvents")) || [];
     recompute();
@@ -273,6 +274,18 @@
     if (!key) { DB.setCipher(null); S.vault.locked = true; banner("🔒 The Data folder is encrypted and locked. Nothing is read from or written to it until you unlock (File → Encryption…).", true); return false; }
     S.vault.key = key; S.vault.locked = false; await activateCache(); return true;
   }
+  // 00.03.002: after the older build's cache was copied (and, for an encrypted folder, encrypted) and every value reads back the same,
+  // offer once to delete the old plaintext database. Never without confirmation; never if verification fails or the cache is locked.
+  async function offerLegacyDelete() {
+    const info = await DB.get("legacyImported"); if (!info || info.deleted || info.declined) return;
+    if (locked()) return;
+    const v = await DB.verifyLegacy(info.from);
+    if (!v.ok) { S.legacyVerify = v; if (v.why && !/can't be read/.test(v.why)) banner(`⚠ The older browser cache was copied, but it doesn't match on read-back (${v.why}); it is kept.`, true); return; }
+    const enc = !!S.vault.kr;
+    const yes = confirm(`Your data from the older version of this dashboard was copied into this one and checked (${v.keys} item(s), all match${enc ? ", now stored encrypted" : ""}).\n\nThe older version's copy in this browser is still stored unencrypted. Delete it now?\n\nOK = delete the old copy. Cancel = keep it (you won't be asked again).`);
+    if (yes) { const ok = await DB.deleteDb(info.from); await DB.set("legacyImported", Object.assign({}, info, ok ? { deleted: new Date().toISOString() } : {})); toast(ok ? "Old unencrypted browser copy deleted." : "The old copy couldn't be deleted (close other tabs of the older version and reload)."); }
+    else await DB.set("legacyImported", Object.assign({}, info, { declined: new Date().toISOString() }));
+  }
   // 00.03.001: the browser cache uses the same data key (purpose "cache"). On unlock: plaintext cache values are encrypted in place,
   // and anything this page holds in memory (e.g. edits made while locked) is merged back in.
   async function activateCache() {
@@ -298,7 +311,7 @@
       <div id="vu-pass"><label class="vlab">Passphrase<input type="password" id="vault-pass" autocomplete="current-password"></label></div>
       <div id="vu-rk" class="hidden"><label class="vlab">Recovery key<input id="vault-rk" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"></label>
         <p class="faint">After the recovery key opens the folder, you set a new passphrase.</p>${passFields("New passphrase", "New passphrase again")}</div>
-      <label class="vchk"><input type="checkbox" id="vault-remember"> Remember on this computer (stays unlocked until you choose Lock or Forget)</label>
+      <label class="vchk"><input type="checkbox" id="vault-remember" checked> Remember on this computer (stays unlocked until you choose Lock or Forget)</label>
       <div id="vault-err" class="verr" role="alert"></div>
       <div class="vbtns"><button class="btn" id="vault-later">Not now</button><button class="btn" id="vault-userk">Use recovery key</button><button class="btn primary" id="vault-ok">Unlock</button></div>`,
     (d, done) => {
@@ -346,7 +359,7 @@
     const setup = await dialog("vaultsetup", `<b class="vt">🔐 Encrypt the Data folder</b>
       <p>Every data file in the connected Data folder, and this browser's own cache, is encrypted on this computer before it's saved (AES-256-GCM). Other computers need the same passphrase. The app can't recover a lost passphrase. Only the recovery key can, so next you'll save it in your password manager and print a copy.</p>
       ${passFields("Passphrase (12+ characters; a few unrelated words works well)", "Passphrase again")}
-      <label class="vchk"><input type="checkbox" id="vs-remember"> Remember on this computer</label>
+      <label class="vchk"><input type="checkbox" id="vs-remember" checked> Remember on this computer</label>
       <label class="vchk"><input type="checkbox" id="vs-delete" checked> After the encrypted copies are checked, delete the plaintext originals from the Data folder</label>
       <div id="vs-err" class="verr" role="alert"></div>
       <div class="vbtns"><button class="btn" id="vs-cancel">Cancel</button><button class="btn primary" id="vs-ok">Encrypt</button></div>`,

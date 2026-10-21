@@ -1,5 +1,9 @@
 # Release notes — Activity Dashboard
 
+## 00.03.002_261021 (Oct 21 2026)
+- When your data from the older version has been moved in and checked, the app offers to delete the older version's unencrypted copy in this browser. It only deletes it if you click OK.
+- "Remember on this computer" is ticked by default.
+
 ## 00.03.001_261021 (Oct 21 2026)
 - The copy each browser keeps is now encrypted too, with the same key. Nothing readable stays on the computer once the folder is encrypted, and nothing is cached while locked.
 - The recovery key screen recommends a password manager plus a printed copy, and has a Print button.

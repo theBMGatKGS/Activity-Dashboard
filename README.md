@@ -1,5 +1,5 @@
 # Activity Dashboard
-Revision **00.03.001_261021** · local-first app · encrypted Data folder (optional, in-browser AES-256-GCM) · installable (PWA) over https · no server, no sign-in, no network calls for data.
+Revision **00.03.002_261021** · local-first app · encrypted Data folder (optional, in-browser AES-256-GCM) · installable (PWA) over https · no server, no sign-in, no network calls for data.
 
 ## Use
 1. The app lives in **`<synced folder>/Dashboard/`** on the user's Mac. It is **not** in the notebook repo. To update, copy the new app files over the old ones; the deploy folder never contains `Data/`.
@@ -33,6 +33,8 @@ By-account view (planned 00.02), account-based Going Cold, the "My next three th
 ## Encryption (00.03)
 - Turn on: File → Encryption… (Data folder connected). Creates `Data/keyring.json` (wrapped key only) and stores every data file as `<name>.enc`. Plaintext originals are encrypted, read back, then deleted if you agreed.
 - Keys: random AES-256 data key; wrapped by the passphrase (PBKDF2-SHA256, 600,000 iterations) and by a recovery key shown once. The passphrase and recovery key are never stored anywhere by the app. "Remember on this computer" keeps a non-extractable key in this browser's IndexedDB.
+- Remember on this computer is ticked by default (00.03.002); untick it at setup or unlock, or use File → Encryption… → Forget.
+- Older build: after its cache is copied and every value reads back identical, the app asks once (OK/Cancel) whether to delete the old unencrypted database (00.03.002). Never deleted without OK or after a failed check.
 - Older build: put its names in `config.local.js` (copy `config.local.example.js`; git-ignored) to copy its browser cache and read its time logs/snapshot once.
 - Exporters: `DASH_PASSPHRASE=… node tools/encrypt_file.js Data/keyring.json snapshot in.js Data/inbox-snapshot.json.enc`.
 - Browser cache (00.03.001): once the folder is encrypted, the cached time events, entries, trend history, learned audiences and opened snapshot are stored in IndexedDB only as AES-256-GCM envelopes under the same key (purpose `cache`). Plaintext cache is encrypted on unlock; while locked nothing of it is read or written. Machine name, folder grant and settings stay plain (no data).

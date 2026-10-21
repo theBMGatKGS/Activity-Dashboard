@@ -44,13 +44,16 @@ def cache_clean(pg, extra=()):
     plain = [k for k in SECRET_KEYS if k in o and o[k] is not None and not (isinstance(o[k], dict) and o[k].get("dashCache") == 1)]
     return leaks, plain, o
 PASS1, PASS2 = "synthetic test passphrase one", "second passphrase from recovery"
-errors = []
+errors = []; dialogs = []; DLG = {"accept": True}
+def on_dialog(dlg):
+    dialogs.append(dlg.message); (dlg.accept() if DLG["accept"] else dlg.dismiss())
+DBS = "indexedDB.databases().then(d => d.map(x => x.name))"
 with sync_playwright() as p:
     b = p.chromium.launch()
     def page(m, d=data, appdir=app, init=None, q=None):
         ctx = b.new_context(viewport={"width": 1440, "height": 900}); ctx.expose_function("__fs", fs_for(d)); ctx.add_init_script(FS_JS)
         if init: ctx.add_init_script(init)
-        pg = ctx.new_page(); pg.on("pageerror", lambda e: errors.append(f"{m}: {e}")); pg.on("dialog", lambda dlg: dlg.accept())
+        pg = ctx.new_page(); pg.on("pageerror", lambda e: errors.append(f"{m}: {e}")); pg.on("dialog", on_dialog)
         pg.goto((appdir / "index.html").as_uri() + (q if q is not None else Q + m)); return pg
     def ready(pg): pg.wait_for_selector(".tile"); pg.evaluate("DASH.app.syncNow()"); pg.evaluate("DASH.app.flush()")
     def menu(pg, act): pg.click('.mtop:has-text("File")'); pg.click(f'[data-act="{act}"]')
@@ -58,6 +61,7 @@ with sync_playwright() as p:
     check((data / "time-mac.json").exists(), "start: unencrypted folder works as in 00.02 (time-mac.json written)")
     # --- turn on encryption from the menu
     menu(mac, "encryption"); mac.wait_for_selector("#vaultsetup")
+    check(mac.is_checked("#vs-remember"), "setup: 'Remember on this computer' is ticked by default"); mac.uncheck("#vs-remember")
     mac.fill("#vp1", "short"); mac.fill("#vp2", "short"); mac.click("#vs-ok")
     check("12 characters" in mac.inner_text("#vs-err"), "setup: a short passphrase is refused")
     mac.fill("#vp1", PASS1); mac.fill("#vp2", PASS1 + "x"); mac.click("#vs-ok"); check("don't match" in mac.inner_text("#vs-err"), "setup: mismatched passphrases refused")
@@ -77,6 +81,7 @@ with sync_playwright() as p:
     check("🔐" in mac.inner_text("#sync"), "sync chip shows the folder is encrypted")
     # --- reload: unlock dialog, wrong passphrase, remember
     mac.reload(); mac.wait_for_selector("#vaultunlock")
+    check(mac.is_checked("#vault-remember"), "unlock: 'Remember on this computer' is ticked by default"); mac.uncheck("#vault-remember")
     mac.fill("#vault-pass", "not the passphrase"); mac.click("#vault-ok"); mac.wait_for_function("document.querySelector('#vault-err').textContent.includes('Wrong')", timeout=20000)
     check(True, "unlock: wrong passphrase shows 'Wrong passphrase.'")
     mac.fill("#vault-pass", PASS1); mac.check("#vault-remember"); mac.click("#vault-ok"); ready(mac)
@@ -142,13 +147,33 @@ with sync_playwright() as p:
       r.onsuccess = () => { const t = r.result.transaction('kv', 'readwrite'), s = t.objectStore('kv'); s.put('oldpc', 'machine'); s.put(""" + json.dumps(ev[0]) + """, 'ownEvents'); s.put({ at: 'x', events: 0 }, 'migratedV2');
         t.oncomplete = () => { r.result.close(); window.__seeded = true; }; }; })();"""
     lg = page("legacy", d=d2, appdir=app2, init=init, q="?now=2026-10-19T08:00:00-05:00")
-    lg.wait_for_function("window.__seeded"); lg.reload(); ready(lg)
+    n0 = len(dialogs); lg.wait_for_function("window.__seeded"); lg.reload(); ready(lg)
+    asked = [m for m in dialogs[n0:] if "older version" in m]
     check(lg.evaluate("DASH.app.state.machine") == "oldpc" and lg.query_selector("#machinedlg") is None, "legacy cache: machine name copied from the older browser database (no name prompt)")
     check(lg.evaluate("DASH.app.state.entries.some(e => e.id === 'i-old1' && e.minutes === 35)"), "legacy cache: older build's time events copied")
     check(lg.evaluate("DASH.app.state.entries.some(e => e.id === 'i-other1')"), "legacy time-log kind accepted from another machine's file")
     check(lg.evaluate("DASH.app.state.snap && !DASH.app.state.snap.example"), "legacy snapshot file name + older variable name read")
     leaks, plain, o = cache_clean(lg); check(isinstance(o.get("ownEvents"), list), "unencrypted folder: cache stays as in 00.02 (no key exists)")
     check((d2 / "time-oldpc.json").exists() and json.loads((d2 / "time-oldpc.json").read_text())["kind"] == "dash-time-log", "legacy: this machine writes the current format")
+    check(len(asked) == 1 and "all match" in asked[0] and "legacy-test-db" not in lg.evaluate(DBS), "legacy delete: verified copy → one confirm → OK deletes the old database")
+    check(lg.evaluate("DASH.db.get('legacyImported').then(x => !!x.deleted)") and lg.evaluate("DASH.app.state.entries.some(e => e.id === 'i-old1')"), "legacy delete: data still there after the old copy is gone")
+    # decline: kept, not asked again; then a failed verification gives no offer
+    DLG["accept"] = False; n0 = len(dialogs)
+    dc = page("decline", d=d2, appdir=app2, init=init, q="?now=2026-10-19T08:00:00-05:00"); dc.wait_for_function("window.__seeded"); dc.reload(); ready(dc)
+    check(len([m for m in dialogs[n0:] if "older version" in m]) == 1 and "legacy-test-db" in dc.evaluate(DBS), "legacy decline: Cancel keeps the old database")
+    n1 = len(dialogs); dc.reload(); ready(dc); check(len(dialogs) == n1, "legacy decline: not asked again")
+    dc.evaluate("(async () => { const i = await DASH.db.get('legacyImported'); delete i.declined; await DASH.db.set('legacyImported', i); await DASH.db.set('audienceRules', { domainMap: { 'tampered.example': 'Owner/operator' } }); })()")
+    check(dc.evaluate("DASH.db.verifyLegacy('legacy-test-db').then(v => v.ok)") is False, "legacy verify: a value that differs fails the check")
+    n2 = len(dialogs); dc.reload(); ready(dc)
+    check(len(dialogs) == n2 and "legacy-test-db" in dc.evaluate(DBS) and "doesn't match" in dc.inner_text("#banner"), "legacy verify failed: no delete offer, old database kept, banner shown")
+    DLG["accept"] = True
+    # encrypted folder: copied cache is encrypted on unlock, verified through decryption, then offered for deletion
+    d3 = tmp / "Data3"; shutil.copytree(data, d3); n0 = len(dialogs)
+    le = page("legacyenc", d=d3, appdir=app2, init=init, q="?now=2026-10-19T08:00:00-05:00"); le.wait_for_function("window.__seeded"); le.reload()
+    le.wait_for_selector("#vaultunlock"); le.fill("#vault-pass", PASS2); le.click("#vault-ok"); ready(le)
+    asked = [m for m in dialogs[n0:] if "older version" in m]
+    check(len(asked) == 1 and "now stored encrypted" in asked[0] and "legacy-test-db" not in le.evaluate(DBS), "legacy + encrypted folder: verified after encryption, OK deletes the old database")
+    leaks, plain, _ = cache_clean(le); check(not leaks and not plain and le.evaluate("DASH.app.state.entries.some(e => e.id === 'i-old1')"), "legacy + encrypted folder: copied data kept, cache has no plaintext")
     b.close()
 check(not errors, "no page errors" + (f": {errors[:3]}" if errors else ""))
 print("T21 PASS" if ok else "T21 FAIL"); sys.exit(0 if ok else 1)

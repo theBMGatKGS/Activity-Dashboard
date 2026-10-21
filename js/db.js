@@ -90,6 +90,23 @@
     }
     return null;
   }
+  // 00.03.002: verify the copied older cache against the old database (values read back through get, so decrypted if encrypted),
+  // and delete the old database only when the user confirms. dataDir (a folder handle) is checked for presence only.
+  const canon = v => { if (Array.isArray(v)) return "[" + v.map(canon).join(",") + "]"; if (v && typeof v === "object") return "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}"; return JSON.stringify(v); };
+  async function verifyLegacy(name) {
+    const old = await readAll(name); if (!old || !Object.keys(old).length) return { ok: false, why: "the older cache can't be read" };
+    const bad = [];
+    for (const [k, v] of Object.entries(old)) {
+      if (v === undefined) continue;
+      const now = await get(k);
+      if (k === "dataDir") { if (!now) bad.push(k); continue; }
+      if (canon(now) !== canon(v)) bad.push(k);
+    }
+    return { ok: !bad.length, keys: Object.keys(old).length, why: bad.length ? "different: " + bad.join(", ") : null };
+  }
+  function deleteDb(name) {
+    return new Promise(res => { if (!name || name === NAME) { res(false); return; } const r = indexedDB.deleteDatabase(name); r.onsuccess = () => res(true); r.onerror = () => res(false); r.onblocked = () => res(false); });
+  }
   async function requireEncryption() { mustEncrypt = true; await setRaw("cacheEncrypted", true); }
   async function loadFlags() { mustEncrypt = (await getRaw("cacheEncrypted")) === true; return mustEncrypt; }
   function setCipher(c) { cipher = c || null; }
@@ -99,5 +116,5 @@
     for (const k of SECRET) { const v = await getRaw(k); if (v !== undefined && v !== null && !isEnv(v)) { await set(k, v); n++; } }
     return n;
   }
-  g.DASH = g.DASH || {}; g.DASH.db = { get, set, getRaw, exportAll, importAll, clearAll, migrateLegacy, setCipher, requireEncryption, loadFlags, encryptExisting, SECRET, usingMemory: () => !!mem };
+  g.DASH = g.DASH || {}; g.DASH.db = { get, set, getRaw, exportAll, importAll, clearAll, migrateLegacy, setCipher, requireEncryption, verifyLegacy, deleteDb, loadFlags, encryptExisting, SECRET, usingMemory: () => !!mem };
 })(window);

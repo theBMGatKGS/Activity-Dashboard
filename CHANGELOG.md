@@ -1,5 +1,10 @@
 # Changelog — Activity Dashboard
 
+## 00.03.002_261021 (Oct 21 2026)
+- Older-build cache: after the one-time copy (and, in an encrypted folder, after unlock and encryption) `DB.verifyLegacy` re-reads the old database and compares every value with the new cache read back through `get` (decrypted); the folder handle is checked for presence. Only if all match does a confirm dialog offer to delete the old plaintext database (`indexedDB.deleteDatabase`). Cancel is remembered (not asked again). A failed check keeps the old database and shows a banner; locked = no offer.
+- "Remember on this computer" ticked by default in the setup and unlock dialogs.
+- Tests: t21 adds legacy delete (accept, encrypted folder), decline (kept, not asked again), failed verification (no offer, kept) and remember-default checks (49 total).
+
 ## 00.03.001_261021 (Oct 21 2026)
 - Browser cache encrypted: once a keyring is seen, `ownEvents`, `timeEntries`, `calTombstones`, `history`, `audienceRules` and `openedSnapshot` are written to IndexedDB only as `{dashCache:1, env}` AES-256-GCM envelopes (same data key, purpose `cache`). Flag `cacheEncrypted` makes this permanent for the browser.
 - On unlock (passphrase, recovery key, remembered key, or turning encryption on) existing plaintext cache values are re-written encrypted, and in-page edits are merged in. Boot now unlocks before it reads the cache.
