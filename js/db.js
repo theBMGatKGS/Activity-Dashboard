@@ -104,8 +104,18 @@
     }
     return { ok: !bad.length, keys: Object.keys(old).length, why: bad.length ? "different: " + bad.join(", ") : null };
   }
-  function deleteDb(name) {
-    return new Promise(res => { if (!name || name === NAME) { res(false); return; } const r = indexedDB.deleteDatabase(name); r.onsuccess = () => res(true); r.onerror = () => res(false); r.onblocked = () => res(false); });
+  // 00.03.003: "blocked" isn't a failure (the delete stays queued until other tabs close), so wait for success/error up to 5 s,
+  // then trust only what indexedDB.databases() reports. Returns true only when the database is really gone.
+  async function dbGone(name) {
+    try { if (indexedDB.databases) return !(await indexedDB.databases()).some(d => d.name === name); } catch (e) { /* unknown */ }
+    return false;
+  }
+  async function deleteDb(name) {
+    if (!name || name === NAME) return false;
+    const fired = await new Promise(res => { let r; try { r = indexedDB.deleteDatabase(name); } catch (e) { res("error"); return; }
+      const t = setTimeout(() => res("pending"), 5000); r.onsuccess = () => { clearTimeout(t); res("success"); }; r.onerror = () => { clearTimeout(t); res("error"); }; });
+    if (indexedDB.databases) return dbGone(name);
+    return fired === "success";
   }
   async function requireEncryption() { mustEncrypt = true; await setRaw("cacheEncrypted", true); }
   async function loadFlags() { mustEncrypt = (await getRaw("cacheEncrypted")) === true; return mustEncrypt; }
@@ -116,5 +126,5 @@
     for (const k of SECRET) { const v = await getRaw(k); if (v !== undefined && v !== null && !isEnv(v)) { await set(k, v); n++; } }
     return n;
   }
-  g.DASH = g.DASH || {}; g.DASH.db = { get, set, getRaw, exportAll, importAll, clearAll, migrateLegacy, setCipher, requireEncryption, verifyLegacy, deleteDb, loadFlags, encryptExisting, SECRET, usingMemory: () => !!mem };
+  g.DASH = g.DASH || {}; g.DASH.db = { get, set, getRaw, exportAll, importAll, clearAll, migrateLegacy, setCipher, requireEncryption, verifyLegacy, deleteDb, dbGone, loadFlags, encryptExisting, SECRET, usingMemory: () => !!mem };
 })(window);

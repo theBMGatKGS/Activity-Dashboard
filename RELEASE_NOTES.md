@@ -1,5 +1,9 @@
 # Release notes — Activity Dashboard
 
+## 00.03.003_261021 (Oct 21 2026)
+- Stricter security: the page runs only its own code and talks only to its own address.
+- Deleting the older version's copy is more reliable when another tab has it open.
+
 ## 00.03.002_261021 (Oct 21 2026)
 - When your data from the older version has been moved in and checked, the app offers to delete the older version's unencrypted copy in this browser. It only deletes it if you click OK.
 - "Remember on this computer" is ticked by default.

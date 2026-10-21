@@ -1,5 +1,12 @@
 # Changelog — Activity Dashboard
 
+## 00.03.003_261021 (Oct 21 2026)
+- QA F2: Content Security Policy meta (`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; connect-src 'self'; form-action 'none'`). `style-src 'unsafe-inline'` is needed only for the UI's inline style attributes; scripts are `'self'` only. Verified served over http (installed-app origin) and from `file://`, with no CSP violations.
+- QA F1: `deleteDb` no longer treats `blocked` as failure. It waits up to 5 s, then checks `indexedDB.databases()`; a delete that completes later is recorded on the next launch. T21 waits for the stored `deleted`/`declined` flags instead of reading them immediately. T21 seeds the older database from a blank same-origin page before the app loads (the old in-page seeding raced the app's boot). Playwright wait predicates are passed as functions, since the CSP correctly blocks string eval.
+- QA C2: `validKeyring` requires exactly 600,000 iterations; the app no longer passes a configurable iteration count.
+- Cosmetic: removed a leftover company-name placeholder (sync.js message, app.css comment).
+- Tests: vault V22 also rejects 700,000 and 100,000; T22 checks for CSP violations over http and file://; T21 also listens for CSP violations.
+
 ## 00.03.002_261021 (Oct 21 2026)
 - Older-build cache: after the one-time copy (and, in an encrypted folder, after unlock and encryption) `DB.verifyLegacy` re-reads the old database and compares every value with the new cache read back through `get` (decrypted); the folder handle is checked for presence. Only if all match does a confirm dialog offer to delete the old plaintext database (`indexedDB.deleteDatabase`). Cancel is remembered (not asked again). A failed check keeps the old database and shows a banner; locked = no offer.
 - "Remember on this computer" ticked by default in the setup and unlock dialogs.

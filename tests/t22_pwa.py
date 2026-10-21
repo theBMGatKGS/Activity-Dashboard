@@ -25,6 +25,7 @@ url = f"http://127.0.0.1:{srv.server_address[1]}/index.html?now=2026-10-19T08:00
 errors = []
 with sync_playwright() as p:
     b = p.chromium.launch(); ctx = b.new_context(viewport={"width": 1280, "height": 860}); pg = ctx.new_page(); pg.on("pageerror", lambda e: errors.append(str(e)))
+    csp = []; pg.on("console", lambda msg: csp.append("http: " + msg.text) if "Content Security Policy" in msg.text else None)
     pg.goto(url); pg.wait_for_selector(".tile"); pg.evaluate("navigator.serviceWorker.ready.then(() => true)")
     pg.reload(); pg.wait_for_selector(".tile")
     check(pg.evaluate("!!navigator.serviceWorker.controller"), "service worker controls the page")
@@ -37,11 +38,19 @@ with sync_playwright() as p:
     check(not any("/Data/" in k or "config.local" in k or ".enc" in k or "keyring" in k for k in keys), "nothing from Data/, config.local.js, keyring or .enc is cached")
     ctx.set_offline(True); pg.reload(); pg.wait_for_selector(".tile", timeout=10000)
     check(pg.evaluate("DASH.app.REV") == rev and pg.query_selector(".tile") is not None, "offline: the app opens from the cache")
+    pol = pg.evaluate("document.querySelector('meta[http-equiv=Content-Security-Policy]').content")
+    check(all(x in pol for x in ["default-src 'self'", "script-src 'self'", "object-src 'none'", "base-uri 'none'", "connect-src 'self'"]) and "unsafe-eval" not in pol and "script-src 'self' 'unsafe-inline'" not in pol, "CSP meta present and strict for scripts")
+    check(pg.evaluate("fetch('https://example.com/x').then(() => 'sent').catch(() => 'blocked')") == "blocked", "CSP: connections to other sites are blocked")
+    check(pg.evaluate("new Promise(r => { const s = document.createElement('script'); s.textContent = 'window.__inl = 1'; document.head.appendChild(s); setTimeout(() => r(window.__inl === undefined ? 'blocked' : 'ran'), 200); })") == "blocked", "CSP: injected inline script is blocked")
+    csp.clear()   # the two refusals above were provoked on purpose
     check(pg.evaluate("fetch('Data/probe.js').then(() => 'net').catch(() => 'blocked')") == "blocked", "offline: Data/ is not served from the cache")
     ctx.set_offline(False)
-    c2 = b.new_context(); p2 = c2.new_page(); p2.on("pageerror", lambda e: errors.append("file: " + str(e)))
+    c2 = b.new_context(); p2 = c2.new_page(); p2.on("pageerror", lambda e: errors.append("file: " + str(e))); p2.on("console", lambda msg: csp.append("file: " + msg.text) if "Content Security Policy" in msg.text else None)
     p2.goto((app / "index.html").as_uri() + "?now=2026-10-19T08:00:00-05:00&machine=mac"); p2.wait_for_selector(".tile")
     check(p2.evaluate("!navigator.serviceWorker || !navigator.serviceWorker.controller"), "file:// still works (no service worker there)")
+    p2.click('.mtop:has-text("Help")'); p2.click('[data-act="hHelp"]'); p2.wait_for_timeout(300)
+    check(p2.evaluate("DASH.app.state.snap && document.querySelectorAll('.tile').length > 3"), "file://: example snapshot script loaded and rendered under the CSP")
+    check(not [c for c in csp if "violat" in c.lower() or "refused" in c.lower()], f"no CSP violations over http or file:// ({[c[:100] for c in csp if 'refused' in c.lower()][:2]})")
     b.close()
 srv.shutdown()
 check(not errors, "no page errors" + (f": {errors[:3]}" if errors else ""))

@@ -10,7 +10,7 @@ const FAST = { iter: 100000 }, PASS = "correct horse battery staple", TEXT = JSO
   check(real.keyring.slots.passphrase.iter === 600000 && real.keyring.slots.recovery.iter === 600000 && V.ITER === 600000, "V1 default PBKDF2-SHA256 iterations are 600,000 on both slots");
   console.log(`   (keyring creation at 600k took ${ms} ms)`);
   const { keyring, recoveryKey, key } = await V.createKeyring(PASS, FAST);
-  check(V.validKeyring(keyring) && V.validKeyring(JSON.parse(JSON.stringify(keyring))), "V2 keyring is valid and survives JSON");
+  check(V.validKeyring(real.keyring) && V.validKeyring(JSON.parse(JSON.stringify(real.keyring))) && !V.validKeyring(keyring), "V2 keyring is valid and survives JSON (a test-speed keyring is not accepted)");
   const krText = JSON.stringify(keyring);
   check(!/[0-9a-f]{64}/i.test(krText) && !krText.includes(PASS) && !krText.includes(recoveryKey) && !krText.includes(V.normRecovery(recoveryKey)), "V3 keyring holds no passphrase, recovery key or raw key");
   check(/^([0-9A-HJKMNP-TV-Z]{4}-){7}[0-9A-HJKMNP-TV-Z]{4}$/.test(recoveryKey) && V.validRecovery(recoveryKey), "V4 recovery key: 32 Crockford base32 chars in 8 groups");
@@ -38,15 +38,17 @@ const FAST = { iter: 100000 }, PASS = "correct horse battery staple", TEXT = JSO
   const r4 = await V.replaceRecovery(keyring, PASS, FAST);
   check(await rejects(V.unlockWithRecovery(r4.keyring, recoveryKey)) && await V.decrypt(await V.unlockWithRecovery(r4.keyring, r4.recoveryKey), r4.keyring, ct) === TEXT, "V20 new recovery key: old one stops, new one works");
   check(await rejects(V.createKeyring("short", FAST), /12 characters/) && V.passProblem("aaaaaaaaaaaaaa") && !V.passProblem(PASS), "V21 passphrase rules (12+ chars, not one repeated char)");
-  check(!V.validKeyring(Object.assign({}, keyring, { slots: { passphrase: Object.assign({}, keyring.slots.passphrase, { iter: 1000 }), recovery: keyring.slots.recovery } })), "V22 keyring with weak iterations is rejected");
+  check(!V.validKeyring(Object.assign({}, keyring, { slots: { passphrase: Object.assign({}, keyring.slots.passphrase, { iter: 1000 }), recovery: keyring.slots.recovery } }))
+    && [100000, 599999, 700000].every(n => !V.validKeyring(Object.assign({}, real.keyring, { slots: { passphrase: Object.assign({}, real.keyring.slots.passphrase, { iter: n }), recovery: real.keyring.slots.recovery } })))
+    && V.validKeyring(real.keyring), "V22 keyring must use exactly 600,000 iterations (100k, 599,999, 700k rejected)");
   let threw = false; try { V.parseKeyring("{}"); } catch (e) { threw = true; } check(threw, "V23 junk keyring.json is rejected");
   { // V24 tools/encrypt_file.js writes files the app's format reads (pipeline route); passphrase only via the environment
     const fs = require("fs"), os = require("os"), cp = require("child_process"), d = fs.mkdtempSync(path.join(os.tmpdir(), "vault-"));
-    fs.writeFileSync(path.join(d, "keyring.json"), JSON.stringify(keyring)); fs.writeFileSync(path.join(d, "snap.js"), "window.DASH_SNAPSHOT = " + TEXT + ";\n");
+    fs.writeFileSync(path.join(d, "keyring.json"), JSON.stringify(real.keyring)); fs.writeFileSync(path.join(d, "snap.js"), "window.DASH_SNAPSHOT = " + TEXT + ";\n");
     const tool = path.join(__dirname, "../tools/encrypt_file.js"), args = [tool, path.join(d, "keyring.json"), "snapshot", path.join(d, "snap.js"), path.join(d, "out.enc")];
     const bad = cp.spawnSync("node", args, { env: Object.assign({}, process.env, { DASH_PASSPHRASE: "wrong passphrase!!" }) });
     const good = cp.spawnSync("node", args, { env: Object.assign({}, process.env, { DASH_PASSPHRASE: PASS }) });
-    check(bad.status !== 0 && good.status === 0 && await V.decrypt(key, keyring, fs.readFileSync(path.join(d, "out.enc"), "utf8"), "snapshot") === TEXT, "V24 tools/encrypt_file.js output opens in the app format; wrong passphrase refused");
+    check(bad.status !== 0 && good.status === 0 && await V.decrypt(real.key, real.keyring, fs.readFileSync(path.join(d, "out.enc"), "utf8"), "snapshot") === TEXT, "V24 tools/encrypt_file.js output opens in the app format; wrong passphrase refused");
   }
   console.log(`\n${pass}/${pass + fail} passed`); process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

@@ -41,7 +41,7 @@
   }
   function validKeyring(o) {
     return !!(o && o.kind === "dash-keyring" && o.version === VERSION && typeof o.keyId === "string" && o.slots && o.slots.passphrase && o.slots.recovery
-      && ["passphrase", "recovery"].every(n => { const s = o.slots[n]; return s.kdf === "PBKDF2-SHA256" && Number.isInteger(s.iter) && s.iter >= 100000 && s.salt && s.iv && s.wrapped; }));
+      && ["passphrase", "recovery"].every(n => { const s = o.slots[n]; return s.kdf === "PBKDF2-SHA256" && s.iter === ITER && s.salt && s.iv && s.wrapped; }));
   }
   function parseKeyring(text) { let o; try { o = JSON.parse(text); } catch (e) { throw new Error("keyring.json is not valid JSON."); } if (!validKeyring(o)) throw new Error("keyring.json is not an Activity Dashboard keyring."); return o; }
   // opts.iter is for tests only (fast); the app always uses ITER.

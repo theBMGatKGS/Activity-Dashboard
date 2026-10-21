@@ -1,5 +1,5 @@
 # Activity Dashboard
-Revision **00.03.002_261021** · local-first app · encrypted Data folder (optional, in-browser AES-256-GCM) · installable (PWA) over https · no server, no sign-in, no network calls for data.
+Revision **00.03.003_261021** · local-first app · encrypted Data folder (optional, in-browser AES-256-GCM) · installable (PWA) over https · no server, no sign-in, no network calls for data.
 
 ## Use
 1. The app lives in **`<synced folder>/Dashboard/`** on the user's Mac. It is **not** in the notebook repo. To update, copy the new app files over the old ones; the deploy folder never contains `Data/`.
@@ -40,6 +40,12 @@ By-account view (planned 00.02), account-based Going Cold, the "My next three th
 - Browser cache (00.03.001): once the folder is encrypted, the cached time events, entries, trend history, learned audiences and opened snapshot are stored in IndexedDB only as AES-256-GCM envelopes under the same key (purpose `cache`). Plaintext cache is encrypted on unlock; while locked nothing of it is read or written. Machine name, folder grant and settings stay plain (no data).
 - Recovery key: keep it in a password manager **and** a printed copy (the setup dialog has Copy, Print… and Save as .txt…). Never in the Data folder, OneDrive or email.
 - Not encrypted: CSV/JSON exports you save on purpose (they ask first), and the cache of a folder that isn't encrypted.
+
+## Content Security Policy (00.03.003)
+`index.html` sets `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; connect-src 'self'; form-action 'none'`.
+- Why `style-src 'unsafe-inline'`: the UI sets layout with inline `style="…"` attributes (58 of them). Inline styles can't run script; scripts stay `'self'` only (no inline script, no eval).
+- Same policy works from GitHub Pages, the installed app (same origin) and `file://` (Chromium treats the page's own folder as `'self'`); tested in T22. When the GitHub data hub is added, `connect-src` gains exactly one entry: the GitHub API host.
+- A `<meta>` CSP can't set `frame-ancestors`; GitHub Pages can't send headers, so that one is not available.
 
 ## Install (00.03)
 `manifest.webmanifest` + `sw.js`. Served over https (e.g. GitHub Pages) Edge/Chrome offer Install; the service worker caches the app shell only (never `Data/`). Opened from disk (`file://`) it runs as before without the service worker.

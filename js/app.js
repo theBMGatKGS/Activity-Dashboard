@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const R = DASH.rules, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.03.002_261021";
+  const REV = "00.03.003_261021";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -278,12 +278,13 @@
   // offer once to delete the old plaintext database. Never without confirmation; never if verification fails or the cache is locked.
   async function offerLegacyDelete() {
     const info = await DB.get("legacyImported"); if (!info || info.deleted || info.declined) return;
+    if (await DB.dbGone(info.from)) { await DB.set("legacyImported", Object.assign({}, info, { deleted: new Date().toISOString() })); return; }   // a queued delete finished later
     if (locked()) return;
     const v = await DB.verifyLegacy(info.from);
     if (!v.ok) { S.legacyVerify = v; if (v.why && !/can't be read/.test(v.why)) banner(`⚠ The older browser cache was copied, but it doesn't match on read-back (${v.why}); it is kept.`, true); return; }
     const enc = !!S.vault.kr;
     const yes = confirm(`Your data from the older version of this dashboard was copied into this one and checked (${v.keys} item(s), all match${enc ? ", now stored encrypted" : ""}).\n\nThe older version's copy in this browser is still stored unencrypted. Delete it now?\n\nOK = delete the old copy. Cancel = keep it (you won't be asked again).`);
-    if (yes) { const ok = await DB.deleteDb(info.from); await DB.set("legacyImported", Object.assign({}, info, ok ? { deleted: new Date().toISOString() } : {})); toast(ok ? "Old unencrypted browser copy deleted." : "The old copy couldn't be deleted (close other tabs of the older version and reload)."); }
+    if (yes) { const ok = await DB.deleteDb(info.from); await DB.set("legacyImported", Object.assign({}, info, ok ? { deleted: new Date().toISOString() } : {})); toast(ok ? "Old unencrypted browser copy deleted." : "The old copy is waiting to be deleted: close any other tab of the older version. It's checked again on the next launch."); }
     else await DB.set("legacyImported", Object.assign({}, info, { declined: new Date().toISOString() }));
   }
   // 00.03.001: the browser cache uses the same data key (purpose "cache"). On unlock: plaintext cache values are encrypted in place,
@@ -368,7 +369,7 @@
       d.querySelector("#vs-ok").onclick = async () => {
         const p = checkNew(d); if (p) { d.querySelector("#vs-err").textContent = p; return; }
         d.querySelector("#vs-ok").disabled = true; d.querySelector("#vs-err").textContent = "Creating the key…";
-        try { const r = await V.createKeyring(d.querySelector("#vp1").value, CFG.kdfIterations ? { iter: CFG.kdfIterations } : undefined);
+        try { const r = await V.createKeyring(d.querySelector("#vp1").value);
           done(Object.assign(r, { remember: d.querySelector("#vs-remember").checked, del: d.querySelector("#vs-delete").checked })); }
         catch (e) { d.querySelector("#vs-err").textContent = e.message || String(e); d.querySelector("#vs-ok").disabled = false; }
       };
@@ -440,14 +441,14 @@
         <div id="vc-err" class="verr" role="alert"></div><div class="vbtns"><button class="btn" id="vc-cancel">Cancel</button><button class="btn primary" id="vc-ok">Change</button></div>`,
       (d, done) => { d.querySelector("#vc-cancel").onclick = () => done(null);
         d.querySelector("#vc-ok").onclick = async () => { const p = checkNew(d); if (p) { d.querySelector("#vc-err").textContent = p; return; }
-          try { done(await V.changePassphrase(S.vault.kr, d.querySelector("#vc-old").value, false, d.querySelector("#vp1").value, CFG.kdfIterations ? { iter: CFG.kdfIterations } : undefined)); } catch (e) { d.querySelector("#vc-err").textContent = e.message; } }; });
+          try { done(await V.changePassphrase(S.vault.kr, d.querySelector("#vc-old").value, false, d.querySelector("#vp1").value)); } catch (e) { d.querySelector("#vc-err").textContent = e.message; } }; });
       if (r) { await writeText(KEYRING, JSON.stringify(r, null, 1) + "\n"); S.vault.kr = r; toast("Passphrase changed. Your other computers ask for the new one next time they're locked."); }
     }
     if (act === "rk") {
       const pass = await dialog("vaultnewrk", `<b class="vt">New recovery key</b><p>The old recovery key stops working.</p><label class="vlab">Passphrase<input type="password" id="vr-pass"></label>
         <div id="vr-err" class="verr" role="alert"></div><div class="vbtns"><button class="btn" id="vr-cancel">Cancel</button><button class="btn primary" id="vr-ok">Make new key</button></div>`,
       (d, done) => { d.querySelector("#vr-cancel").onclick = () => done(null);
-        d.querySelector("#vr-ok").onclick = async () => { try { done(await V.replaceRecovery(S.vault.kr, d.querySelector("#vr-pass").value, CFG.kdfIterations ? { iter: CFG.kdfIterations } : undefined)); } catch (e) { d.querySelector("#vr-err").textContent = e.message; } }; });
+        d.querySelector("#vr-ok").onclick = async () => { try { done(await V.replaceRecovery(S.vault.kr, d.querySelector("#vr-pass").value)); } catch (e) { d.querySelector("#vr-err").textContent = e.message; } }; });
       if (pass) { await recoveryDialog(pass.recoveryKey, "Your new recovery key"); await writeText(KEYRING, JSON.stringify(pass.keyring, null, 1) + "\n"); S.vault.kr = pass.keyring; toast("New recovery key saved in the keyring. The old one no longer works."); }
     }
   }
