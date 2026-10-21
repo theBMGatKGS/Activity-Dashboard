@@ -48,7 +48,8 @@
   // Parse one time file. Returns {machine, events, bad} — never throws on content, so one broken file can't stop the merge.
   function parseTimeFile(text, name) {
     let o; try { o = JSON.parse(text); } catch (e) { return { machine: null, events: [], bad: `${name}: not valid JSON` }; }
-    if (!o || o.kind !== "dash-time-log" || o.version !== 1 || !Array.isArray(o.events)) return { machine: null, events: [], bad: `${name}: not a Example Co time log` };
+    const kinds = ["dash-time-log"].concat((g.DASH_CONFIG && g.DASH_CONFIG.legacyTimeKinds) || []);   // 00.03: older builds' time logs
+    if (!o || !kinds.includes(o.kind) || o.version !== 1 || !Array.isArray(o.events)) return { machine: null, events: [], bad: `${name}: not a Example Co time log` };
     const base = fileMachine(name), probs = [];
     let events = o.events.filter(validEvent).map(normalize);
     if (events.length !== o.events.length) probs.push(`${o.events.length - events.length} invalid event(s) ignored`);

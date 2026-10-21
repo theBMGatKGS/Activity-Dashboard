@@ -168,3 +168,14 @@ table.tbl select{background:var(--surface2);border:1px solid var(--line);border-
 .syncchip{cursor:pointer;font:inherit;font-size:11px}
 .syncchip.stale{border-color:#d29922;color:#f2cc60}
 @media print{.syncchip,#machine{display:none!important}}
+
+/* 00.03 encryption dialogs (dark underground theme) */
+.vaultdlg{width:500px;max-width:calc(100vw - 32px)}
+.vaultdlg .vt{font-size:14px}
+.vlab{display:block;margin:8px 0 0;color:var(--muted)}
+.vlab input{display:block;width:100%;box-sizing:border-box;margin-top:3px;background:var(--surface2);border:1px solid var(--line);border-radius:6px;padding:5px 8px;color:var(--ink)}
+.vchk{display:flex;gap:6px;align-items:flex-start;margin-top:10px;color:var(--muted)}
+.verr{min-height:16px;margin-top:8px;color:#e0787c}
+.vbtns{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.vcol{display:flex;flex-direction:column;gap:6px;align-items:stretch;margin-top:8px}
+.rkbox{margin:10px 0;padding:10px;font-size:15px;letter-spacing:.5px;text-align:center;background:var(--bg);border:1px dashed var(--accent2);border-radius:8px;user-select:all;word-break:break-all}

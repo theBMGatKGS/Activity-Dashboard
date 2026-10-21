@@ -1,5 +1,11 @@
 # Release notes — Activity Dashboard
 
+## 00.03.000_261021 (Oct 21 2026)
+Your data folder can now be encrypted, and the app can be installed.
+- File → Encryption… encrypts every data file in the connected Data folder in the browser (AES-256-GCM). Pick a passphrase; save the recovery key it shows once. Other computers unlock with the same passphrase (or the recovery key, then set a new passphrase).
+- Existing plaintext files are encrypted, checked and removed. Nothing readable stays in the synced folder.
+- Opened from its https address in Edge or Chrome, it installs as an app (own window, works offline). Opening `index.html` from disk still works.
+
 ## 00.02.000_261019 (Oct 19 2026)
 Two-machine time sync through a cloud-synced folder (e.g. OneDrive). Open the same `Dashboard/index.html` on two computers in Chrome or Edge, name each machine once, and connect the `Dashboard/Data` folder. Each machine writes only its own `Data/time-<machine>.json`, an append-only event log; all files (including sync-conflict copies) are merged deterministically, last writer wins per entry.
 

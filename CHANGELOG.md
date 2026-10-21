@@ -1,4 +1,15 @@
 # Changelog — Activity Dashboard
+
+## 00.03.000_261021 (Oct 21 2026)
+- Encrypted Data folder (`js/vault.js`, Web Crypto only). File → Encryption… creates `Data/keyring.json`: one random AES-256-GCM data key, wrapped twice (passphrase slot: PBKDF2-SHA256, 600,000 iterations, 16-byte salt; recovery slot: same KDF over a random 160-bit recovery key shown once as 8 groups of 4 Crockford base32 characters). Unlocked keys are non-extractable CryptoKeys.
+- Every data file is stored as `<name>.enc` (kind `dash-encrypted` v1: random 96-bit IV per write, AAD = keyring id + purpose `time`/`snapshot`/`log`): `time-<machine>.json.enc`, `inbox-snapshot.json.enc`, `notebook-log.js.enc`. OneDrive conflict copies `time-mac.json-PC.enc` map to `time-mac-PC.json` as before.
+- One-time migration: plaintext data files in an encrypted folder are encrypted (time files merged into an existing .enc twin; a snapshot kept only if newer), read back and compared, then deleted if this computer agreed (default on at setup; File → Encryption… → Delete plaintext originals later). Unchanged plaintext isn't re-encrypted each poll. A plaintext snapshot dropped in later is handled the same way.
+- Unlock per session or "Remember on this computer"; recovery-key unlock forces a new passphrase; change passphrase; new recovery key (old one stops); Lock now (also forgets). While locked nothing is read or written; sync chip shows 🔒 Data locked. Another computer turning on encryption is picked up on the next sync.
+- Older build migration (names in git-ignored `config.local.js`, template `config.local.example.js`): `legacyDbNames` copies an older IndexedDB cache once (only in a browser that has no machine name yet; the old database is left alone); `legacyTimeKinds` accepts older time-log kinds; `snapshotNames`/`notebookLogNames` add older file names; older `window.*SNAPSHOT` variable names are read.
+- `tools/encrypt_file.js`: encrypts a snapshot/log/time file in the app's format (passphrase from `DASH_PASSPHRASE` only), for an exporter that must never write plaintext into the synced folder.
+- Installable app: `manifest.webmanifest` (standalone, dark theme colours, 192/512/maskable icons), `sw.js` (versioned app-shell cache, network first; never caches `Data/`, `config.local.js`, keyring or `.enc`). Registered only on http(s); `file://` keeps working without it. Help → Install app… when the browser offers it.
+- Sync rules unchanged (automatic fill < adjustment < removal; last writer wins by timestamp, then machine name).
+- Tests: `vault.test.js` (24), `t21_vault.py` (31 checks, two simulated machines on an encrypted folder + legacy migration), `t22_pwa.py` (15 checks, served over http, installability via CDP, offline).
 ## 00.02.000_261019 (Oct 19 2026)
 - Two-machine sync through OneDrive. Same app opened from `<synced folder>/Dashboard/index.html` in Edge/Chrome on the Mac and the work PC.
 - First run: name the machine (a–z, 0–9) and grant `Dashboard/Data` with the File System Access API; the handle is stored in IndexedDB; permission is re-checked on load with a one-click Reconnect.

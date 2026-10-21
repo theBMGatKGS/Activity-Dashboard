@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const R = DASH.rules, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.02.000_261019";
+  const REV = "00.03.000_261021";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -23,15 +23,17 @@
     return new Promise(res => { const s = document.createElement("script"); s.src = src + "?t=" + Date.now(); s.onload = () => res(true); s.onerror = () => res(false); document.head.appendChild(s); });
   }
   async function boot() {
-    wireMenus();
+    wireMenus(); registerPWA();
+    try { const lg = await DB.migrateLegacy(CFG.legacyDbNames || []); if (lg) S.legacyImported = lg; } catch (e) { banner("⚠ The older browser cache couldn't be copied: " + (e.message || e), true); }
     S.history = (await DB.get("history")) || [];
     S.own = (await DB.get("ownEvents")) || [];
     await setupMachine();
     await connectStored();
+    if (S.dir) { await loadKeyring(); await ensureUnlocked(); }
     recompute();
     let raw = null, from = "";
     if (S.dir) { const r = await readDirSnapshot(); if (r) { raw = r; from = "Inbox Exporter snapshot"; } }
-    if (!raw && await loadScript(CFG.snapshotPath || "Data/inbox-snapshot.js") && window.DASH_SNAPSHOT) { raw = window.DASH_SNAPSHOT; from = "Inbox Exporter snapshot"; }
+    if (!raw && !S.vault.kr && await loadScript(CFG.snapshotPath || "Data/inbox-snapshot.js") && window.DASH_SNAPSHOT) { raw = window.DASH_SNAPSHOT; from = "Inbox Exporter snapshot"; }
     const opened = await DB.get("openedSnapshot");
     if (opened && (!raw || new Date(opened.generated_at) > new Date(raw.generated_at))) { raw = opened; from = "opened file"; }
     if (!raw && await loadScript(CFG.examplePath || "examples/example-snapshot.js") && window.DASH_EXAMPLE_SNAPSHOT) { raw = window.DASH_EXAMPLE_SNAPSHOT; from = "example snapshot"; }
@@ -43,7 +45,7 @@
   // Data/notebook-log.js is made on the box by tools/make_log_js.py (only "- [log]" lines). Missing file = nothing to do; File → Import stays the fallback.
   async function autoloadLog() {
     if (S.dir) { const L = await readDirLog(); if (L) { importLog("notebook-log.js", L.lines.join("\n"), true); return; } }
-    if (!(await loadScript(CFG.notebookLogPath || "Data/notebook-log.js")) || !window.DASH_NOTEBOOK_LOG) return;
+    if (S.vault.kr || !(await loadScript(CFG.notebookLogPath || "Data/notebook-log.js")) || !window.DASH_NOTEBOOK_LOG) return;
     const L = window.DASH_NOTEBOOK_LOG; if (!L || !Array.isArray(L.lines)) { banner("Data/notebook-log.js is not in the expected format; use File → Import notebook log….", true); return; }
     importLog("notebook-log.js", L.lines.join("\n"), true);
   }
@@ -152,13 +154,12 @@
     return track(wPromise);
   }
   async function writeOwn() {
-    if (!S.dir || !S.granted || isExample()) return;
-    const name = R2.fileName(S.machine);
+    if (!S.dir || !S.granted || isExample() || locked()) return;
+    const inner = R2.fileName(S.machine), name = S.vault.kr ? inner + ENC : inner;   // 00.03: encrypted folder → time-<machine>.json.enc
     try {
-      const fh = await S.dir.getFileHandle(name, { create: true });
-      const w = await fh.createWritable();            // Chromium writes to a temporary swap file; close() swaps it in (atomic)
-      await w.write(R2.serialize(S.machine, S.own, new Date().toISOString(), S.myReports)); await w.close();
-      const f = await fh.getFile(); S.seen[name] = f.lastModified + ":" + f.size; S.fileEvents[name] = S.own.filter(e => e.machine === S.machine); delete S.fileProblems[name];
+      let text = R2.serialize(S.machine, S.own, new Date().toISOString(), S.myReports);
+      if (S.vault.kr) text = await V.encrypt(S.vault.key, S.vault.kr, "time", text);
+      const f = await writeText(name, text); S.seen[name] = f.lastModified + ":" + f.size; S.fileEvents[inner] = S.own.filter(e => e.machine === S.machine); delete S.fileProblems[name];
     } catch (e) { S.problems.push(`could not write ${name}: ${e.message || e}`); }
     renderSync();
   }
@@ -240,9 +241,210 @@
     if (!S.own.length || !Object.keys(S.fileEvents).includes(R2.fileName(S.machine))) await writeOwn();
     toast("Data folder connected. Syncing every " + POLL_MS / 1000 + " s.");
   }
+  // ---------- encryption (00.03) ----------
+  // A Data folder with keyring.json is encrypted: every data file is <name>.enc (AES-256-GCM, js/vault.js), plaintext data files
+  // found there are encrypted on the next sync and (if you agreed) deleted. Without keyring.json the folder works as in 00.02.
+  const V = DASH.vault, ENC = ".enc", KEYRING = "keyring.json";
+  const SNAP_NAMES = ["inbox-snapshot.json", "inbox-snapshot.js"].concat(CFG.snapshotNames || []), LOG_NAMES = ["notebook-log.js"].concat(CFG.notebookLogNames || []);
+  S.vault = { kr: null, key: null, locked: false, plainLeft: [], plainDone: {} };
+  const locked = () => !!(S.vault.kr && !S.vault.key);
+  // "time-mac.json.enc" → "time-mac.json"; a OneDrive conflict copy "time-mac.json-WORKPC.enc" → "time-mac-WORKPC.json"
+  function innerName(n) { if (!/\.enc$/i.test(n)) return n; const b = n.slice(0, -4); return /\.(json|js)$/i.test(b) ? b : b.replace(/\.(json|js)([^.]*)$/i, "$2.$1"); }
+  const isSnapName = n => SNAP_NAMES.includes(n) || /^inbox-snapshot(?:[^a-z0-9][^/]*)?\.jso?n?$/i.test(n);
+  const isLogName = n => LOG_NAMES.includes(n) || /^notebook-log(?:[^a-z0-9][^/]*)?\.js$/i.test(n);
+  const purposeOf = n => R2.isTimeFile(n) ? "time" : isSnapName(n) ? "snapshot" : isLogName(n) ? "log" : null;
+  async function writeText(name, text) {
+    const fh = await S.dir.getFileHandle(name, { create: true });
+    const w = await fh.createWritable();            // Chromium writes to a temporary swap file; close() swaps it in (atomic)
+    await w.write(text); await w.close(); return fh.getFile();
+  }
+  async function readName(name) { const h = await S.dir.getFileHandle(name); return readText(h); }
+  async function loadKeyring() {
+    try { const r = await readName(KEYRING); S.seen[KEYRING] = r.sig; const kr = V.parseKeyring(r.text);
+      if (S.vault.kr && S.vault.kr.keyId !== kr.keyId) { S.vault.key = null; }   // a different keyring replaced this one
+      S.vault.kr = kr; return kr; }
+    catch (e) { if (e && e.name !== "NotFoundError") S.problems.push(`${KEYRING}: ${e.message || e}`); return null; }
+  }
+  async function ensureUnlocked() {
+    if (!S.vault.kr || S.vault.key) return true;
+    try { const rem = await DB.get("vaultKey"); if (rem && rem.keyId === S.vault.kr.keyId && rem.key) { S.vault.key = rem.key; S.vault.remembered = true; return true; } } catch (e) { /* not remembered */ }
+    const key = await unlockDialog();
+    if (!key) { S.vault.locked = true; banner("🔒 The Data folder is encrypted and locked. Nothing is read from or written to it until you unlock (File → Encryption…).", true); return false; }
+    S.vault.key = key; S.vault.locked = false; return true;
+  }
+  async function rememberKey(on) { if (on) { await DB.set("vaultKey", { keyId: S.vault.kr.keyId, key: S.vault.key }); S.vault.remembered = true; } else { await DB.set("vaultKey", undefined); S.vault.remembered = false; } }
+  function dialog(id, html, wire) {
+    return new Promise(res => {
+      const d = document.createElement("div"); d.className = "overlay open"; d.id = id;
+      d.innerHTML = `<div class="dlg vaultdlg" role="dialog" aria-modal="true">${html}</div>`; document.body.appendChild(d);
+      const done = v => { d.remove(); res(v); }; wire(d, done); const f = d.querySelector("input,button.primary"); if (f) f.focus();
+    });
+  }
+  const passFields = (a, b) => `<label class="vlab">${a}<input type="password" id="vp1" autocomplete="new-password"></label>
+      <label class="vlab">${b}<input type="password" id="vp2" autocomplete="new-password"></label>`;
+  function checkNew(d) { const a = d.querySelector("#vp1").value, b = d.querySelector("#vp2").value, p = V.passProblem(a); return p || (a !== b ? "The two passphrases don't match." : null); }
+  function unlockDialog() {
+    return dialog("vaultunlock", `<b class="vt">🔒 Unlock the Data folder</b>
+      <p>This Data folder is encrypted. Enter the passphrase to read and save your data on this computer.</p>
+      <div id="vu-pass"><label class="vlab">Passphrase<input type="password" id="vault-pass" autocomplete="current-password"></label></div>
+      <div id="vu-rk" class="hidden"><label class="vlab">Recovery key<input id="vault-rk" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"></label>
+        <p class="faint">After the recovery key opens the folder, you set a new passphrase.</p>${passFields("New passphrase", "New passphrase again")}</div>
+      <label class="vchk"><input type="checkbox" id="vault-remember"> Remember on this computer (stays unlocked until you choose Lock or Forget)</label>
+      <div id="vault-err" class="verr" role="alert"></div>
+      <div class="vbtns"><button class="btn" id="vault-later">Not now</button><button class="btn" id="vault-userk">Use recovery key</button><button class="btn primary" id="vault-ok">Unlock</button></div>`,
+    (d, done) => {
+      let rk = false; const err = m => { d.querySelector("#vault-err").textContent = m || ""; };
+      d.querySelector("#vault-later").onclick = () => done(null);
+      d.querySelector("#vault-userk").onclick = () => { rk = !rk; d.querySelector("#vu-rk").classList.toggle("hidden", !rk); d.querySelector("#vu-pass").classList.toggle("hidden", rk); d.querySelector("#vault-userk").textContent = rk ? "Use passphrase" : "Use recovery key"; err(""); };
+      const go = async () => {
+        const ok = d.querySelector("#vault-ok"); ok.disabled = true; err("Checking…");
+        try {
+          let key;
+          if (!rk) key = await V.unlock(S.vault.kr, d.querySelector("#vault-pass").value);
+          else {
+            const p = checkNew(d); if (p) throw new Error(p);
+            const v = d.querySelector("#vault-rk").value; if (!V.validRecovery(v)) throw new Error("A recovery key has 32 letters and digits (dashes optional).");
+            key = await V.unlockWithRecovery(S.vault.kr, v);
+            const kr = await V.changePassphrase(S.vault.kr, v, true, d.querySelector("#vp1").value);
+            await writeText(KEYRING, JSON.stringify(kr, null, 1) + "\n"); S.vault.kr = kr; toast("New passphrase set. Use it on every computer from now on.");
+          }
+          S.vault.key = key; if (d.querySelector("#vault-remember").checked) await rememberKey(true);
+          done(key);
+        } catch (e) { err(e.message || String(e)); ok.disabled = false; }
+      };
+      d.querySelector("#vault-ok").onclick = go; d.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
+    });
+  }
+  function recoveryDialog(rk, title) {
+    return dialog("vaultrk", `<b class="vt">${title}</b>
+      <p>Write this recovery key down or save it somewhere off this computer, such as a password manager. It's the <b>only</b> way back in if the passphrase is forgotten. It's shown once.</p>
+      <div class="rkbox mono" id="rk-value">${esc(rk)}</div>
+      <div class="vbtns" style="justify-content:flex-start"><button class="btn" id="rk-copy">Copy</button><button class="btn" id="rk-save">Save as .txt…</button></div>
+      <label class="vchk"><input type="checkbox" id="rk-done"> I've stored the recovery key somewhere safe, not in the Data folder</label>
+      <div class="vbtns"><button class="btn primary" id="rk-ok" disabled>Continue</button></div>`,
+    (d, done) => {
+      d.querySelector("#rk-done").onchange = e => { d.querySelector("#rk-ok").disabled = !e.target.checked; };
+      d.querySelector("#rk-copy").onclick = () => { try { navigator.clipboard.writeText(rk); toast("Recovery key copied. Paste it into your password manager, then clear the clipboard."); } catch (e) { toast("Copy failed; write it down instead."); } };
+      d.querySelector("#rk-save").onclick = () => download("activity-dashboard-recovery-key.txt", null, `Activity Dashboard recovery key\nKeyring id: ${S.vault.kr ? S.vault.kr.keyId : ""}\n\n${rk}\n\nKeep this off the synced Data folder.\n`);
+      d.querySelector("#rk-ok").onclick = () => done(true);
+    });
+  }
+  async function turnOnEncryption() {
+    if (!S.dir || !S.granted) { banner("Connect the Data folder first (File → Connect Data folder…), then turn on encryption.", true); return; }
+    if (await loadKeyring()) { toast("This Data folder is already encrypted (another computer turned it on)."); await ensureUnlocked(); S.seen = {}; await syncNow(true); return; }
+    const setup = await dialog("vaultsetup", `<b class="vt">🔐 Encrypt the Data folder</b>
+      <p>Every data file in the connected Data folder is encrypted on this computer before it's saved (AES-256-GCM). Other computers need the same passphrase. The app can't recover a lost passphrase. Only the recovery key can.</p>
+      ${passFields("Passphrase (12+ characters; a few unrelated words works well)", "Passphrase again")}
+      <label class="vchk"><input type="checkbox" id="vs-remember"> Remember on this computer</label>
+      <label class="vchk"><input type="checkbox" id="vs-delete" checked> After the encrypted copies are checked, delete the plaintext originals from the Data folder</label>
+      <div id="vs-err" class="verr" role="alert"></div>
+      <div class="vbtns"><button class="btn" id="vs-cancel">Cancel</button><button class="btn primary" id="vs-ok">Encrypt</button></div>`,
+    (d, done) => {
+      d.querySelector("#vs-cancel").onclick = () => done(null);
+      d.querySelector("#vs-ok").onclick = async () => {
+        const p = checkNew(d); if (p) { d.querySelector("#vs-err").textContent = p; return; }
+        d.querySelector("#vs-ok").disabled = true; d.querySelector("#vs-err").textContent = "Creating the key…";
+        try { const r = await V.createKeyring(d.querySelector("#vp1").value, CFG.kdfIterations ? { iter: CFG.kdfIterations } : undefined);
+          done(Object.assign(r, { remember: d.querySelector("#vs-remember").checked, del: d.querySelector("#vs-delete").checked })); }
+        catch (e) { d.querySelector("#vs-err").textContent = e.message || String(e); d.querySelector("#vs-ok").disabled = false; }
+      };
+    });
+    if (!setup) return;
+    S.vault.kr = setup.keyring; S.vault.key = setup.key;
+    await recoveryDialog(setup.recoveryKey, "Save your recovery key");
+    if (await loadKeyring() && S.vault.kr.keyId !== setup.keyring.keyId) { banner("Another computer encrypted this folder at the same moment. Its keyring is kept; unlock with its passphrase.", true); S.vault.key = null; await ensureUnlocked(); return; }
+    S.vault.kr = setup.keyring; S.vault.key = setup.key;
+    await writeText(KEYRING, JSON.stringify(setup.keyring, null, 1) + "\n");
+    if (setup.remember) await rememberKey(true);
+    const prefs = (await DB.get("prefs")) || {}; prefs.deletePlain = !!setup.del; await DB.set("prefs", prefs);
+    S.seen = {}; await syncNow(true); await writeOwn();
+    toast(`Data folder encrypted.${S.vault.plainLeft.length ? ` ${S.vault.plainLeft.length} plaintext original(s) kept.` : " Plaintext originals deleted."}`);
+  }
+  // Plaintext data files in an encrypted folder: encrypt each into its .enc twin (merging with one that exists), read it back to check,
+  // then delete the original if this computer's setting says so. Returns how many were encrypted.
+  async function encryptPlain(list) {
+    if (!S.vault.key) return { n: 0, left: list.map(x => x[0]) };
+    const prefs = (await DB.get("prefs")) || {}; let n = 0; const left = [];
+    for (const [name, sig] of list) {
+      try {
+        const text = (await readName(name)).text, purpose = purposeOf(name);
+        let target, body;
+        if (purpose === "time") {
+          target = name + ENC; const p = R2.parseTimeFile(text, name); if (!p.machine) throw new Error(p.bad || "not a time log");
+          let events = p.events, reports = p.reports;
+          try { const old = await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, "time"), q = R2.parseTimeFile(old, name); events = R2.dedupe(q.events.concat(events)); } catch (e) { if (e && e.name !== "NotFoundError" && !/not found/i.test(e.message || "")) throw e; }
+          body = R2.serialize(p.machine, events, new Date().toISOString(), reports);
+        } else if (purpose === "snapshot") {
+          target = "inbox-snapshot.json" + ENC; const raw = parseSnapshotText(name, text); body = JSON.stringify(raw);
+          try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, "snapshot")); if (new Date(old.generated_at) > new Date(raw.generated_at)) body = null; } catch (e) { /* none yet */ }
+        } else { target = "notebook-log.js" + ENC; parseLogJs(text); body = text; }
+        if (body != null) {
+          const ct = await V.encrypt(S.vault.key, S.vault.kr, purpose, body); await writeText(target, ct);
+          if (await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, purpose) !== body) throw new Error("read-back check failed");
+        }
+        n++;
+        if (prefs.deletePlain && S.dir.removeEntry) await S.dir.removeEntry(name); else { S.vault.plainDone[name] = sig; left.push(name); }
+      } catch (e) { S.fileProblems[name] = `${name}: plaintext file not encrypted (${e.message || e})`; left.push(name); }
+    }
+    return { n, left };
+  }
+  async function deletePlainNow() {
+    const left = S.vault.plainLeft.slice(); if (!left.length) { toast("No plaintext data files are left in the Data folder."); return; }
+    if (!confirm(`Delete ${left.length} plaintext file(s) from the Data folder? Their encrypted copies were checked.\n\n${left.join("\n")}`)) return;
+    const prefs = (await DB.get("prefs")) || {}; prefs.deletePlain = true; await DB.set("prefs", prefs);
+    S.vault.plainDone = {}; S.seen = {}; await syncNow(true); toast("Plaintext originals deleted.");
+  }
+  async function encryptionDialog() {
+    if (!S.vault.kr) { await turnOnEncryption(); return; }
+    if (!S.vault.key) { if (await ensureUnlocked()) { S.seen = {}; await syncNow(true); } return; }
+    const act = await dialog("vaultmenu", `<b class="vt">🔐 Encryption</b>
+      <p>This Data folder is encrypted (keyring <span class="mono">${esc(S.vault.kr.keyId)}</span>, created ${esc(new Date(S.vault.kr.created).toLocaleDateString())}). It's unlocked on this computer${S.vault.remembered ? " and remembered" : " for this session only"}.</p>
+      ${S.vault.plainLeft.length ? `<p class="verr">⚠ ${S.vault.plainLeft.length} plaintext file(s) are still in the Data folder: ${esc(S.vault.plainLeft.join(", "))}</p>` : ""}
+      <div class="vcol">
+        <button class="btn" data-v="pass">Change passphrase…</button>
+        <button class="btn" data-v="rk">New recovery key…</button>
+        <button class="btn" data-v="rem">${S.vault.remembered ? "Forget on this computer" : "Remember on this computer"}</button>
+        ${S.vault.plainLeft.length ? `<button class="btn" data-v="del">Delete plaintext originals…</button>` : ""}
+        <button class="btn" data-v="lock">Lock now</button>
+      </div><div class="vbtns"><button class="btn primary" data-v="">Close</button></div>`,
+    (d, done) => d.querySelectorAll("[data-v]").forEach(b => b.onclick = () => done(b.dataset.v)));
+    if (act === "rem") { await rememberKey(!S.vault.remembered); toast(S.vault.remembered ? "Remembered on this computer." : "Forgotten: you'll be asked for the passphrase next time."); }
+    if (act === "lock") { await rememberKey(false); S.vault.key = null; S.vault.locked = true; banner("🔒 Locked. File → Encryption… to unlock.", true); renderSync(); }
+    if (act === "del") await deletePlainNow();
+    if (act === "pass") {
+      const r = await dialog("vaultpass", `<b class="vt">Change passphrase</b><label class="vlab">Current passphrase<input type="password" id="vc-old"></label>${passFields("New passphrase", "New passphrase again")}
+        <div id="vc-err" class="verr" role="alert"></div><div class="vbtns"><button class="btn" id="vc-cancel">Cancel</button><button class="btn primary" id="vc-ok">Change</button></div>`,
+      (d, done) => { d.querySelector("#vc-cancel").onclick = () => done(null);
+        d.querySelector("#vc-ok").onclick = async () => { const p = checkNew(d); if (p) { d.querySelector("#vc-err").textContent = p; return; }
+          try { done(await V.changePassphrase(S.vault.kr, d.querySelector("#vc-old").value, false, d.querySelector("#vp1").value, CFG.kdfIterations ? { iter: CFG.kdfIterations } : undefined)); } catch (e) { d.querySelector("#vc-err").textContent = e.message; } }; });
+      if (r) { await writeText(KEYRING, JSON.stringify(r, null, 1) + "\n"); S.vault.kr = r; toast("Passphrase changed. Your other computers ask for the new one next time they're locked."); }
+    }
+    if (act === "rk") {
+      const pass = await dialog("vaultnewrk", `<b class="vt">New recovery key</b><p>The old recovery key stops working.</p><label class="vlab">Passphrase<input type="password" id="vr-pass"></label>
+        <div id="vr-err" class="verr" role="alert"></div><div class="vbtns"><button class="btn" id="vr-cancel">Cancel</button><button class="btn primary" id="vr-ok">Make new key</button></div>`,
+      (d, done) => { d.querySelector("#vr-cancel").onclick = () => done(null);
+        d.querySelector("#vr-ok").onclick = async () => { try { done(await V.replaceRecovery(S.vault.kr, d.querySelector("#vr-pass").value, CFG.kdfIterations ? { iter: CFG.kdfIterations } : undefined)); } catch (e) { d.querySelector("#vr-err").textContent = e.message; } }; });
+      if (pass) { await recoveryDialog(pass.recoveryKey, "Your new recovery key"); await writeText(KEYRING, JSON.stringify(pass.keyring, null, 1) + "\n"); S.vault.kr = pass.keyring; toast("New recovery key saved in the keyring. The old one no longer works."); }
+    }
+  }
+  // ---------- PWA (00.03): installable from https (GitHub Pages) or localhost; file:// keeps working without it ----------
+  let installEvt = null;
+  function registerPWA() {
+    window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; const b = document.querySelector('[data-act="install"]'); if (b) b.classList.remove("hidden"); });
+    if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) navigator.serviceWorker.register("sw.js").catch(e => console.warn("service worker not registered", e));
+  }
+  async function installApp() {
+    if (installEvt) { installEvt.prompt(); try { await installEvt.userChoice; } catch (e) { /* dismissed */ } installEvt = null; return; }
+    toast(/^https?:$/.test(location.protocol) ? "In Edge: the ⋯ menu → Apps → Install this site as an app." : "Install works from the web address (https), not from a file opened on disk.");
+  }
   async function readText(h) { const f = await h.getFile(); return { text: await f.text(), sig: f.lastModified + ":" + f.size }; }
   async function readDirSnapshot() {
-    for (const n of ["inbox-snapshot.json", "inbox-snapshot.js"]) {
+    if (S.vault.kr) {
+      if (!S.vault.key) return null; const n = "inbox-snapshot.json" + ENC;
+      try { const r = await readName(n); S.seen[n] = r.sig; return JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, r.text, "snapshot")); }
+      catch (e) { if (e && e.name !== "NotFoundError") S.problems.push(`${n}: ${e.message || e}`); return null; }
+    }
+    for (const n of SNAP_NAMES) {
       try { const h = await S.dir.getFileHandle(n); const r = await readText(h); S.seen[n] = r.sig; return parseSnapshotText(n, r.text); }
       catch (e) { if (e && e.name !== "NotFoundError") S.problems.push(`${n}: ${e.message || e}`); }
     }
@@ -250,31 +452,53 @@
   }
   function parseLogJs(text) { const m = text.match(/window\.DASH_NOTEBOOK_LOG\s*=\s*([\s\S]*?);?\s*$/); const o = JSON.parse(m ? m[1] : text); if (!o || !Array.isArray(o.lines)) throw new Error("not in the expected format"); return o; }
   async function readDirLog() {
+    if (S.vault.kr) {
+      if (!S.vault.key) return null; const n = "notebook-log.js" + ENC;
+      try { const r = await readName(n); S.seen[n] = r.sig; return parseLogJs(await V.decrypt(S.vault.key, S.vault.kr, r.text, "log")); }
+      catch (e) { if (e && e.name !== "NotFoundError") S.problems.push(`${n}: ${e.message || e}`); return null; }
+    }
     try { const h = await S.dir.getFileHandle("notebook-log.js"); const r = await readText(h); S.seen["notebook-log.js"] = r.sig; return parseLogJs(r.text); }
     catch (e) { if (e && e.name !== "NotFoundError") S.problems.push(`notebook-log.js: ${e.message || e}`); return null; }
   }
   let syncing = null;
   function syncNow(manual) { if (!syncing) syncing = doSync(manual).finally(() => { syncing = null; }); return syncing; }
-  async function doSync(manual) {
+  async function doSync(manual, again) {
     S.problems = S.problems.filter(p => p.startsWith("picked"));
     if (!S.dir) { await scriptPoll(); S.lastSync = new Date(); renderSync(); return; }
     if (!window.DASH_TEST_FS && !(await permOK(S.dir))) { S.granted = false; renderSync(); return; }
-    S.granted = true; let changed = false; const names = new Set(); let snapRaw = null, logObj = null;
+    S.granted = true; let changed = false; const names = new Set(); let snapRaw = null, logObj = null, plain = [], kept = [], keyringSeen = false;
+    if (S.vault.kr && !S.vault.key) { S.lastSync = new Date(); renderSync(); return; }   // encrypted and locked: touch nothing
     try {
       for await (const [name, h] of S.dir.entries()) {
         if (h.kind !== "file") continue; names.add(name);
-        const wanted = R2.isTimeFile(name) || /^inbox-snapshot\.jso?n?$/i.test(name) || name === "notebook-log.js";
-        if (!wanted) continue;
-        let r; try { const f = await h.getFile(); const sig = f.lastModified + ":" + f.size; if (S.seen[name] === sig && !(R2.isTimeFile(name) && !S.fileEvents[name])) continue; r = { text: await f.text(), sig }; }
+        if (name === KEYRING) { keyringSeen = true; continue; }
+        const isEnc = /\.enc$/i.test(name), inner = innerName(name), purpose = purposeOf(inner);
+        if (!purpose || (purpose === "snapshot" && /\.csv$/i.test(inner))) continue;
+        names.add(inner);
+        if (S.vault.kr && !isEnc) {                                        // plaintext in an encrypted folder: encrypted below (once per version)
+          try { const f = await h.getFile(), sig = f.lastModified + ":" + f.size; if (S.vault.plainDone[name] === sig) kept.push(name); else plain.push([name, sig]); } catch (e) { kept.push(name); }
+          continue; }
+        if (!S.vault.kr && isEnc) { S.fileProblems[name] = `${name}: encrypted, but this folder has no ${KEYRING}`; continue; }
+        let r; try { const f = await h.getFile(); const sig = f.lastModified + ":" + f.size; if (S.seen[name] === sig && !(purpose === "time" && !S.fileEvents[inner])) continue; r = { text: await f.text(), sig }; }
         catch (e) { S.fileProblems[name] = `${name}: unreadable (${e.message || e})`; continue; }
         S.seen[name] = r.sig; delete S.fileProblems[name];
         try {
-          if (R2.isTimeFile(name)) { const p = R2.parseTimeFile(r.text, name); if (p.bad) S.fileProblems[name] = p.bad; S.fileEvents[name] = p.events; (S.fileReports = S.fileReports || {})[name] = p.reports || []; (S.fileUpdated = S.fileUpdated || {})[name] = p.updated_at; changed = true; }
-          else if (name === "notebook-log.js") logObj = parseLogJs(r.text);
-          else if (!snapRaw || name.endsWith(".json")) snapRaw = parseSnapshotText(name, r.text);
-        } catch (e) { S.fileProblems[name] = `${name}: unreadable (${e.message || e})`; }
+          if (isEnc) r.text = await V.decrypt(S.vault.key, S.vault.kr, r.text, purpose);
+          if (purpose === "time") { const p = R2.parseTimeFile(r.text, inner); if (p.bad) S.fileProblems[name] = p.bad; S.fileEvents[inner] = p.events; (S.fileReports = S.fileReports || {})[inner] = p.reports || []; (S.fileUpdated = S.fileUpdated || {})[inner] = p.updated_at; changed = true; }
+          else if (purpose === "log") logObj = parseLogJs(r.text);
+          else if (!snapRaw || inner.endsWith(".json")) snapRaw = parseSnapshotText(inner, r.text);
+        } catch (e) { S.fileProblems[name] = `${name}: unreadable (${e.message || e})`; if (purpose === "time") { delete S.fileEvents[inner]; changed = true; } }
       }
     } catch (e) { S.problems.push("Data folder: " + (e.message || e)); }
+    if (keyringSeen && !S.vault.kr && !again) {   // another computer turned on encryption: unlock, then read the encrypted files
+      if (await loadKeyring()) { await ensureUnlocked(); S.seen = {}; return doSync(manual, true); }
+    }
+    if (S.vault.kr) {
+      const r = plain.length && !again ? await encryptPlain(plain) : { n: 0, left: plain.map(x => x[0]) };
+      S.vault.plainLeft = kept.concat(r.left);
+      if (r.n) { S.seen = {}; return doSync(manual, true); }
+    }
+    if (S.vault.plainLeft.length) S.problems.push(`${S.vault.plainLeft.length} plaintext file(s) still in the Data folder (File → Encryption… → Delete plaintext originals)`);
     Object.keys(S.fileEvents).forEach(n => { if (!n.startsWith("picked:") && !names.has(n)) { delete S.fileEvents[n]; changed = true; } });
     Object.keys(S.fileProblems).forEach(n => { if (!names.has(n)) delete S.fileProblems[n]; });
     S.problems.push(...Object.values(S.fileProblems));
@@ -311,6 +535,7 @@
     let txt, warn = false, act = "syncNow", tip;
     if (!S.dir && !window.showDirectoryPicker && !window.DASH_TEST_FS) { warn = true; act = "saveTimeFile"; txt = "⚠ No folder sync in this browser"; tip = "Open the dashboard in Edge or Chrome to sync time between machines. Until then: File → Save my time file… and File → Open time files…."; }
     else if (!S.dirStored) { warn = true; act = "connect"; txt = "⚠ Connect Data folder"; tip = "Click and pick the Dashboard/Data folder so time syncs between your machines."; }
+    else if (S.vault && S.vault.kr && !S.vault.key && S.granted) { warn = true; act = "encryption"; txt = "🔒 Data locked"; tip = "The Data folder is encrypted. Click to unlock with your passphrase."; }
     else if (!S.granted) { warn = true; act = "connect"; txt = "⚠ Reconnect Data folder"; tip = "The browser needs your OK again to use the Data folder. Click, then Allow."; }
     else if (S.aboutMe && S.aboutMe.length) { warn = true; const mx = Math.max(...S.aboutMe.map(r => r.ahead_min)), by = [...new Set(S.aboutMe.map(r => r.by))].join(", ");
       txt = "⚠ This computer's clock is ahead"; tip = `${by} sees time stamps from this computer up to ${mx} min in the future. Set this computer's clock to automatic, then Help → FAQ → "Repair clock stamps".`; }
@@ -318,7 +543,7 @@
       txt = `⚠ Clock ahead · ${who} · ${S.held.length} held`; tip = `${S.held.length} change(s) from ${who} are stamped more than ${CFG.holdHours || 24} h in the future (latest ${S.held.map(e => e.ts).sort().pop()}). They are held — not applied — until real time reaches them. Fix: on ${who}, set the clock to automatic and use File → Repair clock stamps…. See Help → FAQ.`; }
     else if (S.future.length) { warn = true; const mx = S.future.reduce((a, e) => Math.max(a, Date.parse(e.ts)), 0), mins = Math.round((mx - Date.now()) / 60000), who = [...new Set(S.future.map(e => e.machine))].join(", ");
       txt = `⚠ Clock ahead · ${who}`; tip = `${S.future.length} time stamp(s) from ${who} are up to ${mins} min in the future. Check that clock is set automatically. Edits here still count after them (the dashboard's clock moves past the newest stamp it has seen).` + (S.problems.length ? "\n\n" + S.problems.join("\n") : ""); }
-    else { warn = S.problems.length > 0; txt = `${warn ? "⚠" : "⟳"} Synced ${hhmm(S.lastSync)} · ${ms}${warn ? ` · ${S.problems.length} problem${S.problems.length > 1 ? "s" : ""}` : ""}`; tip = (warn ? S.problems.join("\n") + "\n\n" : "") + `Machines seen: ${ms}. Checks the Data folder every ${POLL_MS / 1000} s. Click to sync now.`; }
+    else { warn = S.problems.length > 0; txt = `${warn ? "⚠" : S.vault && S.vault.kr ? "🔐" : "⟳"} Synced ${hhmm(S.lastSync)} · ${ms}${warn ? ` · ${S.problems.length} problem${S.problems.length > 1 ? "s" : ""}` : ""}`; tip = (warn ? S.problems.join("\n") + "\n\n" : "") + `Machines seen: ${ms}. Checks the Data folder every ${POLL_MS / 1000} s. Click to sync now.`; }
     c.textContent = txt; c.title = tip; c.dataset.act = act; c.classList.toggle("stale", warn);
   }
   function pickFiles(accept, cb) { const i = document.createElement("input"); i.type = "file"; i.accept = accept; i.multiple = true; i.onchange = async () => { const out = []; for (const f of i.files) out.push([f.name, await f.text()]); cb(out); }; i.click(); }
@@ -604,7 +829,7 @@
   function pickFile(accept, cb) { const i = document.createElement("input"); i.type = "file"; i.accept = accept; i.onchange = () => { const f = i.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => cb(f.name, String(r.result)); r.readAsText(f); }; i.click(); }
   function parseSnapshotText(name, text) {
     if (/\.csv$/i.test(name)) return R.snapshotFromCSV(text);
-    const m = text.match(/window\.DASH_(?:EXAMPLE_)?SNAPSHOT\s*=\s*([\s\S]*?);?\s*$/); return JSON.parse(m ? m[1] : text);
+    const m = text.match(/window\.[A-Z][A-Z0-9_]*SNAPSHOT\s*=\s*([\s\S]*?);?\s*$/); return JSON.parse(m ? m[1] : text);   // 00.03: older snapshot.js variable names too
   }
   function download(name, obj, text) { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text != null ? text : JSON.stringify(obj, null, 1)], { type: "application/json" })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
   const ACTIONS = {
@@ -614,9 +839,9 @@
     import: () => pickFile(".json", async (n, t) => { try { const r = await DB.importAll(JSON.parse(t)); toast(`Imported local data${r && r.dropped ? ` (${r.dropped} event(s) from other machines ignored)` : ""}. Reloading…`); setTimeout(reloadSafely, 600); } catch (e) { banner("Import failed: " + e.message, true); } }),
     clear: () => clearDialog(),
     exportCSV: () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([R.timeEntriesCSV(S.entries)], { type: "text/csv" })); a.download = `dash-time-entries-${S.today}.csv`; a.click(); toast(`Exported ${S.entries.length} time entries (CSV).`); },
-    repairClock: () => repairClock(),
+    repairClock: () => repairClock(), encryption: () => encryptionDialog(), install: () => installApp(),
     connect: () => connectFolder(), syncNow: () => syncNow(true),
-    saveTimeFile: () => { download(R2.fileName(S.machine), null, R2.serialize(S.machine, S.own, new Date().toISOString())); toast(`Saved ${R2.fileName(S.machine)}. Put it in the Data folder.`); },
+    saveTimeFile: () => { if (S.vault.kr && !confirm("This saves your time file unencrypted (plain JSON) to Downloads. Continue?")) return;  download(R2.fileName(S.machine), null, R2.serialize(S.machine, S.own, new Date().toISOString())); toast(`Saved ${R2.fileName(S.machine)}. Put it in the Data folder.`); },
     openTimeFiles: () => pickFiles(".json", files => { files.forEach(([n, t]) => { const r = R2.parseTimeFile(t, n); S.fileEvents["picked:" + n] = r.events; if (r.bad) S.problems.push(r.bad); }); recompute(); render(); toast(`Merged ${files.length} time file(s).`); }),
     importLog: () => pickFile(".md,.txt", (n, t) => importLog(n, t)), logCall: () => logCall($("#asof")),
     print: () => doPrint("print"), printManager: () => doPrint("manager"), reload: () => reloadSafely(),
@@ -659,7 +884,7 @@
   }
   function closeMenus() { document.querySelectorAll(".mtop").forEach(b => { b.setAttribute("aria-expanded", "false"); b.nextElementSibling.classList.add("hidden"); }); }
 
-  window.DASH.app = { state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit };
+  window.DASH.app = { state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn };
   window.addEventListener("beforeunload", e => { if (pending.size) { e.preventDefault(); e.returnValue = ""; } });
   boot();
 })();

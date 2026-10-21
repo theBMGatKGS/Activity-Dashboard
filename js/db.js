@@ -1,6 +1,7 @@
 /* Local storage for Activity Dashboard: IndexedDB "activity-dashboard", one key-value store.
    Keys: ownEvents (this machine's time events, also written to Data/time-<machine>.json), timeEntries (cache of merged entries;
-   in 00.01 the only copy), calTombstones/audienceRules (00.01, migrated once), history, openedSnapshot, prefs, machine, dataDir (folder handle), migratedV2. Nothing ever leaves this browser except via File > Export local data. */
+   in 00.01 the only copy), calTombstones/audienceRules (00.01, migrated once), history, openedSnapshot, prefs, machine, dataDir (folder handle), migratedV2,
+   vaultKey (00.03: only if "Remember on this computer": {keyId, key} with key a NON-extractable AES-GCM CryptoKey), legacyImported. Nothing ever leaves this browser except via File > Export local data. */
 (function (g) {
   "use strict";
   const NAME = "activity-dashboard", STORE = "kv", KEYS = ["ownEvents", "migratedV2", "timeEntries", "calTombstones", "history", "audienceRules", "openedSnapshot", "prefs"];
@@ -41,5 +42,32 @@
   // so it reaches the other machine too (Clear → Also delete, typed DELETE).
   const KEEP = ["ownEvents", "migratedV2", "timeEntries", "calTombstones", "audienceRules"];
   async function clearAll() { for (const k of KEYS) if (!KEEP.includes(k)) await set(k, undefined); }
-  g.DASH = g.DASH || {}; g.DASH.db = { get, set, exportAll, importAll, clearAll, usingMemory: () => !!mem };
+  // 00.03: one-time copy of an older build's browser cache (same "kv" store, different database name, set in config.local.js
+  // legacyDbNames). Runs only on a browser that has never used this build (no machine name yet). The old database is left as is.
+  function readAll(name) {
+    return new Promise(res => {
+      let r; try { r = indexedDB.open(name); } catch (e) { res(null); return; }
+      r.onupgradeneeded = () => { try { r.transaction.abort(); } catch (e) { /* ignore */ } };   // didn't exist: don't create it
+      r.onerror = () => res(null);
+      r.onsuccess = () => {
+        const db = r.result; if (!db.objectStoreNames.contains(STORE)) { db.close(); res(null); return; }
+        const out = {}, t = db.transaction(STORE), st = t.objectStore(STORE), c = st.openCursor();
+        c.onsuccess = () => { const cur = c.result; if (cur) { out[cur.key] = cur.value; cur.continue(); } };
+        t.oncomplete = () => { db.close(); res(out); }; t.onerror = () => { db.close(); res(null); };
+      };
+    });
+  }
+  async function migrateLegacy(names) {
+    if (!Array.isArray(names) || !names.length || typeof indexedDB === "undefined" || !(await open())) return null;
+    if ((await get("legacyImported")) || (await get("machine"))) return null;
+    let present = null; try { if (indexedDB.databases) present = (await indexedDB.databases()).map(d => d.name); } catch (e) { present = null; }
+    for (const n of names) {
+      if (!n || n === NAME || (present && !present.includes(n))) continue;
+      const data = await readAll(n); if (!data || !Object.keys(data).length) continue;
+      for (const [k, v] of Object.entries(data)) if (v !== undefined) await set(k, v);
+      const info = { from: n, at: new Date().toISOString(), keys: Object.keys(data).length }; await set("legacyImported", info); return info;
+    }
+    return null;
+  }
+  g.DASH = g.DASH || {}; g.DASH.db = { get, set, exportAll, importAll, clearAll, migrateLegacy, usingMemory: () => !!mem };
 })(window);

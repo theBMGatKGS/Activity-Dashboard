@@ -1,5 +1,5 @@
 # Activity Dashboard
-Revision **00.02.000_261019** · local-file app · no server, no sign-in, no network calls.
+Revision **00.03.000_261021** · local-first app · encrypted Data folder (optional, in-browser AES-256-GCM) · installable (PWA) over https · no server, no sign-in, no network calls for data.
 
 ## Use
 1. The app lives in **`<synced folder>/Dashboard/`** on the user's Mac. It is **not** in the notebook repo. To update, copy the new app files over the old ones; the deploy folder never contains `Data/`.
@@ -13,6 +13,10 @@ Revision **00.02.000_261019** · local-file app · no server, no sign-in, no net
 |---|---|
 | `index.html`, `app.css` | UI, in-app Help / How Do I / FAQ / Quick Start / Revision log |
 | `js/rules.js` | pure rules (totals, Going Cold, WoW, conflicts, guesses, lines, Manager filter, workload) |
+| `js/vault.js` | 00.03 encryption (keyring, AES-256-GCM envelopes), browser + Node |
+| `manifest.webmanifest`, `sw.js` | 00.03 installable app, offline app shell |
+| `config.local.example.js` | template for the git-ignored per-computer `config.local.js` |
+| `tools/encrypt_file.js` | 00.03 encrypt a file for an encrypted Data folder |
 | `js/sync.js` | pure two-machine merge: time-file format, event fold (last writer wins), diff → events, migration |
 | `js/db.js` | IndexedDB local cache: this machine's events, merged entries, trend history, machine name, folder handle |
 | `js/app.js` | rendering and interactions |
@@ -25,6 +29,16 @@ Revision **00.02.000_261019** · local-file app · no server, no sign-in, no net
 
 ## Not in 00.02.000 (still deferred)
 By-account view (planned 00.02), account-based Going Cold, the "My next three things" ranking with its print strip, and the Proposed tray (hidden).
+
+## Encryption (00.03)
+- Turn on: File → Encryption… (Data folder connected). Creates `Data/keyring.json` (wrapped key only) and stores every data file as `<name>.enc`. Plaintext originals are encrypted, read back, then deleted if you agreed.
+- Keys: random AES-256 data key; wrapped by the passphrase (PBKDF2-SHA256, 600,000 iterations) and by a recovery key shown once. The passphrase and recovery key are never stored anywhere by the app. "Remember on this computer" keeps a non-extractable key in this browser's IndexedDB.
+- Older build: put its names in `config.local.js` (copy `config.local.example.js`; git-ignored) to copy its browser cache and read its time logs/snapshot once.
+- Exporters: `DASH_PASSPHRASE=… node tools/encrypt_file.js Data/keyring.json snapshot in.js Data/inbox-snapshot.json.enc`.
+- Not encrypted: this browser's own IndexedDB cache on each computer (as in 00.02), and CSV/JSON exports you save on purpose.
+
+## Install (00.03)
+`manifest.webmanifest` + `sw.js`. Served over https (e.g. GitHub Pages) Edge/Chrome offer Install; the service worker caches the app shell only (never `Data/`). Opened from disk (`file://`) it runs as before without the service worker.
 
 ## Data rules
 - No real data in git, ever, and none in the app files. The deploy folder has no `Data/`; `.gitignore` (box-side) still excludes `Data/` files and exports.

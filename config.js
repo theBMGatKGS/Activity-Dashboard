@@ -11,4 +11,9 @@ window.DASH_CONFIG = {
   staleHours: 24,
   holdHours: 24,   // 00.02: time stamps more than this many hours in the future are held (not applied) and flagged
   pollSeconds: 60, // 00.02: how often the connected Data folder is checked for new time files, snapshot and notebook log
+  // 00.03: names an older build used, for the one-time migration. Keep real values in config.local.js (git-ignored), never here.
+  legacyDbNames: [],      // older IndexedDB database names to copy the browser cache from
+  legacyTimeKinds: [],    // older "kind" values accepted in time-*.json
+  snapshotNames: [],      // extra snapshot file names read from the Data folder (plaintext; encrypted on the next sync)
+  notebookLogNames: [],   // extra notebook log file names
 };

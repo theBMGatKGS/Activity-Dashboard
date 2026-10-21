@@ -29,8 +29,8 @@ with sync_playwright() as p:
         pg.click(".mtop >> text=Help"); pg.click(f"[data-act={act}]")
         top = pg.evaluate(f"(()=>{{const s=document.getElementById('{sec}').getBoundingClientRect(),b=document.querySelector('.helpbody').getBoundingClientRect();return s.top-b.top}})()")
         check(pg.is_visible("#help") and abs(top) < 40, f"T13 Help → {sec} opens at that section"); pg.keyboard.press("Escape")
-    rev = pg.inner_text("#rev"); check(rev.startswith("Rev 00.02.000_"), f"T13/T14 Revision cell '{rev}'")
-    check("00.02.000_261019" in pg.inner_text("#help-rev") and "00.01.000_261019" in pg.inner_text("#help-rev"), "T13 Revision log lists the running revision")
+    rev = pg.inner_text("#rev"); REVNOW = pg.evaluate("DASH.app.REV"); check(rev == "Rev " + REVNOW and REVNOW == "00.03.000_261021", f"T13/T14 Revision cell '{rev}'")
+    check(REVNOW in pg.inner_text("#help-rev") and "00.02.000_261019" in pg.inner_text("#help-rev") and "00.01.000_261019" in pg.inner_text("#help-rev"), "T13 Revision log lists the running revision")
     # T14
     check(pg.title() == "Activity Dashboard" and pg.inner_text(".appname") == "Activity Dashboard", "T14 exact name in title and header")
     texts = "\n".join(f.read_text(errors="ignore") for f in SRC.rglob("*") if f.is_file() and f.suffix in {".html", ".js", ".md", ".css", ".py"} and f.name != "t12_t16.py")
