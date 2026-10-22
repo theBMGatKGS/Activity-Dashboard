@@ -88,7 +88,12 @@ with sync_playwright() as p:
     STATE["private"] = False; pc.fill("#hub-token", TOK["workpc"]); pc.click("#hub-ok"); pc.wait_for_function("() => /PRIVATE/.test(document.querySelector('#hub-err').textContent)", timeout=10000)
     check(not HUB, "dialog: a public repo is refused; nothing sent"); STATE["private"] = True
     pc.click("#hub-ok"); pc.wait_for_function("() => !document.querySelector('#hubdlg')", timeout=20000); pc.evaluate("DASH.app.flush()"); pc.evaluate("DASH.app.syncNow()")
-    check(sorted(HUB) == ["inbox-snapshot.json.enc", "keyring.json", "time-workpc.json.enc"], f"PC connect: hub holds keyring + encrypted files only ({sorted(HUB)})")
+    BLOB = re.compile(r"^blob-[0-9a-f]{32}\.enc$")
+    check(len(HUB) == 3 and "keyring.json" in HUB and all(BLOB.match(n) for n in HUB if n != "keyring.json"), f"PC connect: hub holds keyring + 2 opaque blobs only ({sorted(HUB)})")
+    def paths_opaque():
+        s = " ".join(HUB) + " " + " ".join(u for _, u, _ in CALLS); s = s.replace("keyring.json", "")
+        return not re.search(r"time-|workpc|ipad|inbox|snapshot|notebook|\.json\.enc", s)
+    check(paths_opaque(), "N3: hub paths and API URLs reveal no file types or machine names")
     check(hub_clean(), "PC connect: nothing readable (names, labels, event JSON, token) in the hub")
     check("☁" in pc.inner_text("#sync"), "sync chip shows the GitHub cloud mark")
     raw = pc.evaluate(RAW); cfg = json.loads(raw)["hubCfg"]
@@ -102,7 +107,7 @@ with sync_playwright() as p:
     ipad.wait_for_function("() => document.querySelector('#vault-err').textContent.includes('Wrong')", timeout=20000)
     ipad.fill("#vault-pass", PASS1); ipad.click("#vault-ok"); ipad.wait_for_function("() => !document.querySelector('#hubdlg')", timeout=30000); ready(ipad)
     check(ipad.evaluate(TOT) == pc_tot and ipad.evaluate("!DASH.app.state.snap.example"), "iPad: unlocks with the passphrase, reads the snapshot and shows the same totals")
-    check("time-ipad.json.enc" in HUB and hub_clean(), "iPad: writes only its own encrypted time file to the hub")
+    check(len(HUB) == 4 and hub_clean() and paths_opaque(), "iPad: writes only its own encrypted time file to the hub, under an opaque name")
     ipad.evaluate("""(() => { const S = DASH.app.state; S.entries.push({ id: 'i-ipad-1', taskId: 'EX-2', eventId: null, date: '2026-10-19', minutes: 35, audience: 'Integrator/partner', subject: 'Training/education', account: 'Account D', source: 'manual', confirmed: true }); return DASH.app.commit(); })()""")
     ipad.evaluate("DASH.app.flush()"); check(hub_clean(), "iPad edit: hub still holds nothing readable")
     pc.evaluate("DASH.app.syncNow()"); pc.evaluate("DASH.app.syncNow()")
@@ -110,7 +115,16 @@ with sync_playwright() as p:
     pc.evaluate("(() => { const S = DASH.app.state; S.entries = S.entries.filter(e => e.id !== 'i-ipad-1'); return DASH.app.commit(); })()"); pc.evaluate("DASH.app.flush()")
     ipad.evaluate("DASH.app.syncNow()")
     check(ipad.evaluate("!DASH.app.state.entries.some(e => e.id === 'i-ipad-1')"), "sync: removal on the PC wins on the iPad (rules unchanged)")
-    check(sorted(x for x in os.listdir(data) if not x.endswith(".crswap")) == sorted(HUB), "backup: the PC folder holds the same encrypted files as the hub")
+    local = sorted(x for x in os.listdir(data) if not x.endswith(".crswap") and ".prev." not in x)
+    check(local == ["inbox-snapshot.json.enc", "keyring.json", "time-ipad.json.enc", "time-workpc.json.enc"] and len(HUB) == len(local), f"backup: the PC folder holds the same encrypted files as the hub ({local})")
+    # N1 tamper: a well-formed but damaged snapshot envelope on the hub must not replace the PC's backup copy
+    good = (data / "inbox-snapshot.json.enc").read_text()
+    pc.evaluate("""(async () => { const o = JSON.parse(%s); const b = atob(o.ct).split(''); b[7] = String.fromCharCode(b[7].charCodeAt(0) ^ 1); o.ct = btoa(b.join(''));
+      await DASH.app.state.hub.write('inbox-snapshot.json.enc', JSON.stringify(o) + '\\n', 'sync'); })()""" % json.dumps(good))
+    pc.evaluate("DASH.app.syncNow()")
+    check((data / "inbox-snapshot.json.enc").read_text() == good and not (data / "inbox-snapshot.json.prev.enc").exists() and "decrypt check" in pc.get_attribute("#sync", "title"), "N1 tamper: damaged hub file refused, PC backup kept, warning on the sync chip")
+    pc.evaluate("(t => DASH.app.state.hub.write('inbox-snapshot.json.enc', t, 'sync'))(%s)" % json.dumps(good)); pc.evaluate("DASH.app.syncNow()")
+    check("decrypt check" not in (pc.get_attribute("#sync", "title") or ""), "N1 tamper: warning clears once the hub file is good again")
     raw = ipad.evaluate(RAW)
     check(TOK["ipad"] not in raw and not any(s in raw for s in SECRETS) and "Owner/operator" not in raw, "iPad: no token or readable data in the browser's storage")
     # reload: reconnects with the remembered key and the encrypted token

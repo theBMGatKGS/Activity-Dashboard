@@ -8,7 +8,9 @@
 - CSP `connect-src 'self' https://api.github.com`. Frame-busting (`js/frame.js`, QA note): hidden + top takeover in a frame; app.js doesn't start.
 - Service worker 00.04.000 shell adds `js/frame.js`, `js/hub.js`; API paths excluded. Manifest `short_name` "Activity Dashboard"; `apple-mobile-web-app-title`.
 - Help: FAQ entries for GitHub sync setup, iPad, folder + hub, expired token; "Is my data uploaded anywhere?" updated.
-- Tests: `hub.test.js` (28, mocked API), `t23_hub.py` (PC + iPad, mocked API, 28 checks), T15 allows `api.github.com`, T13 revision.
+- QA N1: hub → local backup only after decrypt + parse with the data key; refused with a warning otherwise; the replaced local file is kept as `<name>.prev.enc` (never uploaded).
+- QA N3 (owner's choice): opaque hub names `blob-<HMAC>.enc` with the real name inside a second envelope (purpose `hub`); `keyring.json` keeps its name.
+- Tests: `hub.test.js` (36, mocked API, incl. tamper and opaque-path checks), `t23_hub.py` (PC + iPad, mocked API, incl. tamper and opaque paths), T15 allows `api.github.com`, T13 revision. U13 now compares the in-repo example .json with the .js; the handoff comparison runs only when `DASH_HANDOFF` names a scrubbed copy and otherwise prints SKIP.
 
 ## 00.03.003_261021 (Oct 21 2026)
 - QA F2: Content Security Policy meta (`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; connect-src 'self'; form-action 'none'`). `style-src 'unsafe-inline'` is needed only for the UI's inline style attributes; scripts are `'self'` only. Verified served over http (installed-app origin) and from `file://`, with no CSP violations.

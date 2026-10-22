@@ -121,6 +121,62 @@
     return { repo, list, read, write, remove, test, shaOf: n => shas.get(n) || null };
   }
 
+  // ---------- 00.04 N3: opaque hub names ----------
+  // Every data file sits on the hub as blob-<32 hex>.enc: an HMAC-SHA256 of the real name under a name key derived from the data
+  // key, so paths reveal neither file types nor machine names. keyring.json keeps its name (it holds no data).
+  // The hub copy is a second envelope (purpose "hub") around {name, text}; text is the local .enc envelope, unchanged.
+  // The name key: SHA-256 of one fixed AES-GCM encryption (fixed IV, fixed plaintext, AAD bound to the keyring id). Only that one
+  // fixed plaintext ever uses the fixed IV; every data write uses a fresh random IV.
+  const BLOB_RE = /^blob-[0-9a-f]{32}\.enc$/;
+  const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
+  async function codec(key, keyring) {
+    const SUB = g.crypto.subtle, TE = new TextEncoder(), v = V();
+    const ct = await SUB.encrypt({ name: "AES-GCM", iv: TE.encode("hubnames-v01"), additionalData: TE.encode("dash-hub-names:" + keyring.keyId) }, key, TE.encode("activity-dashboard opaque hub names v1"));
+    const hk = await SUB.importKey("raw", await SUB.digest("SHA-256", ct), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const names = new Map();
+    return { keyId: keyring.keyId,
+      async nameOf(real) { if (real === KEYRING) return KEYRING; if (!names.has(real)) names.set(real, "blob-" + hex(await SUB.sign("HMAC", hk, TE.encode(real))).slice(0, 32) + ".enc"); return names.get(real); },
+      wrap: (real, text) => v.encrypt(key, keyring, "hub", JSON.stringify({ name: real, text })),
+      async unwrap(t) { const o = JSON.parse(await v.decrypt(key, keyring, t, "hub")); if (!o || typeof o.name !== "string" || typeof o.text !== "string") throw new Error("not a hub file"); return o; } };
+  }
+  // Same interface as client(), with real names. getCodec() returns the codec (throws while locked); only keyring.json works without it.
+  function opaque(c, getCodec) {
+    const cache = new Map(); let problems = [];   // raw sha → { name, text, sha: inner git sha }
+    async function entry(x, cd) {
+      if (cache.has(x.sha)) return cache.get(x.sha);
+      const o = await cd.unwrap((await c.read(x.name)).text);
+      if (await cd.nameOf(o.name) !== x.name) throw new Error("name doesn't match its contents");
+      const e = { name: o.name, text: o.text, sha: await gitSha(o.text), raw: x.name }; cache.set(x.sha, e); return e;
+    }
+    let byName = new Map();
+    async function list() {
+      const raw = await c.list(), out = [], cd = await getCodec(); problems = []; byName = new Map();
+      for (const x of raw) {
+        if (x.name === KEYRING) { out.push(x); continue; }
+        if (!BLOB_RE.test(x.name)) { problems.push(`hub ${x.name}: not an opaque hub file; ignored`); continue; }
+        try { const e = await entry(x, cd); byName.set(e.name, e); out.push({ name: e.name, sha: e.sha, size: e.text.length }); }
+        catch (err) { problems.push(`hub ${x.name}: can't be opened (${err.message || err}); ignored`); }
+      }
+      return out;
+    }
+    async function read(name) {
+      if (name === KEYRING) return c.read(name);
+      if (!byName.has(name)) await list();
+      const e = byName.get(name); if (!e) { const er = new Error("not found"); er.name = "NotFoundError"; throw er; }
+      return { text: e.text, sha: e.sha, size: e.text.length };
+    }
+    async function write(name, text, message) {
+      if (name === KEYRING) return c.write(name, text, message);
+      const p = writeProblem(name, text); if (p) throw new HubError(p, 0, "Refused");
+      const cd = await getCodec(), raw = await cd.nameOf(name), r = await c.write(raw, await cd.wrap(name, text), message);
+      const e = { name, text, sha: await gitSha(text), raw }; if (r && r.sha) cache.set(r.sha, e); byName.set(name, e);
+      return { sha: e.sha, size: text.length };
+    }
+    async function remove(name, message) { if (name === KEYRING) return c.remove(name, message); const cd = await getCodec(); await c.list(); return c.remove(await cd.nameOf(name), message); }
+    return { repo: c.repo, opaque: true, list, read, write, remove, test: () => c.test(), problems: () => problems.slice(),
+      shaOf: n => n === KEYRING ? c.shaOf(n) : (byName.get(n) ? byName.get(n).sha : null) };
+  }
+
   // A folder-handle look-alike over the hub (for iPad / no local folder). File "lastModified" is the git blob sha,
   // so the app's change detection (lastModified + ":" + size) works as is.
   function dir(c, opts) {
@@ -150,8 +206,19 @@
     const own = opts && opts.ownFile, msg = (opts && opts.message) || "sync", out = { up: [], down: [], problems: [] };
     const readLocal = async n => { try { const h = await local.getFileHandle(n); const f = await h.getFile(); return await f.text(); } catch (e) { return null; } };
     const writeLocal = async (n, t) => { const h = await local.getFileHandle(n, { create: true }); const w = await h.createWritable(); await w.write(t); await w.close(); };
-    const localNames = []; for await (const [n, h] of local.entries()) if (h.kind === "file" && hubName(n)) localNames.push(n);
-    const hubList = await c.list(), hubNames = hubList.map(x => x.name).filter(hubName);
+    const isPrev = n => /\.prev\.enc$/i.test(n), prevName = n => n.replace(/\.enc$/i, "") + ".prev.enc";
+    // 00.04 N1: a hub file reaches the local backup only after it decrypts with the data key and parses (opts.verify throws if not).
+    // The local file it replaces is kept as <name>.prev.enc (local only, never uploaded).
+    const verify = opts && opts.verify;
+    async function pull(n, ht, lt) {
+      if (writeProblem(n, ht)) { out.problems.push(`hub ${n}: not an encrypted file; not copied`); return; }
+      if (!verify) { out.problems.push(`hub ${n}: can't be checked here; not copied`); return; }
+      try { await verify(n, ht); } catch (e) { out.problems.push(`hub ${n}: failed the decrypt check (${e.message || e}); local copy kept, not overwritten`); return; }
+      if (lt != null) await writeLocal(prevName(n), lt);
+      await writeLocal(n, ht); out.down.push(n);
+    }
+    const localNames = []; for await (const [n, h] of local.entries()) if (h.kind === "file" && hubName(n) && !isPrev(n)) localNames.push(n);
+    const hubList = await c.list(), hubNames = hubList.map(x => x.name).filter(n => hubName(n) && !isPrev(n));
     const lk = await readLocal(KEYRING); let hk = null;
     if (hubNames.includes(KEYRING)) hk = (lk != null && await gitSha(lk) === c.shaOf(KEYRING)) ? lk : (await c.read(KEYRING)).text;
     const kid = t => { try { return JSON.parse(t).keyId; } catch (e) { return null; } };
@@ -169,16 +236,17 @@
         if (inL && !inH) { const t = await readLocal(n); const p = writeProblem(n, t); if (p) { out.problems.push(p); continue; } await c.write(n, t, msg); out.up.push(n); continue; }
         if (inL) { const lt0 = await readLocal(n); if (lt0 != null && await gitSha(lt0) === c.shaOf(n)) continue; }   // same content: no download
         const ht = (await c.read(n)).text;
-        if (!inL) { if (!writeProblem(n, ht)) { await writeLocal(n, ht); out.down.push(n); } else out.problems.push(`hub ${n}: not an encrypted file; not copied`); continue; }
+        if (!inL) { await pull(n, ht, null); continue; }
         const lt = await readLocal(n); if (lt === ht) continue;
         if (n === own) { const p = writeProblem(n, lt); if (p) { out.problems.push(p); continue; } await c.write(n, lt, msg); out.up.push(n); }
-        else if (!writeProblem(n, ht)) { await writeLocal(n, ht); out.down.push(n); }
+        else await pull(n, ht, lt);
       } catch (e) { out.problems.push(`${n}: ${e.message || e}`); }
     }
+    if (c.problems) out.problems.push(...c.problems());
     return out;
   }
 
-  const api = { API, gitSha, client, dir, mirror, writeProblem, tokenProblem, repoProblem, b64encode, b64decode, HubError, KEYRING };
+  const api = { API, gitSha, client, opaque, codec, BLOB_RE, dir, mirror, writeProblem, tokenProblem, repoProblem, b64encode, b64decode, HubError, KEYRING };
   g.DASH = g.DASH || {}; g.DASH.hub = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

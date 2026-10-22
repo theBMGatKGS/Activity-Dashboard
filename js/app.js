@@ -164,7 +164,7 @@
       let text = R2.serialize(S.machine, S.own, new Date().toISOString(), S.myReports);
       if (S.vault.kr) text = await V.encrypt(S.vault.key, S.vault.kr, "time", text);
       const f = await writeText(name, text); S.seen[name] = f.lastModified + ":" + f.size; S.fileEvents[inner] = S.own.filter(e => e.machine === S.machine); delete S.fileProblems[name];
-      if (S.hub && S.vault.kr) { try { await S.hub.write(name, text, "sync"); delete S.hubState.pending; } catch (e) { S.hubState.pending = true; S.hubState.error = e.message || String(e); } }
+      if (S.hub && !S.hubOnly && S.vault.kr) { try { await S.hub.write(name, text, "sync"); delete S.hubState.pending; } catch (e) { S.hubState.pending = true; S.hubState.error = e.message || String(e); } }
     } catch (e) { S.problems.push(`could not write ${name}: ${e.message || e}`); }
     renderSync();
   }
@@ -465,8 +465,15 @@
   const H = DASH.hub;
   S.hubState = {};
   async function hubCfg() { try { return (await DB.get("hubCfg")) || null; } catch (e) { return null; } }
+  // 00.04 N3: data files go to the hub under opaque blob names (js/hub.js opaque/codec); the codec needs the unlocked data key.
+  let hubCodec = null;
+  async function getHubCodec() {
+    if (!S.vault.key || !S.vault.kr) throw new Error("locked: unlock first");
+    if (!hubCodec || hubCodec.keyId !== S.vault.kr.keyId || hubCodec.key !== S.vault.key) { const cd = await H.codec(S.vault.key, S.vault.kr); cd.key = S.vault.key; hubCodec = cd; }
+    return hubCodec;
+  }
   function attachHub(repo, token) {
-    const c = H.client({ repo, token }); S.hub = c; S.hubState = { repo };
+    const c = H.opaque(H.client({ repo, token }), getHubCodec); S.hub = c; S.hubState = { repo };
     if (!S.dir || S.dir.isHub) { S.dir = S.dirStored = H.dir(c); S.granted = true; S.hubOnly = true; } else S.hubOnly = false;
     return c;
   }
@@ -482,10 +489,17 @@
     attachHub(cfg.repo, token);
     if (S.hubOnly) { const kr = await loadKeyring(); if (kr && kr.keyId === cfg.keyId && JSON.stringify(kr) !== JSON.stringify(cfg.keyring)) { cfg.keyring = kr; await DB.set("hubCfg", cfg); } if (kr && !S.vault.key) await ensureUnlocked(); }
   }
+  // 00.04 N1: decrypt + parse a hub file with the data key before it may replace anything in the local backup folder.
+  async function hubVerify(name, text) {
+    const inner = innerName(name), purpose = purposeOf(inner); if (!purpose) throw new Error("unknown file type");
+    const plain = await V.decrypt(S.vault.key, S.vault.kr, text, purpose);
+    if (purpose === "time") { const p = R2.parseTimeFile(plain, inner); if (p.bad || !p.machine) throw new Error(p.bad || "not a time log"); }
+    else if (purpose === "log") parseLogJs(plain); else parseSnapshotText(inner, plain);
+  }
   async function hubMirror() {
     if (S.hubOnly || !S.hub || !S.dir || !S.granted || !S.vault.key) return;
     try {
-      const r = await H.mirror(S.dir, S.hub, { ownFile: R2.fileName(S.machine) + ENC, message: "sync" });
+      const r = await H.mirror(S.dir, S.hub, { ownFile: R2.fileName(S.machine) + ENC, message: "sync", verify: hubVerify });
       S.hubState.last = new Date(); S.hubState.error = r.problems.length ? r.problems.join(" ") : null; S.hubState.up = r.up.length; S.hubState.down = r.down.length;
       if (r.down.includes(KEYRING)) await loadKeyring();
     } catch (e) { S.hubState.error = e.message || String(e); }
@@ -614,7 +628,7 @@
         } catch (e) { S.fileProblems[name] = `${name}: unreadable (${e.message || e})`; if (purpose === "time") { delete S.fileEvents[inner]; changed = true; } }
       }
     } catch (e) { if (S.hubOnly) { S.hubState.error = e.message || String(e); S.problems.push("GitHub: " + S.hubState.error); renderSync(); return; } S.problems.push("Data folder: " + (e.message || e)); }
-    if (S.hubOnly) { delete S.hubState.error; S.hubState.last = new Date(); }
+    if (S.hubOnly) { delete S.hubState.error; S.hubState.last = new Date(); if (S.hub.problems) S.problems.push(...S.hub.problems().map(x => "GitHub: " + x)); }
     if (keyringSeen && !S.vault.kr && !again) {   // another computer turned on encryption: unlock, then read the encrypted files
       if (await loadKeyring()) { await ensureUnlocked(); S.seen = {}; return doSync(manual, true); }
     }

@@ -61,11 +61,14 @@ t("U10 line under 70 chars; Manager excludes withheld + done; workload sums", ()
 t("U12 CSV snapshot import", () => {
   const csv = "# generated_at=2026-10-19T07:30:00-05:00\nid,list,title,account,person,next_date,status,last_modified,withhold\nC1,Follow-ups,\"send deck, v2\",Account B,Alex R.,2026-10-20,not_started,2026-10-18T09:00:00-05:00,false\nC2,Waiting on,return quote,,Sam K.,,waiting,2026-10-18T09:00:00-05:00,maybe\n";
   const r = R.readSnapshot(R.snapshotFromCSV(csv)); assert.strictEqual(r.items.length, 1); assert.strictEqual(r.items[0].title, "send deck, v2"); assert.strictEqual(r.rejects.length, 1); });
-t("U13 handoff example equals build example", () => {
-  const hp = process.env.DASH_HANDOFF || path.join(__dirname, "../../../handoff/example-snapshot.json");
-  if (!fs.existsSync(hp)) { console.log("  (handoff copy not next to this build; set DASH_HANDOFF to check it — checking the build copy only)"); assert.ok(!/@/.test(JSON.stringify(ex))); return; }
-  const h = fs.readFileSync(hp, "utf8"); assert.deepStrictEqual(JSON.parse(h), ex);
-  assert.ok(!/@/.test(h), "no @ anywhere in example"); });
+t("U13 in-repo example .json equals the .js", () => {   // 00.04: public test compares only files in this repo
+  const js = fs.readFileSync(path.join(__dirname, "../examples/example-snapshot.js"), "utf8"), m = js.match(/=\s*([\s\S]*?);?\s*$/);
+  assert.deepStrictEqual(JSON.parse(m[1]), ex); assert.ok(!/@/.test(JSON.stringify(ex)), "no @ anywhere in example"); });
+{ // optional: a SCRUBBED handoff copy, only when DASH_HANDOFF names one. Never defaults to any private file.
+  const hp = process.env.DASH_HANDOFF;
+  if (!hp || !fs.existsSync(hp)) console.log("SKIP U13b handoff copy equals build example (set DASH_HANDOFF to a scrubbed copy to check it)");
+  else t("U13b handoff copy equals build example", () => { const h = fs.readFileSync(hp, "utf8"); assert.deepStrictEqual(JSON.parse(h), ex); assert.ok(!/@/.test(h)); });
+}
 t("U14 calendar time fills at once; conflicts fill only the Attended meeting", () => {
   const f = R.calendarFills(s.calendar, today, []).map(e => e.id); assert.deepStrictEqual(f, ["CAL-1", "CAL-4"], "no conflict events, no tomorrow events");
   assert.deepStrictEqual(R.calendarFills(s.calendar, today, ["CAL-3"]).map(e => e.id), ["CAL-1", "CAL-3", "CAL-4"]);
