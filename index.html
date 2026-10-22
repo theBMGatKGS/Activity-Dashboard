@@ -3,14 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- 00.03.003 CSP: only this site's own scripts and connections. style-src also allows inline style ATTRIBUTES, which the UI uses for layout (no script can run from them). -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; connect-src 'self'; form-action 'none'">
+<!-- 00.03.003 CSP: only this site's own scripts and connections (00.04: plus the GitHub API, for the encrypted data hub). style-src also allows inline style ATTRIBUTES, which the UI uses for layout (no script can run from them). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; connect-src 'self' https://api.github.com; form-action 'none'">
 <title>Activity Dashboard</title>
-<meta name="description" content="Activity Dashboard 00.03.003_261021 — local-first app, encrypted Data folder, installable">
+<meta name="description" content="Activity Dashboard 00.04.000_261021 — local-first app, encrypted Data folder, installable">
 <link rel="icon" href="assets/icon-64.png">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0b0e12">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
+<meta name="apple-mobile-web-app-title" content="Activity Dashboard">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -26,6 +27,7 @@
           <button data-act="reload" role="menuitem">Reload snapshot</button><hr>
           <button data-act="connect" role="menuitem">Connect Data folder…</button>
           <button data-act="syncNow" role="menuitem">Sync now</button>
+          <button data-act="hub" role="menuitem">GitHub sync…</button>
           <button data-act="saveTimeFile" role="menuitem">Save my time file…</button>
           <button data-act="openTimeFiles" role="menuitem">Open time files…</button>
           <button data-act="repairClock" role="menuitem">Repair clock stamps…</button>
@@ -90,6 +92,7 @@
    <section id="help-quick"><h2>Quick Start</h2><ol>
     <li>Open <code>index.html</code> in your OneDrive <code>Dashboard</code> folder in <b>Chrome or Edge</b> (Mac: <code>&lt;synced folder&gt;/Dashboard/</code>; work PC: usually <code>C:\Users\&lt;you&gt;\OneDrive\Dashboard\</code>).</li>
     <li>First time on each computer: give it a short name (e.g. <b>mac</b>, <b>workpc</b>), then click the <b>⚠ Connect Data folder</b> chip and pick <code>Dashboard/Data</code>. Allow edit access. Time then syncs both ways through OneDrive.</li>
+    <li><b>GitHub sync (iPad, or computers without OneDrive):</b> File → GitHub sync…, enter your private data repo and paste this device's own token (the dialog shows how to make it). Only encrypted files are sent. See Help → FAQ.</li>
     <li>The dashboard reads <code>Data/inbox-snapshot.js</code> (capital D) in that folder, copied there after each Inbox Exporter run. If it's missing you'll see the fictional example with an <b>⚠ EXAMPLE DATA</b> badge.</li>
     <li>Check the <b>As of</b> stamp top right. Amber <b>⚠ Stale</b> means the snapshot is more than 24 hours old.</li>
     <li>Click a total to filter the list; click it again (or <b>Clear</b>) to show everything.</li>
@@ -145,13 +148,18 @@
     <h3>Repair clock stamps (reset after a wrong clock)</h3><p>1. On the computer named in the warning, set the date and time to automatic and check it's right. 2. Open the dashboard there and choose <b>File → Repair clock stamps…</b>. It re-stamps that computer's future-dated changes and places them right after the last change it stamped correctly, in their original order. Anything the other computer changed after that point still wins, and so does a change it made in the gap; that's the safe side. Each repaired change replaces its original by id, so an old OneDrive conflict copy (e.g. <code>time-workpc-PC.json</code>) that still holds the original future-stamped change is ignored — it can't bring it back, now or later; you can delete such copies once both computers show the same totals. The dashboard rewrites its own <code>time-&lt;name&gt;.json</code> and reloads. Nothing is deleted. 3. Wait for OneDrive to sync and the other computer to poll (about a minute). The warning then clears on both computers. <b>Repair is refused</b> while this computer's clock looks <i>behind</i> another computer's (a stamp or file time from it is more than 5 minutes ahead): repairing then would back-date your edits. Fix both clocks first. A repaired change is never placed before its meeting's start (or its date), so it still beats the other computer's automatic meeting time, and never later than now.</p>
     <h3>Can I import local data from the other computer?</h3><p>No. <b>File → Import local data…</b> takes only this computer's own time events; events from other machines are ignored (the message says how many). The other computer's time arrives through its own file in Data.</p>
     <h3>Can two computers use the same name?</h3><p>No. Give each its own name; the name can't be changed later from the app.</p>
-    <h3>Is my data uploaded anywhere?</h3><p>No. It's a local file with no server, no sign-in and no network calls. Your real files stay in <code>Dashboard/Data/</code> in OneDrive; app updates never include a Data folder, so they can't overwrite them.</p>
+    <h3>Is my data uploaded anywhere?</h3><p>Only if you turn on <b>File → GitHub sync…</b>, and then only encrypted: the app sends <code>.enc</code> files and <code>keyring.json</code> to your own <b>private</b> GitHub repo and refuses anything else before it leaves the browser. Your passphrase and data key never leave your devices. Without GitHub sync there are no network calls; your files stay in <code>Dashboard/Data/</code>, and app updates never include a Data folder, so they can't overwrite them.</p>
+    <h3>How do I set up GitHub sync on a computer?</h3><p>1. Once, on github.com: create a <b>private</b> repo for the data (empty is fine). 2. On each computer: github.com → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token. Name it after the computer, expiration <b>1 year</b> (custom date), Resource owner = your account, Repository access = <b>Only select repositories</b> → the data repo, Repository permissions → <b>Contents: Read and write</b> (Metadata: Read is added by itself). Nothing else. 3. Copy the token (starts <code>github_pat_</code>), then in the dashboard <b>File → GitHub sync…</b>, enter <i>owner/repo</i> and paste it. The token is stored only in this browser, encrypted under your passphrase key. To cut off a lost device, delete its token on github.com; the other computers keep working.</p>
+    <h3>Can I use it on an iPad?</h3><p>Yes, through GitHub sync. Open the dashboard's https address in Safari (Share → Add to Home Screen to keep it), choose File → GitHub sync…, enter the repo and a token made for the iPad, then unlock with your passphrase. GitHub is the store there; there's no folder to connect.</p>
+    <h3>What does the computer with the Data folder do with GitHub sync on?</h3><p>The folder (e.g. OneDrive, or a local drive) stays the backup. Each sync copies encrypted files both ways: new files go where they're missing, this computer's own time file goes up, and everything else comes down from GitHub. Totals merge with the same rules as before.</p>
+    <h3>GitHub says the token expired.</h3><p>Make a new token for that computer (same steps) and paste it in File → GitHub sync…. Nothing else changes.</p>
     <h3>Why n/a on the week-over-week line?</h3><p>There's no earlier week to compare yet.</p>
     <h3>Some rows were skipped (⚠ Incomplete)?</h3><p>Those snapshot rows broke a rule (for example an unknown list). The banner lists them; the rest loaded.</p>
     <h3>Why didn't my overlapping meetings add time?</h3><p>Overlaps fill nothing until you mark the one you attended.</p>
     <h3>Why does it read notebook-log.js instead of notebook-log.md?</h3><p>A page opened as a local file can load a script but can't read a .md file by itself. So the box converts the <code>- [log]</code> lines into <code>notebook-log.js</code>. If that file isn't there, use File → Import notebook log….</p>
     <h3>Will my time entries survive a browser cache clear?</h3><p>Yes, if the Data folder was connected: they're in <code>Data/time-&lt;machine&gt;.json</code>. You'll need to name the computer (use the same name) and reconnect the folder.</p></section>
    <section id="help-rev"><h2>Revision log</h2><table><tr><th>Revision</th><th>Date</th><th>Changes</th></tr>
+    <tr><td class="mono">00.04.000_261021</td><td>Oct 21 2026</td><td>GitHub sync: File → GitHub sync… connects a PRIVATE GitHub repo that holds only encrypted files (.enc) and the keyring. Each computer uses its own fine-grained access token (one repo, Contents read/write, 1-year expiry), stored encrypted under your passphrase key. With a Data folder connected, the folder stays the backup and encrypted files are copied both ways; without one (iPad Safari), GitHub is the store. Plaintext is refused before anything is sent. Same merge rules. The page refuses to run inside another site's frame. Installed name: Activity Dashboard.</td></tr>
     <tr><td class="mono">00.03.003_261021</td><td>Oct 21 2026</td><td>Security policy (CSP): the page runs only its own scripts and connects only to its own address, so injected or third-party code can't run or send data out. Keyrings must use exactly 600,000 iterations. Deleting the older version's copy now waits if another tab still has it open and is confirmed on the next launch. Test fixes.</td></tr>
     <tr><td class="mono">00.03.002_261021</td><td>Oct 21 2026</td><td>After an older version's browser copy is moved in and every item reads back the same (decrypted, when the folder is encrypted), the app offers once to delete the old unencrypted copy. Nothing is deleted without your OK, and nothing is offered if the check fails or the app is locked. "Remember on this computer" is now ticked by default (untick it on a shared computer).</td></tr>
     <tr><td class="mono">00.03.001_261021</td><td>Oct 21 2026</td><td>The browser's own cache is encrypted too: once the Data folder is encrypted, time events, entries, trend history, learned audiences and any opened snapshot are stored in this browser only as AES-256-GCM blobs under the same key. Existing plaintext cache is encrypted on unlock; nothing readable is cached while locked (edits made while locked stay in the open page and are saved on unlock). Setup text recommends keeping the recovery key in a password manager plus a printed copy. Exports stay plain and now ask first.</td></tr>
@@ -161,9 +169,11 @@
   </div>
  </div>
 </div>
+<script src="js/frame.js"></script>
 <script src="config.js"></script>
 <script src="config.local.js"></script>
 <script src="js/vault.js"></script>
+<script src="js/hub.js"></script>
 <script src="js/rules.js"></script>
 <script src="js/sync.js"></script>
 <script src="js/db.js"></script>

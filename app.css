@@ -179,3 +179,8 @@ table.tbl select{background:var(--surface2);border:1px solid var(--line);border-
 .vbtns{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
 .vcol{display:flex;flex-direction:column;gap:6px;align-items:stretch;margin-top:8px}
 .rkbox{margin:10px 0;padding:10px;font-size:15px;letter-spacing:.5px;text-align:center;background:var(--bg);border:1px dashed var(--accent2);border-radius:8px;user-select:all;word-break:break-all}
+
+/* 00.04 GitHub sync dialog */
+.hubsteps { margin: 8px 0 10px; font-size: 13px; color: inherit; }
+.hubsteps summary { cursor: pointer; font-weight: 600; }
+.hubsteps ol { margin: 6px 0 0 18px; padding: 0; line-height: 1.5; }

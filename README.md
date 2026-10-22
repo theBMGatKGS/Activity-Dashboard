@@ -1,5 +1,5 @@
 # Activity Dashboard
-Revision **00.03.003_261021** · local-first app · encrypted Data folder (optional, in-browser AES-256-GCM) · installable (PWA) over https · no server, no sign-in, no network calls for data.
+Revision **00.04.000_261021** · local-first app · encrypted Data folder (optional, in-browser AES-256-GCM) · optional encrypted sync through a private GitHub repo (00.04) · installable (PWA) over https · no server of its own.
 
 ## Use
 1. The app lives in **`<synced folder>/Dashboard/`** on the user's Mac. It is **not** in the notebook repo. To update, copy the new app files over the old ones; the deploy folder never contains `Data/`.
@@ -14,6 +14,8 @@ Revision **00.03.003_261021** · local-first app · encrypted Data folder (optio
 | `index.html`, `app.css` | UI, in-app Help / How Do I / FAQ / Quick Start / Revision log |
 | `js/rules.js` | pure rules (totals, Going Cold, WoW, conflicts, guesses, lines, Manager filter, workload) |
 | `js/vault.js` | 00.03 encryption (keyring, AES-256-GCM envelopes), browser + Node |
+| `js/hub.js` | 00.04 GitHub data hub: REST Contents API client, plaintext guard, folder-handle adapter, folder ⇄ hub mirror; browser + Node |
+| `js/frame.js` | 00.04 frame-busting check (runs first) |
 | `manifest.webmanifest`, `sw.js` | 00.03 installable app, offline app shell |
 | `config.local.example.js` | template for the git-ignored per-computer `config.local.js` |
 | `tools/encrypt_file.js` | 00.03 encrypt a file for an encrypted Data folder |
@@ -25,7 +27,7 @@ Revision **00.03.003_261021** · local-first app · encrypted Data folder (optio
 | `examples/example-snapshot.js/.json` | FICTIONAL example (fallback) |
 | `Data/` (not shipped) | the user's real files: `inbox-snapshot.js/.json`, `notebook-log.js`, `time-<machine>.json` per machine; OneDrive only |
 | `tests/`, `tools/`, `.gitignore` | box-side only; not in the deploy folder |
-| `tests/` | `run_all.sh`: unit tests (node), T11 offline local-file test, screenshots (Playwright) |
+| `tests/` | `run_all.sh`: unit tests (node), T11 offline local-file test, screenshots (Playwright); 00.04 `hub.test.js` + `fake_github.js` (mocked GitHub API), `t23_hub.py` (PC + iPad end to end, mocked API) |
 
 ## Not in 00.02.000 (still deferred)
 By-account view (planned 00.02), account-based Going Cold, the "My next three things" ranking with its print strip, and the Proposed tray (hidden).
@@ -41,11 +43,21 @@ By-account view (planned 00.02), account-based Going Cold, the "My next three th
 - Recovery key: keep it in a password manager **and** a printed copy (the setup dialog has Copy, Print… and Save as .txt…). Never in the Data folder, OneDrive or email.
 - Not encrypted: CSV/JSON exports you save on purpose (they ask first), and the cache of a folder that isn't encrypted.
 
-## Content Security Policy (00.03.003)
-`index.html` sets `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; connect-src 'self'; form-action 'none'`.
+## GitHub data hub (00.04)
+A **private** GitHub repo (e.g. `activity-data-hub`) is the shared store. It holds only `keyring.json` (wrapped key; useless without the passphrase or recovery key) and `*.enc` envelopes. No plaintext, ever: `js/hub.js` refuses any write that isn't a valid keyring or an AES-256-GCM envelope with exactly the envelope fields, **before** a request is made, and refuses a repo whose metadata says it isn't private.
+- **Auth:** one fine-grained personal access token per machine: Repository access = only the data repo; Repository permissions = Contents: Read and write (Metadata: Read-only is automatic); 1-year expiry. Entered once in File → GitHub sync… (the dialog lists the steps). Stored only in this browser's IndexedDB as a vault envelope (purpose `token`) under the data key: unreadable while locked, never in localStorage or git. Classic `ghp_` tokens are refused. Revoke a lost device by deleting its token on GitHub.
+- **Requests:** `https://api.github.com/repos/<owner>/<repo>/contents/…` with `Authorization: Bearer`, `X-GitHub-Api-Version: 2022-11-28`, `credentials: omit`, `cache: no-store`, `redirect: error`. Listing uses `If-None-Match` (ETag). Writes send the file's blob sha; a 409/422 re-lists and retries (each machine only writes its own time file). Files over 1 MB are read through `git/blobs`. Commit message is always `sync`; no author/committer details are sent (GitHub uses the token owner's account and its email privacy setting).
+- **With a Data folder (Mac, work PC e.g. `D:\!!Dashboard\Data`, OneDrive):** the folder stays the backup and is still read as before. Each sync first mirrors encrypted files: keyring from the hub unless the hub has none (or the local one is newer by `changed`/`created`; different key ids → nothing copied, problem shown); this machine's `time-<machine>.json.enc` goes up; every other `.enc` comes down (hub wins); missing files are copied either way. Unchanged files are recognised by git blob sha, so they aren't downloaded again. A new passphrase / recovery slot is pushed at once.
+- **Without a folder (iPad Safari, any browser without `showDirectoryPicker`):** the hub *is* the store. `Hub.dir()` looks like the folder handle the app already uses, so the same reading, writing and merge code runs. The keyring is cached with the token envelope so the app can unlock at launch; offline edits stay in the encrypted browser cache and are written on the next successful sync.
+- **Merge rules unchanged:** auto-fill < adjustment < removed; newest timestamp wins, then machine name.
+- **Service worker:** API calls are cross-origin and never handled or cached; `Data/`, `.enc`, keyring and API-looking paths are excluded on the app origin too.
+- **Frame-busting:** `js/frame.js` runs first. In a frame the page hides itself, tries to take over the top window, and `app.js` doesn't start (no unlock or token dialog can be shown inside another site).
+
+## Content Security Policy (00.03.003; 00.04 adds the GitHub API)
+`index.html` sets `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; connect-src 'self' https://api.github.com; form-action 'none'`.
 - Why `style-src 'unsafe-inline'`: the UI sets layout with inline `style="…"` attributes (58 of them). Inline styles can't run script; scripts stay `'self'` only (no inline script, no eval).
-- Same policy works from GitHub Pages, the installed app (same origin) and `file://` (Chromium treats the page's own folder as `'self'`); tested in T22. When the GitHub data hub is added, `connect-src` gains exactly one entry: the GitHub API host.
-- A `<meta>` CSP can't set `frame-ancestors`; GitHub Pages can't send headers, so that one is not available.
+- Same policy works from GitHub Pages, the installed app (same origin) and `file://` (Chromium treats the page's own folder as `'self'`); tested in T22. 00.04: `connect-src` gained exactly one entry, `https://api.github.com`.
+- A `<meta>` CSP can't set `frame-ancestors`; GitHub Pages can't send headers, so `js/frame.js` does the frame check in script (00.04).
 
 ## Install (00.03)
 `manifest.webmanifest` + `sw.js`. Served over https (e.g. GitHub Pages) Edge/Chrome offer Install; the service worker caches the app shell only (never `Data/`). Opened from disk (`file://`) it runs as before without the service worker.

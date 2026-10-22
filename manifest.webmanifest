@@ -1,7 +1,7 @@
 {
   "name": "Activity Dashboard",
-  "short_name": "Dashboard",
-  "description": "Local-first activity dashboard with an encrypted Data folder.",
+  "short_name": "Activity Dashboard",
+  "description": "Local-first activity dashboard. Encrypted Data folder, optional encrypted sync through a private GitHub repo.",
   "id": "./",
   "start_url": "./index.html",
   "scope": "./",

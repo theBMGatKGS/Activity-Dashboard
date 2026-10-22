@@ -1,8 +1,9 @@
 /* Activity Dashboard — UI. Local-file app: open index.html directly. */
 (function () {
   "use strict";
+  if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
   const R = DASH.rules, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.03.003_261021";
+  const REV = "00.04.000_261021";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -29,6 +30,7 @@
     await setupMachine();
     await connectStored();
     if (S.dir) { await loadKeyring(); await ensureUnlocked(); }   // 00.03.001: unlock before reading the (encrypted) cache
+    await hubBoot();                                              // 00.04: GitHub data hub (the store on iPad, a mirror next to a folder)
     await offerLegacyDelete();
     S.history = (await DB.get("history")) || [];
     S.own = (await DB.get("ownEvents")) || [];
@@ -162,6 +164,7 @@
       let text = R2.serialize(S.machine, S.own, new Date().toISOString(), S.myReports);
       if (S.vault.kr) text = await V.encrypt(S.vault.key, S.vault.kr, "time", text);
       const f = await writeText(name, text); S.seen[name] = f.lastModified + ":" + f.size; S.fileEvents[inner] = S.own.filter(e => e.machine === S.machine); delete S.fileProblems[name];
+      if (S.hub && S.vault.kr) { try { await S.hub.write(name, text, "sync"); delete S.hubState.pending; } catch (e) { S.hubState.pending = true; S.hubState.error = e.message || String(e); } }
     } catch (e) { S.problems.push(`could not write ${name}: ${e.message || e}`); }
     renderSync();
   }
@@ -230,7 +233,7 @@
       if (S.dirStored && !S.granted && S.dirStored.requestPermission) {   // reconnect: one click, same folder
         if ((await S.dirStored.requestPermission({ mode: "readwrite" })) === "granted") { S.dir = S.dirStored; S.granted = true; await afterConnect(); return; }
       }
-      if (!window.showDirectoryPicker) { banner("This browser can't connect a folder. Open the dashboard in Edge or Chrome, or use File → Save my time file… / Open time files….", true); return; }
+      if (!window.showDirectoryPicker) { banner("This browser can't connect a folder. Use File → GitHub sync… (works on iPad), or open the dashboard in Edge or Chrome.", true); return; }
       const h = await window.showDirectoryPicker({ id: "dash-data", mode: "readwrite" });
       if (h.name !== "Data" && !confirm(`You picked "${h.name}". The dashboard expects the Dashboard/Data folder. Use "${h.name}" anyway?`)) return;
       if ((await h.queryPermission({ mode: "readwrite" })) !== "granted" && (await h.requestPermission({ mode: "readwrite" })) !== "granted") { banner("Folder access was not granted.", true); return; }
@@ -258,7 +261,9 @@
   async function writeText(name, text) {
     const fh = await S.dir.getFileHandle(name, { create: true });
     const w = await fh.createWritable();            // Chromium writes to a temporary swap file; close() swaps it in (atomic)
-    await w.write(text); await w.close(); return fh.getFile();
+    await w.write(text); await w.close();
+    if (name === KEYRING && S.hub && !S.hubOnly) { try { await S.hub.write(KEYRING, text, "sync"); } catch (e) { S.hubState.error = e.message || String(e); } }   // 00.04: a new passphrase reaches the hub at once
+    return fh.getFile();
   }
   async function readName(name) { const h = await S.dir.getFileHandle(name); return readText(h); }
   async function loadKeyring() {
@@ -452,6 +457,99 @@
       if (pass) { await recoveryDialog(pass.recoveryKey, "Your new recovery key"); await writeText(KEYRING, JSON.stringify(pass.keyring, null, 1) + "\n"); S.vault.kr = pass.keyring; toast("New recovery key saved in the keyring. The old one no longer works."); }
     }
   }
+  // ---------- GitHub data hub (00.04) ----------
+  // A private repo holds only keyring.json and *.enc (js/hub.js refuses anything else). Each computer has its own fine-grained
+  // token (one repo, Contents read/write). It's kept in IndexedDB only as a vault envelope (purpose "token") under the data key,
+  // so it's unreadable while locked and never in plain localStorage or git. With a Data folder: the folder is the backup and
+  // encrypted files are mirrored both ways each sync. Without one (iPad Safari): the hub is the store (S.dir = Hub.dir).
+  const H = DASH.hub;
+  S.hubState = {};
+  async function hubCfg() { try { return (await DB.get("hubCfg")) || null; } catch (e) { return null; } }
+  function attachHub(repo, token) {
+    const c = H.client({ repo, token }); S.hub = c; S.hubState = { repo };
+    if (!S.dir || S.dir.isHub) { S.dir = S.dirStored = H.dir(c); S.granted = true; S.hubOnly = true; } else S.hubOnly = false;
+    return c;
+  }
+  function detachHub() { const was = S.hubOnly; S.hub = null; S.hubState = {}; if (was) { S.dir = S.dirStored = null; S.granted = false; S.hubOnly = false; } }
+  async function hubBoot() {
+    const cfg = await hubCfg(); if (!cfg || !cfg.repo || !cfg.tokenEnv || !cfg.keyring) return;
+    if (!S.dir) {                                   // no folder: GitHub is the store. Unlock with the keyring saved at setup.
+      if (!S.vault.kr) { S.vault.kr = cfg.keyring; await DB.requireEncryption(); }
+      if (!(await ensureUnlocked())) return;
+    } else if (!S.vault.kr || !S.vault.key) return;
+    if (S.vault.kr.keyId !== cfg.keyId) { S.hubState = { repo: cfg.repo, error: "GitHub sync was set up for a different keyring. Set it up again (File → GitHub sync…)." }; return; }
+    let token; try { token = await V.decrypt(S.vault.key, S.vault.kr, cfg.tokenEnv, "token"); } catch (e) { S.hubState = { repo: cfg.repo, error: "The saved token can't be opened. Set up GitHub sync again." }; return; }
+    attachHub(cfg.repo, token);
+    if (S.hubOnly) { const kr = await loadKeyring(); if (kr && kr.keyId === cfg.keyId && JSON.stringify(kr) !== JSON.stringify(cfg.keyring)) { cfg.keyring = kr; await DB.set("hubCfg", cfg); } if (kr && !S.vault.key) await ensureUnlocked(); }
+  }
+  async function hubMirror() {
+    if (S.hubOnly || !S.hub || !S.dir || !S.granted || !S.vault.key) return;
+    try {
+      const r = await H.mirror(S.dir, S.hub, { ownFile: R2.fileName(S.machine) + ENC, message: "sync" });
+      S.hubState.last = new Date(); S.hubState.error = r.problems.length ? r.problems.join(" ") : null; S.hubState.up = r.up.length; S.hubState.down = r.down.length;
+      if (r.down.includes(KEYRING)) await loadKeyring();
+    } catch (e) { S.hubState.error = e.message || String(e); }
+    if (S.hubState.error) S.problems.push("GitHub: " + S.hubState.error);
+  }
+  async function saveHub(repo, token) {
+    const tokenEnv = await V.encrypt(S.vault.key, S.vault.kr, "token", token);
+    await DB.set("hubCfg", { repo, keyId: S.vault.kr.keyId, keyring: S.vault.kr, tokenEnv, saved: new Date().toISOString() });
+  }
+  // Checks the repo (private, reachable, same keyring), then saves and attaches. Returns "ok" | "cancelled".
+  async function hubConnect(repo, token) {
+    const pr = H.repoProblem(repo) || H.tokenProblem(token); if (pr) throw new Error(pr);
+    const c = H.client({ repo, token }), list = await c.test(), hasKr = list.some(x => x.name === KEYRING);
+    const hubKr = hasKr ? V.parseKeyring((await c.read(KEYRING)).text) : null;
+    if (S.dir && !S.dir.isHub) {                    // computer with a Data folder
+      if (!S.vault.kr || !S.vault.key) throw new Error("Turn on encryption (and unlock) first: File → Encryption…. Only encrypted files go to GitHub.");
+      if (hubKr && hubKr.keyId !== S.vault.kr.keyId) throw new Error("That repo already holds data from a different encryption setup (another keyring). Use an empty repo, or this folder's passphrase setup everywhere.");
+      await saveHub(repo, token); attachHub(repo, token);
+    } else if (hubKr) {                             // iPad / no folder, hub already set up by another computer
+      if (!S.vault.kr || S.vault.kr.keyId !== hubKr.keyId) { S.vault.kr = hubKr; S.vault.key = null; await DB.requireEncryption(); }
+      if (!(await ensureUnlocked())) return "cancelled";
+      await saveHub(repo, token); attachHub(repo, token);
+    } else {                                        // no folder and an empty hub: start encryption here, straight into GitHub
+      attachHub(repo, token); await turnOnEncryption();
+      if (!S.vault.kr || !S.vault.key) { detachHub(); return "cancelled"; }
+      await saveHub(repo, token);
+    }
+    S.seen = {}; await syncNow(true); await writeOwn(); return "ok";
+  }
+  async function hubForget() { await DB.set("hubCfg", undefined); detachHub(); renderSync(); }
+  async function hubDialog() {
+    if (S.vault.kr && !S.vault.key && !(await ensureUnlocked())) return;
+    const cfg = await hubCfg(), on = !!(cfg && S.hub);
+    await dialog("hubdlg", `<b class="vt">☁ GitHub sync</b>
+      ${on ? `<p>Connected to <span class="mono">${esc(cfg.repo)}</span>${S.hubOnly ? " (the store on this device)" : " (mirrored with the Data folder, which stays the backup)"}. ${S.hubState.error ? `<span class="verr">⚠ ${esc(S.hubState.error)}</span>` : S.hubState.last ? "Last sync " + hhmm(S.hubState.last) + "." : ""}</p>`
+        : `<p>Sync through your own <b>private</b> GitHub repo. Only encrypted files (<code>.enc</code>) and <code>keyring.json</code> are sent; anything else is refused before it leaves this browser. Your passphrase and data key never leave this device.</p>`}
+      <details class="hubsteps"${on ? "" : " open"}><summary>Make this computer's access token (2 minutes)</summary><ol>
+        <li>Once only: on github.com create a <b>private</b> repo for the data (empty).</li>
+        <li>github.com → your picture → <b>Settings</b> → <b>Developer settings</b> → <b>Personal access tokens</b> → <b>Fine-grained tokens</b> → <b>Generate new token</b>.</li>
+        <li>Token name: this computer's name (<span class="mono">${esc(S.machine || "")}</span>). Expiration: <b>Custom</b>, one year from today.</li>
+        <li>Repository access: <b>Only select repositories</b> → the data repo only.</li>
+        <li>Repository permissions → <b>Contents: Read and write</b>. Leave everything else at No access (Metadata: Read-only is added automatically).</li>
+        <li><b>Generate token</b>, copy it (starts <span class="mono">github_pat_</span>) and paste it below. Don't save it anywhere else.</li>
+        <li>Lost a device? Delete its token on that same GitHub page. Other computers keep working.</li></ol></details>
+      <label class="vlab">Repo (owner/name)<input id="hub-repo" autocomplete="off" spellcheck="false" placeholder="owner/activity-data-hub" value="${esc(cfg ? cfg.repo : "")}"></label>
+      <label class="vlab">Access token for this computer${on ? " (leave empty to keep the saved one)" : ""}<input type="password" id="hub-token" autocomplete="off" spellcheck="false" placeholder="github_pat_…"></label>
+      <p class="faint">The token is stored only in this browser, encrypted with your data key. It's unreadable while the app is locked.</p>
+      <div id="hub-err" class="verr" role="alert"></div>
+      <div class="vbtns"><button class="btn" id="hub-cancel">Close</button>${cfg ? `<button class="btn" id="hub-off">Disconnect this computer</button>` : ""}<button class="btn primary" id="hub-ok">${on ? "Save" : "Connect"}</button></div>`,
+    (d, done) => {
+      const err = m => { d.querySelector("#hub-err").textContent = m || ""; };
+      d.querySelector("#hub-cancel").onclick = () => done(null);
+      const off = d.querySelector("#hub-off"); if (off) off.onclick = async () => { if (!confirm("Stop GitHub sync on this computer and forget its token here? Also delete the token on github.com.")) return; await hubForget(); toast("GitHub sync is off on this computer. Delete its token on github.com too."); done(null); };
+      d.querySelector("#hub-ok").onclick = async () => {
+        const repo = d.querySelector("#hub-repo").value.trim(), tok = d.querySelector("#hub-token").value.trim();
+        if (on && !tok && cfg && repo === cfg.repo) { done(null); return; }
+        const ok = d.querySelector("#hub-ok"); ok.disabled = true; err("Checking the repo…");
+        try { d.style.display = "none"; const r = await hubConnect(repo, tok); d.style.display = "";
+          if (r === "ok") { toast("GitHub sync connected."); done(true); } else { err("Not connected."); ok.disabled = false; } }
+        catch (e) { d.style.display = ""; err(e.message || String(e)); ok.disabled = false; }
+      };
+    });
+    renderSync();
+  }
   // ---------- PWA (00.03): installable from https (GitHub Pages) or localhost; file:// keeps working without it ----------
   let installEvt = null;
   function registerPWA() {
@@ -493,6 +591,7 @@
     if (!window.DASH_TEST_FS && !(await permOK(S.dir))) { S.granted = false; renderSync(); return; }
     S.granted = true; let changed = false; const names = new Set(); let snapRaw = null, logObj = null, plain = [], kept = [], keyringSeen = false;
     if (S.vault.kr && !S.vault.key) { S.lastSync = new Date(); renderSync(); return; }   // encrypted and locked: touch nothing
+    if (S.hub && !again) await hubMirror();
     try {
       for await (const [name, h] of S.dir.entries()) {
         if (h.kind !== "file") continue; names.add(name);
@@ -514,7 +613,8 @@
           else if (!snapRaw || inner.endsWith(".json")) snapRaw = parseSnapshotText(inner, r.text);
         } catch (e) { S.fileProblems[name] = `${name}: unreadable (${e.message || e})`; if (purpose === "time") { delete S.fileEvents[inner]; changed = true; } }
       }
-    } catch (e) { S.problems.push("Data folder: " + (e.message || e)); }
+    } catch (e) { if (S.hubOnly) { S.hubState.error = e.message || String(e); S.problems.push("GitHub: " + S.hubState.error); renderSync(); return; } S.problems.push("Data folder: " + (e.message || e)); }
+    if (S.hubOnly) { delete S.hubState.error; S.hubState.last = new Date(); }
     if (keyringSeen && !S.vault.kr && !again) {   // another computer turned on encryption: unlock, then read the encrypted files
       if (await loadKeyring()) { await ensureUnlocked(); S.seen = {}; return doSync(manual, true); }
     }
@@ -558,7 +658,7 @@
     const c = $("#sync"); if (!c) return;
     const ms = [...new Set(S.machines.concat(S.machine ? [S.machine] : []))].sort().join(", ");
     let txt, warn = false, act = "syncNow", tip;
-    if (!S.dir && !window.showDirectoryPicker && !window.DASH_TEST_FS) { warn = true; act = "saveTimeFile"; txt = "⚠ No folder sync in this browser"; tip = "Open the dashboard in Edge or Chrome to sync time between machines. Until then: File → Save my time file… and File → Open time files…."; }
+    if (!S.dir && !window.showDirectoryPicker && !window.DASH_TEST_FS) { warn = true; act = "hub"; txt = "⚠ Set up GitHub sync"; tip = "This browser can't connect a folder (e.g. iPad Safari). Click to sync through your private GitHub data repo instead. Other option: File → Save my time file… / Open time files…."; }
     else if (!S.dirStored) { warn = true; act = "connect"; txt = "⚠ Connect Data folder"; tip = "Click and pick the Dashboard/Data folder so time syncs between your machines."; }
     else if (S.vault && S.vault.kr && !S.vault.key && S.granted) { warn = true; act = "encryption"; txt = "🔒 Data locked"; tip = "The Data folder is encrypted. Click to unlock with your passphrase."; }
     else if (!S.granted) { warn = true; act = "connect"; txt = "⚠ Reconnect Data folder"; tip = "The browser needs your OK again to use the Data folder. Click, then Allow."; }
@@ -568,7 +668,8 @@
       txt = `⚠ Clock ahead · ${who} · ${S.held.length} held`; tip = `${S.held.length} change(s) from ${who} are stamped more than ${CFG.holdHours || 24} h in the future (latest ${S.held.map(e => e.ts).sort().pop()}). They are held — not applied — until real time reaches them. Fix: on ${who}, set the clock to automatic and use File → Repair clock stamps…. See Help → FAQ.`; }
     else if (S.future.length) { warn = true; const mx = S.future.reduce((a, e) => Math.max(a, Date.parse(e.ts)), 0), mins = Math.round((mx - Date.now()) / 60000), who = [...new Set(S.future.map(e => e.machine))].join(", ");
       txt = `⚠ Clock ahead · ${who}`; tip = `${S.future.length} time stamp(s) from ${who} are up to ${mins} min in the future. Check that clock is set automatically. Edits here still count after them (the dashboard's clock moves past the newest stamp it has seen).` + (S.problems.length ? "\n\n" + S.problems.join("\n") : ""); }
-    else { warn = S.problems.length > 0; txt = `${warn ? "⚠" : S.vault && S.vault.kr ? "🔐" : "⟳"} Synced ${hhmm(S.lastSync)} · ${ms}${warn ? ` · ${S.problems.length} problem${S.problems.length > 1 ? "s" : ""}` : ""}`; tip = (warn ? S.problems.join("\n") + "\n\n" : "") + `Machines seen: ${ms}. Checks the Data folder every ${POLL_MS / 1000} s. Click to sync now.`; }
+    else { warn = S.problems.length > 0; txt = `${warn ? "⚠" : S.vault && S.vault.kr ? "🔐" : "⟳"} Synced ${hhmm(S.lastSync)} · ${ms}${warn ? ` · ${S.problems.length} problem${S.problems.length > 1 ? "s" : ""}` : ""}`; tip = (warn ? S.problems.join("\n") + "\n\n" : "") + `Machines seen: ${ms}. Checks ${S.hubOnly ? "GitHub" : S.hub ? "the Data folder and GitHub" : "the Data folder"} every ${POLL_MS / 1000} s. Click to sync now.`;
+      if (S.hub) txt += S.hubState.error ? " · ☁ ⚠" : " · ☁"; }
     c.textContent = txt; c.title = tip; c.dataset.act = act; c.classList.toggle("stale", warn);
   }
   function pickFiles(accept, cb) { const i = document.createElement("input"); i.type = "file"; i.accept = accept; i.multiple = true; i.onchange = async () => { const out = []; for (const f of i.files) out.push([f.name, await f.text()]); cb(out); }; i.click(); }
@@ -865,7 +966,7 @@
     clear: () => clearDialog(),
     exportCSV: () => { if (S.vault.kr && !confirm("This saves your time entries unencrypted (CSV) to Downloads. Continue?")) return; const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([R.timeEntriesCSV(S.entries)], { type: "text/csv" })); a.download = `dash-time-entries-${S.today}.csv`; a.click(); toast(`Exported ${S.entries.length} time entries (CSV).`); },
     repairClock: () => repairClock(), encryption: () => encryptionDialog(), install: () => installApp(),
-    connect: () => connectFolder(), syncNow: () => syncNow(true),
+    connect: () => connectFolder(), syncNow: () => syncNow(true), hub: () => hubDialog(),
     saveTimeFile: () => { if (S.vault.kr && !confirm("This saves your time file unencrypted (plain JSON) to Downloads. Continue?")) return;  download(R2.fileName(S.machine), null, R2.serialize(S.machine, S.own, new Date().toISOString())); toast(`Saved ${R2.fileName(S.machine)}. Put it in the Data folder.`); },
     openTimeFiles: () => pickFiles(".json", files => { files.forEach(([n, t]) => { const r = R2.parseTimeFile(t, n); S.fileEvents["picked:" + n] = r.events; if (r.bad) S.problems.push(r.bad); }); recompute(); render(); toast(`Merged ${files.length} time file(s).`); }),
     importLog: () => pickFile(".md,.txt", (n, t) => importLog(n, t)), logCall: () => logCall($("#asof")),
@@ -909,7 +1010,7 @@
   }
   function closeMenus() { document.querySelectorAll(".mtop").forEach(b => { b.setAttribute("aria-expanded", "false"); b.nextElementSibling.classList.add("hidden"); }); }
 
-  window.DASH.app = { state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn };
+  window.DASH.app = { state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget };
   window.addEventListener("beforeunload", e => { if (pending.size) { e.preventDefault(); e.returnValue = ""; } });
   boot();
 })();

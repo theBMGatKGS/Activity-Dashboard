@@ -42,7 +42,7 @@ for f in sorted(ROOT.rglob("*")):
     for m in DOMAIN.finditer(t):
         d = m.group(0).lower()
         if m.start() > 0 and t[m.start() - 1] == ".": continue  # a suffix hint such as ".co.uk" in the rules list
-        if d not in ALLOWED_DOMAINS and not d.endswith(".example") and not re.match(r"^(superdesign\.dev|github\.com)$", d): bad.append(f"{rel}: domain {d}")
+        if d not in ALLOWED_DOMAINS and not d.endswith(".example") and not re.match(r"^(superdesign\.dev|github\.com|api\.github\.com)$", d): bad.append(f"{rel}: domain {d}")
     if rel.startswith(("Data/", "examples/")) or rel.endswith(".json"):
         for m in PERSON.finditer(t):
             if m.group(1) not in PEOPLE and m.group(1) != "Me": bad.append(f"{rel}: person not in example allowlist: {m.group(1)}")

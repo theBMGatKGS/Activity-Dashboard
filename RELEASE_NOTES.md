@@ -1,5 +1,12 @@
 # Release notes — Activity Dashboard
 
+## 00.04.000_261021 (Oct 21 2026)
+Sync through your own private GitHub repo, so the work PC, the Mac and the iPad share the same data.
+- File → GitHub sync…: enter the private repo and paste this computer's own access token. The dialog shows how to make the token (only the data repo, Contents read and write, one year).
+- Only encrypted files and the locked keyring are ever sent. Your passphrase, data key and readable data stay on your devices. The token is saved encrypted in this browser.
+- Computers with a Data folder keep it as the backup (e.g. `D:\!!Dashboard\Data` or OneDrive). The iPad uses GitHub directly in Safari, with no folder.
+- The installed app is called Activity Dashboard. The page won't run inside another website's frame.
+
 ## 00.03.003_261021 (Oct 21 2026)
 - Stricter security: the page runs only its own code and talks only to its own address.
 - Deleting the older version's copy is more reliable when another tab has it open.

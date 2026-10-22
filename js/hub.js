@@ -1,0 +1,184 @@
+/* Activity Dashboard — encrypted data hub on GitHub (00.04). A private repo holds ONLY keyring.json and *.enc files
+   (AES-256-GCM envelopes from js/vault.js). The browser talks to the GitHub REST Contents API with a per-machine,
+   fine-grained token (one repo, Contents read/write). Every write is checked here: a plaintext file is refused before
+   any request is made, so nothing readable can reach GitHub even if a caller gets it wrong.
+   Hub.dir(client) looks like the folder handle the app already uses (entries / getFileHandle / createWritable /
+   removeEntry), so the existing merge rules (auto-fill < adjustment < removed; newest stamp, then machine) apply unchanged.
+   Hub.mirror(local, hub, own) copies encrypted files between a connected local folder (the backup) and the hub. */
+(function (g) {
+  "use strict";
+  const API = "https://api.github.com", VER = "2022-11-28";
+  const REPO_RE = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
+  const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/;
+  const KEYRING = "keyring.json";
+  const TOKEN_RE = /^(github_pat_[A-Za-z0-9_]{20,255}|gh[pousr]_[A-Za-z0-9]{20,255})$/;
+  const V = () => (g.DASH && g.DASH.vault) || null;
+
+  function b64encode(text) { const b = new TextEncoder().encode(text); let s = ""; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); }
+  function b64decode(s) { const bin = atob(String(s || "").replace(/\s+/g, "")); const b = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i); return new TextDecoder().decode(b); }
+  function tokenProblem(t) {
+    if (!t) return "Paste the access token.";
+    if (/^ghp_/.test(t)) return "That's a classic token (ghp_…). Make a fine-grained token (github_pat_…) limited to the one data repo.";
+    if (!/^github_pat_/.test(t) || !TOKEN_RE.test(t)) return "That doesn't look like a fine-grained token (it starts with github_pat_).";
+    return null;
+  }
+  function repoProblem(r) { return REPO_RE.test(String(r || "")) ? null : "Use owner/repo, for example your-account/activity-data-hub."; }
+  // Only a valid keyring or an encrypted envelope may be written. Anything else is refused here, before the network.
+  function writeProblem(name, text) {
+    if (!NAME_RE.test(name)) return `${name}: not an allowed file name`;
+    if (name === KEYRING) { try { const o = JSON.parse(text), v = V(); if (v ? v.validKeyring(o) : (o && o.kind === "dash-keyring")) return null; } catch (e) { /* fall through */ } return `${name}: not a valid keyring`; }
+    if (!/\.enc$/i.test(name)) return `${name}: only encrypted (.enc) files and keyring.json go to the hub`;
+    let o; try { o = JSON.parse(text); } catch (e) { return `${name}: not an encrypted envelope`; }
+    if (!o || o.kind !== "dash-encrypted" || o.alg !== "AES-256-GCM" || typeof o.ct !== "string" || typeof o.iv !== "string") return `${name}: not an encrypted envelope`;
+    const extra = Object.keys(o).filter(k => !["app", "kind", "version", "alg", "keyId", "purpose", "iv", "ct"].includes(k));
+    if (extra.length) return `${name}: unexpected fields in the envelope (${extra.join(", ")})`;
+    return null;
+  }
+  const hubName = n => n === KEYRING || /\.enc$/i.test(n);
+
+  class HubError extends Error { constructor(msg, status, code) { super(msg); this.name = code || "HubError"; this.status = status; } }
+  function explain(status, body, what) {
+    const m = (body && body.message) || "";
+    if (status === 401) return new HubError("GitHub refused the access token (expired or revoked). Make a new one: File → GitHub sync….", 401, "AuthError");
+    if (status === 403 && /rate limit/i.test(m)) return new HubError("GitHub rate limit reached; sync resumes automatically.", 403, "RateLimit");
+    if (status === 403) return new HubError("The token can't write to this repo. It needs Repository access: only the data repo, and Contents: Read and write.", 403, "AuthError");
+    if (status === 404 && what === "repo") return new HubError("Repo not found, or the token has no access to it.", 404, "NotFoundError");
+    if (status === 404) return new HubError("not found", 404, "NotFoundError");
+    if (status === 409 || status === 422) return new HubError("changed on GitHub meanwhile", status, "Conflict");
+    return new HubError(`GitHub error ${status}${m ? ": " + m : ""}`, status);
+  }
+
+  function client(opts) {
+    const repo = opts.repo, token = opts.token, f = opts.fetch || (typeof fetch !== "undefined" ? fetch.bind(g) : null), branch = opts.branch || null;
+    if (repoProblem(repo)) throw new HubError(repoProblem(repo));
+    if (!token) throw new HubError("No access token.");
+    const shas = new Map(); let etag = null, listCache = null, repoChecked = false;
+    const base = `${API}/repos/${repo}`;
+    async function call(method, path, body, extra) {
+      const headers = Object.assign({ Accept: "application/vnd.github+json", Authorization: "Bearer " + token, "X-GitHub-Api-Version": VER }, extra || {});
+      if (body) headers["Content-Type"] = "application/json";
+      let r; try { r = await f(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer", redirect: "error" }); }
+      catch (e) { throw new HubError("Can't reach GitHub (offline, or blocked by a network filter).", 0, "NetworkError"); }
+      return r;
+    }
+    async function json(r) { try { return await r.json(); } catch (e) { return null; } }
+    async function checkRepo() {
+      if (repoChecked) return; const r = await call("GET", "");
+      if (!r.ok) throw explain(r.status, await json(r), "repo");
+      const o = await json(r);
+      if (!o || o.private !== true) throw new HubError("This repo is public. The data hub must be a PRIVATE repo; nothing was sent.", 0, "PublicRepo");
+      repoChecked = true;
+    }
+    async function list() {
+      await checkRepo();
+      const r = await call("GET", "/contents/" + (branch ? "?ref=" + encodeURIComponent(branch) : ""), null, etag ? { "If-None-Match": etag } : null);
+      if (r.status === 304 && listCache) return listCache.slice();
+      if (r.status === 404) { shas.clear(); listCache = []; etag = null; return []; }  // empty repo (no commits yet)
+      if (!r.ok) throw explain(r.status, await json(r));
+      const arr = await json(r); if (!Array.isArray(arr)) throw new HubError("Unexpected reply listing the repo.");
+      shas.clear(); listCache = arr.filter(x => x.type === "file").map(x => ({ name: x.name, sha: x.sha, size: x.size }));
+      listCache.forEach(x => shas.set(x.name, x.sha)); etag = r.headers.get("ETag") || r.headers.get("etag") || null;
+      return listCache.slice();
+    }
+    async function read(name) {
+      if (!NAME_RE.test(name)) throw new HubError(`${name}: not an allowed file name`);
+      await checkRepo();
+      const r = await call("GET", "/contents/" + encodeURIComponent(name) + (branch ? "?ref=" + encodeURIComponent(branch) : ""));
+      if (!r.ok) throw explain(r.status, await json(r));
+      const o = await json(r); if (!o || o.type !== "file") throw new HubError(`${name}: not a file`);
+      shas.set(name, o.sha);
+      let text;
+      if (o.encoding === "base64" && o.content) text = b64decode(o.content);
+      else {  // files over 1 MB come back without content: read the blob
+        const rb = await call("GET", "/git/blobs/" + o.sha); if (!rb.ok) throw explain(rb.status, await json(rb));
+        const b = await json(rb); text = b64decode(b.content);
+      }
+      return { text, sha: o.sha, size: o.size };
+    }
+    async function write(name, text, message) {
+      const p = writeProblem(name, text); if (p) throw new HubError(p, 0, "Refused");
+      await checkRepo();
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const body = { message: message || "sync", content: b64encode(text) }, sha = shas.get(name);
+        if (sha) body.sha = sha; if (branch) body.branch = branch;
+        const r = await call("PUT", "/contents/" + encodeURIComponent(name), body);
+        if (r.ok) { const o = await json(r); const ns = o && o.content && o.content.sha; if (ns) shas.set(name, ns); etag = null; return { sha: ns, size: o && o.content ? o.content.size : text.length }; }
+        const e = explain(r.status, await json(r));
+        if (e.name !== "Conflict") throw e;
+        // someone changed it: learn the current sha and try again (each machine only writes its own time file, so last write is ours)
+        etag = null; try { await list(); } catch (x) { /* retry anyway */ }
+      }
+      throw new HubError(`${name}: kept changing on GitHub; will retry on the next sync`, 409, "Conflict");
+    }
+    async function remove(name, message) {
+      if (!hubName(name)) throw new HubError(`${name}: not a hub file`, 0, "Refused");
+      const sha = shas.get(name); if (!sha) return false;
+      const r = await call("DELETE", "/contents/" + encodeURIComponent(name), { message: message || "sync", sha });
+      if (!r.ok && r.status !== 404) throw explain(r.status, await json(r));
+      shas.delete(name); etag = null; return true;
+    }
+    async function test() { await checkRepo(); return list(); }
+    return { repo, list, read, write, remove, test, shaOf: n => shas.get(n) || null };
+  }
+
+  // A folder-handle look-alike over the hub (for iPad / no local folder). File "lastModified" is the git blob sha,
+  // so the app's change detection (lastModified + ":" + size) works as is.
+  function dir(c, opts) {
+    const msg = (opts && opts.message) || "sync";
+    const fh = (name, meta) => ({ kind: "file", name,
+      async getFile() { const r = await c.read(name); return { lastModified: r.sha, size: r.size, text: async () => r.text }; },
+      async createWritable() { let buf = ""; return { write: async t => { buf += t; }, close: async () => { await c.write(name, buf, msg); } }; } });
+    return { kind: "directory", name: "Data", isHub: true, client: c,
+      async queryPermission() { return "granted"; }, async requestPermission() { return "granted"; },
+      async *entries() { for (const x of await c.list()) yield [x.name, Object.assign(fh(x.name), { kind: "file" })]; },
+      async getFileHandle(name, o) { const l = await c.list(); if (!l.some(x => x.name === name) && !(o && o.create)) { const e = new Error("not found"); e.name = "NotFoundError"; throw e; } return fh(name); },
+      async removeEntry(name) { await c.list(); return c.remove(name, msg); } };
+  }
+
+  // git's blob id for a text, so an unchanged file is recognised from the listing alone (saves API calls)
+  async function gitSha(text) {
+    const body = new TextEncoder().encode(text), head = new TextEncoder().encode(`blob ${body.length}\0`), all = new Uint8Array(head.length + body.length);
+    all.set(head); all.set(body, head.length);
+    const d = new Uint8Array(await g.crypto.subtle.digest("SHA-1", all)); return [...d].map(x => x.toString(16).padStart(2, "0")).join("");
+  }
+  // Two-way copy of encrypted files between the local folder (backup) and the hub.
+  //  - keyring.json: hub wins if present; local is uploaded only when the hub has none. Different keyrings → stop, report.
+  //  - this machine's own time file: local wins (only this machine writes it).
+  //  - every other .enc file: hub wins when both exist and differ; a file missing on either side is copied over.
+  //  - plaintext is never uploaded (writeProblem); a hub file that isn't an envelope is never copied down.
+  async function mirror(local, c, opts) {
+    const own = opts && opts.ownFile, msg = (opts && opts.message) || "sync", out = { up: [], down: [], problems: [] };
+    const readLocal = async n => { try { const h = await local.getFileHandle(n); const f = await h.getFile(); return await f.text(); } catch (e) { return null; } };
+    const writeLocal = async (n, t) => { const h = await local.getFileHandle(n, { create: true }); const w = await h.createWritable(); await w.write(t); await w.close(); };
+    const localNames = []; for await (const [n, h] of local.entries()) if (h.kind === "file" && hubName(n)) localNames.push(n);
+    const hubList = await c.list(), hubNames = hubList.map(x => x.name).filter(hubName);
+    const lk = await readLocal(KEYRING); let hk = null;
+    if (hubNames.includes(KEYRING)) hk = (lk != null && await gitSha(lk) === c.shaOf(KEYRING)) ? lk : (await c.read(KEYRING)).text;
+    const kid = t => { try { return JSON.parse(t).keyId; } catch (e) { return null; } };
+    if (lk && hk && kid(lk) !== kid(hk)) { out.problems.push("The GitHub hub and the local Data folder use different keyrings (different passphrase setups). Nothing was copied. See Help → FAQ."); return out; }
+    if (!lk && !hk) { out.problems.push("No keyring yet: turn on encryption first (File → Encryption…). Nothing is sent to GitHub unencrypted."); return out; }
+    const stamp = t => { try { const o = JSON.parse(t); return o.changed || o.created || ""; } catch (e) { return ""; } };
+    if (lk && !hk) { await c.write(KEYRING, lk, msg); out.up.push(KEYRING); }
+    else if (hk && !lk) { await writeLocal(KEYRING, hk); out.down.push(KEYRING); }
+    else if (lk !== hk) {   // same key, new passphrase or recovery slot on one side: the newer keyring wins
+      if (stamp(lk) > stamp(hk)) { await c.write(KEYRING, lk, msg); out.up.push(KEYRING); } else { await writeLocal(KEYRING, hk); out.down.push(KEYRING); } }
+    const all = new Set(localNames.concat(hubNames)); all.delete(KEYRING);
+    for (const n of all) {
+      try {
+        const inL = localNames.includes(n), inH = hubNames.includes(n);
+        if (inL && !inH) { const t = await readLocal(n); const p = writeProblem(n, t); if (p) { out.problems.push(p); continue; } await c.write(n, t, msg); out.up.push(n); continue; }
+        if (inL) { const lt0 = await readLocal(n); if (lt0 != null && await gitSha(lt0) === c.shaOf(n)) continue; }   // same content: no download
+        const ht = (await c.read(n)).text;
+        if (!inL) { if (!writeProblem(n, ht)) { await writeLocal(n, ht); out.down.push(n); } else out.problems.push(`hub ${n}: not an encrypted file; not copied`); continue; }
+        const lt = await readLocal(n); if (lt === ht) continue;
+        if (n === own) { const p = writeProblem(n, lt); if (p) { out.problems.push(p); continue; } await c.write(n, lt, msg); out.up.push(n); }
+        else if (!writeProblem(n, ht)) { await writeLocal(n, ht); out.down.push(n); }
+      } catch (e) { out.problems.push(`${n}: ${e.message || e}`); }
+    }
+    return out;
+  }
+
+  const api = { API, gitSha, client, dir, mirror, writeProblem, tokenProblem, repoProblem, b64encode, b64decode, HubError, KEYRING };
+  g.DASH = g.DASH || {}; g.DASH.hub = api;
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+})(typeof window !== "undefined" ? window : globalThis);

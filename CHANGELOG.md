@@ -1,5 +1,15 @@
 # Changelog — Activity Dashboard
 
+## 00.04.000_261021 (Oct 21 2026)
+- GitHub encrypted data hub (`js/hub.js`): REST Contents API client (private-repo check, ETag listing, sha-checked PUT with 409/422 retry, DELETE, `git/blobs` for files over 1 MB, explained 401/403/404/rate-limit/offline errors). Plaintext guard: only a valid keyring or an exact AES-256-GCM envelope may be written; checked before any request.
+- Per-machine fine-grained token (classic `ghp_` refused), stored in IndexedDB only as a vault envelope (purpose `token`) together with the keyring; never in localStorage or git. File → GitHub sync… dialog with the token-creation steps, Connect / Save / Disconnect this computer.
+- With a Data folder: two-way encrypted mirror before each folder read (keyring rules, own time file up, others down, blob-sha skip), own time file and keyring changes pushed at once. Without a folder (iPad Safari): `Hub.dir` adapter makes the hub the store; boot unlocks with the cached keyring and reconnects. Empty hub + no folder: encryption is set up straight into the hub.
+- Sync chip: ☁ when GitHub sync is on, ⚠ with the GitHub problem; "⚠ Set up GitHub sync" in browsers without folder access.
+- CSP `connect-src 'self' https://api.github.com`. Frame-busting (`js/frame.js`, QA note): hidden + top takeover in a frame; app.js doesn't start.
+- Service worker 00.04.000 shell adds `js/frame.js`, `js/hub.js`; API paths excluded. Manifest `short_name` "Activity Dashboard"; `apple-mobile-web-app-title`.
+- Help: FAQ entries for GitHub sync setup, iPad, folder + hub, expired token; "Is my data uploaded anywhere?" updated.
+- Tests: `hub.test.js` (28, mocked API), `t23_hub.py` (PC + iPad, mocked API, 28 checks), T15 allows `api.github.com`, T13 revision.
+
 ## 00.03.003_261021 (Oct 21 2026)
 - QA F2: Content Security Policy meta (`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; connect-src 'self'; form-action 'none'`). `style-src 'unsafe-inline'` is needed only for the UI's inline style attributes; scripts are `'self'` only. Verified served over http (installed-app origin) and from `file://`, with no CSP violations.
 - QA F1: `deleteDb` no longer treats `blocked` as failure. It waits up to 5 s, then checks `indexedDB.databases()`; a delete that completes later is recorded on the next launch. T21 waits for the stored `deleted`/`declined` flags instead of reading them immediately. T21 seeds the older database from a blank same-origin page before the app loads (the old in-page seeding raced the app's boot). Playwright wait predicates are passed as functions, since the CSP correctly blocks string eval.
