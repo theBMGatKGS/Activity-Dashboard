@@ -11,6 +11,13 @@
 - QA N1: hub → local backup only after decrypt + parse with the data key; refused with a warning otherwise; the replaced local file is kept as `<name>.prev.enc` (never uploaded).
 - QA N3 (owner's choice): opaque hub names `blob-<HMAC>.enc` with the real name inside a second envelope (purpose `hub`); `keyring.json` keeps its name.
 - Tests: `hub.test.js` (36, mocked API, incl. tamper and opaque-path checks), `t23_hub.py` (PC + iPad, mocked API, incl. tamper and opaque paths), T15 allows `api.github.com`, T13 revision. U13 now compares the in-repo example .json with the .js; the handoff comparison runs only when `DASH_HANDOFF` names a scrubbed copy and otherwise prints SKIP.
+- U13c: `tests/make_example_snapshot.py` writes only `examples/` by default; `--handoff <dir>` is opt-in.
+### Known limitations / deferred
+- **N2, rollback/replay:** anyone with write access to the hub (a token holder, or GitHub) can serve back an older file that is still validly encrypted, and it is accepted. Planned fix: a per-file counter bound into the encryption (AAD), remembered per device, so a counter that goes backwards is refused or flagged.
+- **N4, duplicate machine names:** at connect there is no warning when this machine's time file already exists on the hub, so two devices given the same machine name overwrite each other's time file.
+- Access tokens expire after a year and must be renewed on each device; the app gives no warning before expiry (GitHub sync then reports the token as expired).
+- The work-PC network must allow `https://api.github.com` (and the Pages site); a proxy or filter that blocks it stops GitHub sync there.
+- iPad mode has only been tested in a simulation (Chromium with folder access removed), not yet on a real iPad in Safari.
 
 ## 00.03.003_261021 (Oct 21 2026)
 - QA F2: Content Security Policy meta (`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; connect-src 'self'; form-action 'none'`). `style-src 'unsafe-inline'` is needed only for the UI's inline style attributes; scripts are `'self'` only. Verified served over http (installed-app origin) and from `file://`, with no CSP violations.

@@ -1,9 +1,12 @@
 """Writes the FICTIONAL example snapshot in the final Inbox Exporter schema v1
 (handoff/inbox-snapshot-schema.md). Placeholder people, .example domains. Never real data."""
-import json, pathlib
+import json, pathlib, argparse
 HERE = pathlib.Path(__file__).resolve().parent
 BUILD_DATA = HERE.parent / "examples"
-HANDOFF = HERE.parents[2] / "handoff"
+# Writes only examples/ by default. --handoff <dir> also writes a copy there (opt-in; never a default path outside the repo).
+_ap = argparse.ArgumentParser(description="Write the fictional example snapshot.")
+_ap.add_argument("--handoff", metavar="DIR", help="also write example-snapshot.js/.json into DIR")
+ARGS = _ap.parse_args()
 def T(i, lst, title, account, person, nd, status, mod, withhold=False, est=None, imp=None):
     t = {"id": f"EX-{i}", "list": lst, "title": title, "account": account, "person": person, "next_date": nd,
          "status": status, "last_modified": mod, "withhold": withhold}
@@ -62,7 +65,9 @@ hist = [{"generated_at": M(w, "07:30"), "totals": {k: series[k][i] for k in keys
 snap = {"schema_version": 1, "generated_at": M("10-19", "07:30"), "source": "inbox-export", "example": True,
         "tasks": tasks, "accounts": accounts, "touches": touches, "calendar": calendar, "totals_history": hist}
 body = json.dumps(snap, indent=1)
-for d, var, stem in ((BUILD_DATA, "DASH_EXAMPLE_SNAPSHOT", "example-snapshot"), (HANDOFF, "DASH_SNAPSHOT", "example-snapshot")):
+TARGETS = [(BUILD_DATA, "DASH_EXAMPLE_SNAPSHOT", "example-snapshot")]
+if ARGS.handoff: TARGETS.append((pathlib.Path(ARGS.handoff).expanduser().resolve(), "DASH_SNAPSHOT", "example-snapshot"))
+for d, var, stem in TARGETS:
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{stem}.json").write_text(body + "\n")
     (d / f"{stem}.js").write_text(f"/* EXAMPLE DATA - fictional Inbox Exporter snapshot (schema_version 1). */\nwindow.{var} = {body};\n")

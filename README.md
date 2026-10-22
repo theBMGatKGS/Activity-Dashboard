@@ -55,6 +55,13 @@ A **private** GitHub repo (e.g. `activity-data-hub`) is the shared store. It hol
 - **Service worker:** API calls are cross-origin and never handled or cached; `Data/`, `.enc`, keyring and API-looking paths are excluded on the app origin too.
 - **Frame-busting:** `js/frame.js` runs first. In a frame the page hides itself, tries to take over the top window, and `app.js` doesn't start (no unlock or token dialog can be shown inside another site).
 
+## Known limitations / deferred (00.04.000)
+- **N2, rollback/replay:** anyone with write access to the hub (a token holder, or GitHub) can serve back an older file that is still validly encrypted, and it is accepted. Planned fix: a per-file counter bound into the encryption (AAD), remembered per device, so a counter that goes backwards is refused or flagged.
+- **N4, duplicate machine names:** at connect there is no warning when this machine's time file already exists on the hub, so two devices given the same machine name overwrite each other's time file.
+- Access tokens expire after a year and must be renewed on each device; the app gives no warning before expiry (GitHub sync then reports the token as expired).
+- The work-PC network must allow `https://api.github.com` (and the Pages site); a proxy or filter that blocks it stops GitHub sync there.
+- iPad mode has only been tested in a simulation (Chromium with folder access removed), not yet on a real iPad in Safari.
+
 ## Content Security Policy (00.03.003; 00.04 adds the GitHub API)
 `index.html` sets `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; connect-src 'self' https://api.github.com; form-action 'none'`.
 - Why `style-src 'unsafe-inline'`: the UI sets layout with inline `style="…"` attributes (58 of them). Inline styles can't run script; scripts stay `'self'` only (no inline script, no eval).
