@@ -1,5 +1,12 @@
 # Changelog — Activity Dashboard
 
+## 00.05.001_261023 (Oct 23 2026)
+- Time zone follows the computer's clock (`Intl…resolvedOptions().timeZone`), no setting; fallback and default America/Chicago (unchanged behaviour on a Central-time computer).
+- `rules.js`: zone state (`detectTimeZone`/`setTimeZone`/`getTimeZone`/`validTimeZone`), cached formatters per zone, `tzLabel` (CT/ET/PT/MST… or the IANA id), generic DST-safe `ctIso` via `zoneOffsetMs`. `ymd`/`hm`/`hourCT`/`snoozeUntil` use the current zone.
+- `app.js`: `checkTz` on every poll (60 s, own timer, also without a folder), window focus and visibility change; on a zone or day change re-reads the snapshot's day fields, recomputes and re-renders without a reload, with a message. As-of stamps, calendar strip, snooze message and sync time use the local zone label instead of a fixed "CT". REV 00.05.001_261023; `sw.js` cache bumped.
+- `index.html`: read-only zone chip `#tz` (role=status) in the top bar; Help → How Do I "…change the time zone?"; calendar help text; revision log.
+- Tests: `rules.test.js` Z1–Z5; new `t25_tz.py` (in `run_all.sh`); T13 revision.
+
 ## 00.05.000_261023 (Oct 23 2026)
 - **Daily Focus** home view (`#view-focus`, default; `?view=` deep links). Tabs: Focus · Totals (renamed Dashboard) · Workload · Print sheet · Manager's sheet; View menu gains Daily Focus.
 - `rules.js`: `focusSections` (sections, counts, row cap, Later this week, no-date footer, delta), `overlays` (Done/Snooze/star/internal reconciliation with the snapshot; To Do wins), `keyCold`/`lastTouch` (account-level, inbound excluded, `meeting_proposed` only after its date), `isOutside` (G1), `focusDelta`/`prevBusinessDay`, `ctIso`/`snoozeUntil` (CST/CDT-safe). Items gain `lastModifiedAt` (full stamp). Totals rules unchanged.

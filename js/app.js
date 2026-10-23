@@ -3,11 +3,13 @@
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
   const R = DASH.rules, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.05.000_261023";
+  const REV = "00.05.001_261023";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
   const NOW = qp.get("now") ? new Date(qp.get("now")) : new Date();
+  // 00.05.001: no time-zone setting. The zone is the computer's own (re-detected on every poll, focus and visibility change).
+  R.setTimeZone(R.detectTimeZone());
   const TIPS = {
     overdue: "The next date is before today.", dueToday: "The next date is today.", thisWeek: "Due from tomorrow through Sunday.",
     iOwe: "Follow-ups and Account touches where the user owes the next move.", owedToMe: "Everything in Waiting on.",
@@ -49,7 +51,7 @@
     if (!raw) { await migrateV01(null); banner("No snapshot found. Put inbox-snapshot.js in the data folder, or use File → Open snapshot….", true); render(); return; }
     await migrateV01(raw && !raw.example ? raw : null);
     if (await useSnapshot(raw, from)) await autoloadLog();
-    startPolling();
+    watchTz(); startPolling();
   }
   // Data/notebook-log.js is made on the box by tools/make_log_js.py (only "- [log]" lines). Missing file = nothing to do; File → Import stays the fallback.
   async function autoloadLog() {
@@ -61,7 +63,7 @@
   async function useSnapshot(raw, from) {
     let s;
     try { s = R.readSnapshot(raw); } catch (e) { banner("Snapshot not loaded: " + e.message + " The previous data is kept.", true); if (!S.snap) render(); return false; }
-    s.from = from; s.raw_generated_at = raw.generated_at; S.snap = s;
+    s.from = from; s.raw_generated_at = raw.generated_at; S.snap = s; S.snapRaw = raw;
     const cur = { generated_at: s.generatedAt, totals: R.totals(s.items, ctx()) };
     S.history = R.mergeHistory(R.mergeHistory(S.history, s.history), [cur]);
     if (!s.example) await DB.set("history", S.history);
@@ -678,12 +680,38 @@
     window.DASH_NOTEBOOK_LOG = undefined;
     if (await loadScript(CFG.notebookLogPath || "Data/notebook-log.js") && window.DASH_NOTEBOOK_LOG && Array.isArray(window.DASH_NOTEBOOK_LOG.lines)) importLog("notebook-log.js", window.DASH_NOTEBOOK_LOG.lines.join("\n"), true);
   }
+  // 00.05.001: follow the computer's time zone (travel). If the zone or the local day changed: re-read the snapshot's
+  // day fields, recompute Due Today / Overdue / snooze returns / as-of and meetings, no reload. Returns true on a change.
+  function checkTz() {
+    const old = R.getTimeZone(), z = R.setTimeZone(R.detectTimeZone()), day = R.ymd(nowDate()), zoneChanged = z !== old;
+    if (!zoneChanged && day === S.today) { renderTz(); return false; }
+    S.today = day;
+    if (zoneChanged && S.snap && S.snapRaw) { try { const n = R.readSnapshot(S.snapRaw); n.from = S.snap.from; n.raw_generated_at = S.snap.raw_generated_at; S.snap = n; } catch (e) { /* keep the current one */ } }
+    render(); renderTz();
+    if (zoneChanged) toast(`Time zone is now ${R.tzLabel()} (${z}). Today, Due Today, Overdue, snooze times and meetings follow it.`);
+    return true;
+  }
+  function renderTz() {
+    const c = $("#tz"); if (!c) return;
+    const z = R.getTimeZone(), l = R.tzLabel();
+    c.textContent = l === z ? z : `${l} · ${z}`;
+    c.title = `Time zone: ${z}, from this computer's clock (no setting). Today, Due Today, Overdue, the 08:00 snooze return, meeting times and the as-of stamp use it. Checked every ${POLL_MS / 1000} s and when the window comes back.`;
+    const a = $("#about-tz"); if (a) a.textContent = `${z} (${l}), from this computer's clock`;
+  }
+  let tzTimer = null;
+  function watchTz() {
+    if (tzTimer) return;
+    tzTimer = setInterval(checkTz, POLL_MS);
+    window.addEventListener("focus", checkTz);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) checkTz(); });
+    renderTz();
+  }
   function startPolling() {
     setInterval(() => syncNow(), POLL_MS);
     document.addEventListener("visibilitychange", () => { if (!document.hidden) syncNow(); });
     if (S.dir) syncNow(); else renderSync();
   }
-  function hhmm(d) { return d ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—"; }
+  function hhmm(d) { return d ? R.hm(d) : "—"; }
   function renderSync() {
     const c = $("#sync"); if (!c) return;
     const ms = [...new Set(S.machines.concat(S.machine ? [S.machine] : []))].sort().join(", ");
@@ -720,7 +748,7 @@
     if (!S.snap) return "No data";
     const d = new Date(S.snap.generatedAt);
     const day = R.dayLabel(R.isoDay(S.snap.generatedAt)).replace(" ", " ");
-    return `As of ${day}, ${R.hm(S.snap.generatedAt)} CT · ${S.snap.from === "opened file" ? "opened snapshot" : "Inbox Exporter snapshot"}`;
+    return `As of ${day}, ${R.hm(S.snap.generatedAt)} ${R.tzLabel(S.snap.generatedAt)} · ${S.snap.from === "opened file" ? "opened snapshot" : "Inbox Exporter snapshot"}`;
   }
   function isStale() { return S.snap && (NOW - new Date(S.snap.generatedAt)) / 3.6e6 > (CFG.staleHours || 24); }
   function renderHeader() {
@@ -779,7 +807,7 @@
       const cf = list.filter(e => e.conflict).length;
       return `<div class="lane"><div class="lbl">${name} · ${R.dayLabel(day)}${cf ? ` <span class="chip p-Today" title="Two or more events overlap">⚠ Conflict</span>` : ""}</div>${body}</div>`;
     }).join("");
-    $("#cal").innerHTML = `<div class="rowhead"><span class="cap">Calendar · Today &amp; Tomorrow · CT</span><span class="faint" style="font-size:11px">from the snapshot · overlaps marked ⚠ Conflict · ✓ = counted (Adjust to change) · overlaps fill nothing until you mark one Attended</span></div><div class="axis">${ax}</div>${lanes}`;
+    $("#cal").innerHTML = `<div class="rowhead"><span class="cap">Calendar · Today &amp; Tomorrow · ${esc(R.tzLabel())}</span><span class="faint" style="font-size:11px">from the snapshot · overlaps marked ⚠ Conflict · ✓ = counted (Adjust to change) · overlaps fill nothing until you mark one Attended</span></div><div class="axis">${ax}</div>${lanes}`;
   }
   function fmtMin(m) { return m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? " " + (m % 60) + "m" : ""}` : m + "m"; }
   function pill(w) { return `<span class="chip p-${w.replace(" ", "-")}">${w}</span>`; }
@@ -1009,7 +1037,7 @@
     const now = new Date(f.nowIso), evs = R.withConflicts(S.snap.calendar).filter(e => e.day === S.today && new Date(e.end) > now).sort((a, b) => a.start < b.start ? -1 : 1);
     const meet = evs.slice(0, 4).map(e => `<div class="mt${e.conflict ? " cf" : ""}"><span class="t">${hhmm24(e.start)}</span><span class="ma">${esc(e.account || "—")}</span><small>${esc(e.title)}${e.conflict ? " ⚠" : ""} · <button class="lnk" data-prep="${esc(e.id)}" aria-label="Prep for ${esc(e.title)}">prep ↗</button></small></div>`).join("")
       || '<div class="mt empty"><small>No more meetings today.</small></div>';
-    const asof = `As of ${R.dayLabel(R.isoDay(S.snap.generatedAt))} · ${hhmm24(S.snap.generatedAt)} CT`;
+    const asof = `As of ${R.dayLabel(R.isoDay(S.snap.generatedAt))} · ${hhmm24(S.snap.generatedAt)} ${esc(R.tzLabel(S.snap.generatedAt))}`;
     const header = `<header class="fhead"><div class="tiles4" role="group" aria-label="Today at a glance">${squares}</div>
       <div class="side"><div class="ttl"><h1>Daily Focus</h1><div class="asof${isStale() ? " stale" : ""}" title="${isStale() ? "This snapshot is more than 24 hours old." : "Time the snapshot was made (Central Time)."}">${isStale() ? "⚠ Stale · " : ""}${esc(asof)}${S.snap.example ? ' · <span class="exd">EXAMPLE DATA</span>' : ""}</div></div>
         ${f.doneHere ? `<div class="donehere" role="status">${f.doneHere} done here, not yet in To Do <span class="muted">· mark ${f.doneHere === 1 ? "it" : "them"} done in To Do</span></div>` : ""}
@@ -1051,7 +1079,7 @@
     const it = S.snap.items.find(x => x.id === id); if (!it) return;
     const until = R.snoozeUntil(choice, nowDate().toISOString(), picked); if (!until) { toast("Pick a valid date."); return; }
     const fid = "snooze:" + id; setFlag(fid, { on: true, until, due: it.due || null }); render();
-    undoToast(`Snoozed "${it.title}" until ${R.dayLabel(R.isoDay(until))} ${hhmm24(until)} CT.`, () => { setFlag(fid, Object.assign({}, S.flags[fid], { on: false })); render(); });
+    undoToast(`Snoozed "${it.title}" until ${R.dayLabel(R.isoDay(until))} ${hhmm24(until)} ${R.tzLabel(until)}.`, () => { setFlag(fid, Object.assign({}, S.flags[fid], { on: false })); render(); });
   }
   function closeSnooze(refocus) { const m = $("#snz"); if (!m) return; const b = document.querySelector(`[data-fsnooze="${CSS.escape(m.dataset.task)}"]`); m.remove(); if (b) { b.setAttribute("aria-expanded", "false"); if (refocus) b.focus(); } }
   function openSnooze(btn) {
@@ -1239,7 +1267,7 @@
   }
   function closeMenus() { document.querySelectorAll(".mtop").forEach(b => { b.setAttribute("aria-expanded", "false"); b.nextElementSibling.classList.add("hidden"); }); }
 
-  window.DASH.app = { state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel };
+  window.DASH.app = { state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel, checkTz };
   window.addEventListener("beforeunload", e => { if (pending.size) { e.preventDefault(); e.returnValue = ""; } });
   boot();
 })();

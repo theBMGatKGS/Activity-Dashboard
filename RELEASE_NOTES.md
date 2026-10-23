@@ -1,5 +1,10 @@
 # Release notes — Activity Dashboard
 
+## 00.05.001_261023 (Oct 23 2026)
+- The dashboard now uses your computer's time zone, so it stays right when you travel. There's nothing to set: on a computer in Central time everything works as before.
+- Today, Due Today, Overdue, the 8:00 return of Snooze, meeting times and the "As of" stamp all follow the zone. When the computer's zone changes, the dashboard notices within a minute (or as soon as you come back to the window) and updates without reloading.
+- The current zone is shown next to the machine name in the top bar (for example "CT · America/Chicago").
+
 ## 00.05.000_261023 (Oct 23 2026)
 **Daily Focus** is the new home screen.
 - Four squares: **Due Today** (with ▲/▼ compared with the previous business day's snapshot), **Overdue**, **Waiting past due** and **Going cold** (your ★ key accounts with no touch in 14 days). Click one to jump to its section.

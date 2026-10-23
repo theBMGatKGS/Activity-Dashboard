@@ -255,4 +255,39 @@ t("F12 overlays: Done hides until To Do catches up; To Do edit after Done reopen
   assert.ok(!R.overlays({ "snooze:D1": { on: true, until: "2026-10-20T13:00:00Z", due: "2026-10-19" } }, a, "2026-10-20T13:00:01Z").snoozed.has("D1"), "back after until");
   assert.deepStrictEqual(R.overlays({ "snooze:D1": { on: true, until: "2026-10-20T13:00:00Z", due: "2026-10-18" } }, a, NOWI).cleared, ["snooze:D1"], "re-dated in To Do -> snooze cleared");
   const f = FS({ "snooze:D1": { on: true, until: "2026-10-20T13:00:00Z", due: "2026-10-19" } }, {}, a); assert.strictEqual(f.counts.dueToday, 0); assert.deepStrictEqual(f.later.map(r => r.id), ["D1"], "snoozed into this week -> Later this week"); });
+// ---------- 00.05.001 time zone follows the computer (tests set the zone explicitly) ----------
+const withTz = (z, fn) => { const old = R.getTimeZone(); R.setTimeZone(z); try { fn(); } finally { R.setTimeZone(old); } };
+t("Z1 default and fallback: America/Chicago; invalid / empty zone falls back; detectTimeZone returns a valid IANA zone", () => {
+  assert.strictEqual(R.DEFAULT_TZ, "America/Chicago"); assert.ok(R.validTimeZone(R.detectTimeZone()));
+  withTz("Nowhere/Invalid", () => assert.strictEqual(R.getTimeZone(), "America/Chicago")); withTz("", () => assert.strictEqual(R.getTimeZone(), "America/Chicago"));
+  withTz("America/Chicago", () => { assert.strictEqual(R.tzLabel("2026-10-19T12:00:00Z"), "CT"); assert.strictEqual(R.ymd(new Date("2026-10-19T04:59:00Z")), "2026-10-18"); });
+});
+t("Z2 Chicago unchanged: snooze 08:00 CDT/CST and the 00.05.000 results", () => withTz("America/Chicago", () => {
+  assert.strictEqual(R.snoozeUntil("tomorrow", "2026-10-19T13:00:00Z"), "2026-10-20T13:00:00.000Z");
+  assert.strictEqual(R.snoozeUntil("tomorrow", "2026-10-31T13:00:00Z"), "2026-11-01T14:00:00.000Z", "fall back: 08:00 CST");
+  assert.strictEqual(R.snoozeUntil("tomorrow", "2026-03-07T15:00:00Z"), "2026-03-08T13:00:00.000Z", "spring forward: 08:00 CDT");
+}));
+t("Z3 Eastern: day boundary at local midnight, DST both ways, 08:00 EDT/EST", () => withTz("America/New_York", () => {
+  assert.strictEqual(R.tzLabel("2026-07-01T12:00:00Z"), "ET");
+  assert.strictEqual(R.ymd(new Date("2026-10-23T03:59:00Z")), "2026-10-22"); assert.strictEqual(R.ymd(new Date("2026-10-23T04:00:00Z")), "2026-10-23", "midnight EDT = 04:00Z");
+  assert.strictEqual(R.ymd(new Date("2026-12-01T04:59:00Z")), "2026-11-30"); assert.strictEqual(R.ymd(new Date("2026-12-01T05:00:00Z")), "2026-12-01", "midnight EST = 05:00Z");
+  assert.strictEqual(R.ctIso("2026-03-08", "08:00"), "2026-03-08T12:00:00.000Z"); assert.strictEqual(R.ctIso("2026-03-07", "08:00"), "2026-03-07T13:00:00.000Z");
+  assert.strictEqual(R.ctIso("2026-11-01", "08:00"), "2026-11-01T13:00:00.000Z"); assert.strictEqual(R.ctIso("2026-10-31", "08:00"), "2026-10-31T12:00:00.000Z");
+  assert.strictEqual(R.ctIso("2026-03-08", "02:30"), "2026-03-08T07:30:00.000Z", "time in the spring-forward gap moves forward (03:30 EDT)");
+  assert.strictEqual(R.snoozeUntil("monday", "2026-10-23T15:00:00Z"), "2026-10-26T12:00:00.000Z");
+  assert.strictEqual(R.hm("2026-10-19T12:30:00Z"), "8:30 AM"); assert.strictEqual(R.hourCT("2026-10-19T12:30:00Z"), 8.5);
+}));
+t("Z4 Pacific: day boundary, DST, 08:00 PDT/PST; same instant is a different day than in Eastern", () => withTz("America/Los_Angeles", () => {
+  assert.strictEqual(R.tzLabel("2026-01-10T12:00:00Z"), "PT");
+  assert.strictEqual(R.ymd(new Date("2026-10-23T06:59:00Z")), "2026-10-22"); assert.strictEqual(R.ymd(new Date("2026-10-23T07:00:00Z")), "2026-10-23", "midnight PDT = 07:00Z");
+  assert.strictEqual(R.ctIso("2026-03-08", "08:00"), "2026-03-08T15:00:00.000Z"); assert.strictEqual(R.ctIso("2026-11-01", "08:00"), "2026-11-01T16:00:00.000Z");
+  assert.strictEqual(R.snoozeUntil("tomorrow", "2026-10-31T23:30:00Z"), "2026-11-01T16:00:00.000Z", "Sat 16:30 PDT -> Sun 08:00 PST");
+  let e; withTz("America/New_York", () => e = R.ymd(new Date("2026-10-23T05:00:00Z"))); assert.strictEqual(e, "2026-10-23"); assert.strictEqual(R.ymd(new Date("2026-10-23T05:00:00Z")), "2026-10-22");
+}));
+t("Z5 Due Today / Overdue follow the zone: one instant, Chicago vs Pacific vs Eastern", () => {
+  const s = mk([{ id: "Z1", next_date: "2026-10-23" }, { id: "Z2", next_date: "2026-10-22" }]), at = new Date("2026-10-23T04:30:00Z");   // 23:30 CDT Oct 22
+  const due = z => { let r; withTz(z, () => { const today = R.ymd(at), tt = R.totals(s.items, { today, calendar: [], timeEntries: [] }); r = [today, tt.dueToday, tt.overdue]; }); return r; };
+  assert.deepStrictEqual(due("America/Chicago"), ["2026-10-22", 1, 0]); assert.deepStrictEqual(due("America/Los_Angeles"), ["2026-10-22", 1, 0]);
+  assert.deepStrictEqual(due("America/New_York"), ["2026-10-23", 1, 1], "already Oct 23 in Eastern: Z2 is overdue");
+});
 console.log(`\n${n - fail}/${n} passed`); process.exit(fail ? 1 : 0);

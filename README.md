@@ -1,5 +1,5 @@
 # Activity Dashboard
-Revision **00.05.000_261023** · Daily Focus home screen (00.05) · local-first app · encrypted Data folder (optional, in-browser AES-256-GCM) · optional encrypted sync through a private GitHub repo (00.04) · installable (PWA) over https · no server of its own.
+Revision **00.05.001_261023** · time zone follows the computer (00.05.001) · Daily Focus home screen (00.05) · local-first app · encrypted Data folder (optional, in-browser AES-256-GCM) · optional encrypted sync through a private GitHub repo (00.04) · installable (PWA) over https · no server of its own.
 
 ## Use
 1. The app lives in **`<synced folder>/Dashboard/`** on the user's Mac. It is **not** in the notebook repo. To update, copy the new app files over the old ones; the deploy folder never contains `Data/`.
@@ -57,6 +57,14 @@ The home screen (always opens first; `?view=dashboard|workload|print|manager` op
 - **Print:** File → Print Daily Focus… (or Ctrl+P on the Focus tab): one landscape letter page in the print palette, outlined squares, no fills, shadows, gold frame or animation, no buttons. Print my sheet… and the Manager's sheet are unchanged (Withhold never prints there).
 - **Key accounts & internal people:** ☆/★ on account chips (Focus rows, Totals list, Workload) or File → Key accounts & internal people…. First run offers to star the T1 accounts (an inline dialog; nothing is starred until confirmed).
 
+## Time zone (00.05.001)
+- **No setting.** The zone is the computer's own: `Intl.DateTimeFormat().resolvedOptions().timeZone` (an invalid or missing zone falls back to America/Chicago, which is what every earlier version used, so a Central-time computer behaves exactly as before).
+- **Used for:** the day boundary (today, Due Today, Overdue, This week, Going cold days, Later this week, the delta's previous business day), the 08:00 return of Snooze → Tomorrow / Next Monday / a picked date, meeting times and the calendar strip (7 AM–6 PM local), the as-of stamps, and the sync chip time. Stamps carry the zone's short name (CT, ET, PT, MST…; zones without one show the IANA id).
+- **Re-detected** on every poll (`pollSeconds`, 60 s, also without a Data folder), when the window gets focus, and when the tab becomes visible. If the zone or the local day changed, the snapshot's day fields are re-read and everything above is recomputed without a reload; a message names the new zone.
+- **Shown read-only** in the top bar (`#tz`, e.g. "CT · America/Chicago") and in Help → How Do I → "…change the time zone?". It is per computer by nature and never stored or synced.
+- Already-set snoozes keep their instant (a snooze set for 08:00 CT returns at 07:00 MT when travelling west). Time entries keep the day they were logged on.
+- `rules.js`: `detectTimeZone`, `setTimeZone`, `getTimeZone`, `validTimeZone`, `tzLabel`, `zoneOffsetMs`; `ctIso(day, hh:mm)` now converts in the current zone (DST-safe; a time inside a spring-forward gap moves forward).
+
 ## Not in 00.02.000 (still deferred)
 By-account view (planned 00.02), account-based Going Cold, the "My next three things" ranking with its print strip, and the Proposed tray (hidden).
 
@@ -108,4 +116,4 @@ A **private** GitHub repo (e.g. `activity-data-hub`) is the shared store. It hol
 - Example data never writes to local storage.
 
 ## Test
-`bash tests/run_all.sh` (needs node, python3, playwright+chromium, poppler-utils). Includes `sync.test.js` (merge logic) and `t20_sync.py` (two simulated machines). 00.05: `rules.test.js` F1–F12 (Daily Focus rules), `sync.test.js` F-S/F-R/F-V (flag op, reconciliation, 00.04.001 reader), `t24_focus.py` (Daily Focus in Chromium: layout, actions, keyboard, a11y tree, contrast, print, reduced motion, zoom, fonts offline, stars/Done/Snooze through an encrypted folder), `t23_hub.py` (stars/Done through the mocked hub). Older browser tests open `?view=dashboard`.
+`bash tests/run_all.sh` (needs node, python3, playwright+chromium, poppler-utils). Includes `sync.test.js` (merge logic) and `t20_sync.py` (two simulated machines). 00.05: `rules.test.js` F1–F12 (Daily Focus rules), `sync.test.js` F-S/F-R/F-V (flag op, reconciliation, 00.04.001 reader), `t24_focus.py` (Daily Focus in Chromium: layout, actions, keyboard, a11y tree, contrast, print, reduced motion, zoom, fonts offline, stars/Done/Snooze through an encrypted folder), `t23_hub.py` (stars/Done through the mocked hub). 00.05.001: `rules.test.js` Z1–Z5 (Chicago unchanged, Eastern/Pacific day boundaries, DST both ways, spring-forward gap, Due Today/Overdue per zone), `t25_tz.py` (Chromium in Chicago/Eastern/Pacific, read-only chip, as-of, snooze 08:00 local, zone change mid-session on focus / visibility / poll without reload). Older browser tests open `?view=dashboard`.

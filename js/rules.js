@@ -15,12 +15,26 @@
   const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const RE_DAY = /^\d{4}-\d{2}-\d{2}$/, RE_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?([+-]\d{2}:\d{2}|Z)$/;
 
+  // 00.05.001: the day boundary, 08:00 snooze return, as-of stamp and meeting times follow the computer's time zone.
+  // No setting: the app calls setTimeZone(detectTimeZone()) at start and whenever it re-checks (poll, focus, visible).
+  const DEFAULT_TZ = "America/Chicago";
+  let TZ = DEFAULT_TZ, FMT = {};
+  function validTimeZone(z) { if (typeof z !== "string" || !z) return false; try { new Intl.DateTimeFormat("en-US", { timeZone: z }); return true; } catch (e) { return false; } }
+  function detectTimeZone() { let z; try { z = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { z = null; } return validTimeZone(z) ? z : DEFAULT_TZ; }
+  function setTimeZone(z) { const n = validTimeZone(z) ? z : DEFAULT_TZ; if (n !== TZ) { TZ = n; FMT = {}; } return TZ; }
+  function getTimeZone() { return TZ; }
+  function fmt(k, o) { return FMT[k] || (FMT[k] = new Intl.DateTimeFormat(k.split("|")[0], Object.assign({ timeZone: TZ }, o))); }
+  // Short zone label for stamps: "CT", "ET", "PT", "MST"…; zones without a short US name show their IANA id.
+  function tzLabel(iso) {
+    const p = fmt("en-US|tzl", { timeZoneName: "shortGeneric" }).formatToParts(iso ? new Date(iso) : new Date()).find(x => x.type === "timeZoneName");
+    const v = p ? p.value : ""; return /^[A-Z]{2,5}$/.test(v) ? v : TZ;
+  }
   function ymd(d) {
-    const p = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(d);
+    const p = fmt("en-CA|ymd", { year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(d);
     const o = {}; p.forEach(x => o[x.type] = x.value); return `${o.year}-${o.month}-${o.day}`;
   }
-  function hm(iso) { return new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" }).format(new Date(iso)); }
-  function hourCT(iso) { const p = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(iso)).split(":"); return +p[0] + p[1] / 60; }
+  function hm(iso) { return fmt("en-US|hm", { hour: "numeric", minute: "2-digit" }).format(new Date(iso)); }
+  function hourCT(iso) { const p = fmt("en-US|h23", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(iso)).split(":"); return +p[0] + p[1] / 60; }
   function parseDay(s) { const [y, m, d] = s.split("-").map(Number); return Date.UTC(y, m - 1, d); }
   function addDays(s, n) { return new Date(parseDay(s) + n * DAY).toISOString().slice(0, 10); }
   function diffDays(a, b) { return Math.round((parseDay(a) - parseDay(b)) / DAY); }
@@ -333,12 +347,19 @@
   }
 
   // ---------- 00.05 Daily Focus (pure; no DOM) ----------
-  // CT wall-clock time on a day -> ISO instant (tries CDT and CST, keeps the one that reads back as that CT time).
-  function ctIso(day, hhmm) {
-    for (const off of ["-05:00", "-06:00"]) { const d = new Date(`${day}T${hhmm}:00${off}`); const h = hourCT(d.toISOString()); if (ymd(d) === day && Math.abs(h - (+hhmm.slice(0, 2) + hhmm.slice(3) / 60)) < 1e-6) return d.toISOString(); }
-    return new Date(`${day}T${hhmm}:00-06:00`).toISOString();
+  // Wall-clock time on a day in the current zone -> ISO instant (DST-safe; a time inside a spring-forward gap moves forward).
+  // (Name kept from 00.05.000; "CT" is now "the computer's zone".)
+  function zoneOffsetMs(t) {
+    const p = {}; fmt("en-US|off", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(new Date(t)).forEach(x => p[x.type] = x.value);
+    return Date.UTC(+p.year, p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - Math.floor(t / 1000) * 1000;
   }
-  // Snooze choices: Later today (+3 h), Tomorrow 08:00 CT, Next Monday 08:00 CT, a picked date 08:00 CT.
+  function ctIso(day, hhmm) {
+    const [y, m, d] = day.split("-").map(Number), wall = Date.UTC(y, m - 1, d, +hhmm.slice(0, 2), +hhmm.slice(3, 5));
+    let t = wall - zoneOffsetMs(wall); t = wall - zoneOffsetMs(t);
+    if (ymd(new Date(t)) !== day || Math.abs(hourCT(new Date(t).toISOString()) - (+hhmm.slice(0, 2) + hhmm.slice(3, 5) / 60)) > 1e-6) t = wall - zoneOffsetMs(wall - 3 * 3600e3) ;
+    return new Date(t).toISOString();
+  }
+  // Snooze choices: Later today (+3 h), Tomorrow 08:00, Next Monday 08:00, a picked date 08:00 (computer's zone).
   function snoozeUntil(choice, nowIso, pickedDay) {
     const now = new Date(nowIso), today = ymd(now);
     if (choice === "later") return new Date(now.getTime() + 3 * 3600e3).toISOString();
@@ -448,6 +469,7 @@
 
   g.DASH = g.DASH || {};
   g.DASH.rules = { LISTS, STATUSES, AUDIENCES, SUBJECTS, TOTAL_KEYS, LIST_KEY, GROUPS, COLD_DAYS, DEFAULT_RULES,
+    DEFAULT_TZ, validTimeZone, detectTimeZone, setTimeZone, getTimeZone, tzLabel, zoneOffsetMs,
     ymd, hm, hourCT, addDays, diffDays, sundayOf, mondayOf, dayLabel, isoDay, readSnapshot, isOpen, dateWord, statusWord, group, sortItems,
     lastActivity, isCold, inTotal, totals, mergeHistory, weeklySeries, wow, wowTone, sparkPoints, withConflicts, minutesBetween,
     guessAudience, guessSubject, learnAudience, lineHead, formatLine, managerItems, workload, parseCSV, snapshotFromCSV,
