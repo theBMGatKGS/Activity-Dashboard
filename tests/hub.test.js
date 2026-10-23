@@ -111,26 +111,26 @@ function memDir(init) { const m = new Map(Object.entries(init || {})), mt = new 
   check(r.problems.some(p => /No keyring yet/.test(p)) && !r.up.length, "H28 no keyring anywhere: nothing sent");
   const locked = H.opaque(H.client({ repo: REPO, token: TOK, fetch: fakeGitHub().fetch }), async () => { throw new Error("locked"); });
   check(await rejects(locked.write("time-a.json.enc", env), /locked/), "H36 N3: while locked no data file can be written (no codec)");
-  // ---- 00.04.001 regression: the Oct 23 sequence and the newer-wins rules (inspect = decrypt + validate + stamp) ----
+  // ---- 00.04.001 regression: the reported sequence and the newer-wins rules (inspect = decrypt + validate + stamp) ----
   {
     const g9 = fakeGitHub(), c9 = H.opaque(H.client({ repo: REPO, token: TOK, fetch: g9.fetch }), getCd), S = "inbox-snapshot.json.enc", O = { ownFile: "time-mac.json.enc", inspect };
-    const bad911 = await SN("2026-10-23T09:11:00-05:00", "wrong-source"), good948 = await SN("2026-10-23T09:48:00-05:00");
-    // 9:11 (as 00.04.000 did): a snapshot the app rejects reached the hub; 9:48: the corrected one is encrypted locally
-    const d9 = memDir({ "keyring.json": KR, [S]: good948 }); await c9.write("keyring.json", KR); await c9.write(S, bad911);
+    const badOld = await SN("2026-11-02T08:00:00-06:00", "wrong-source"), goodNew = await SN("2026-11-02T09:00:00-06:00");
+    // as 00.04.000 did: a snapshot the app rejects reached the hub; later the corrected one is encrypted locally
+    const d9 = memDir({ "keyring.json": KR, [S]: goodNew }); await c9.write("keyring.json", KR); await c9.write(S, badOld);
     let q = await H.mirror(d9, c9, O);
-    check(d9.m.get(S) === good948 && !d9.m.has("inbox-snapshot.json.prev.enc") && (await c9.read(S)).text === good948 && (q.repaired || []).includes(S) && q.problems.some(p => /replaced with the local copy/.test(p)),
-      "R1 Oct 23 repro: the hub's rejected 9:11 snapshot does NOT overwrite the local 9:48 one; the good copy is uploaded over it");
-    const valid911 = await SN("2026-10-23T09:11:00-05:00"); await c9.write(S, valid911); q = await H.mirror(d9, c9, O);
-    check(d9.m.get(S) === good948 && (await c9.read(S)).text === good948 && q.up.includes(S), "R2 an older VALID hub snapshot loses to the newer local one (by generated_at), even though GitHub used to win");
-    const good1000 = await SN("2026-10-23T10:00:00-05:00"); await c9.write(S, good1000); q = await H.mirror(d9, c9, O);
-    check(d9.m.get(S) === good1000 && d9.m.get("inbox-snapshot.json.prev.enc") === good948 && q.down.includes(S), "R3 a newer hub snapshot wins; the older local one is kept as .prev.enc");
-    const reenc = await SN("2026-10-23T10:00:00-05:00"); d9.m.set(S, reenc); const n0 = g9.log.filter(x => x.method === "PUT").length; q = await H.mirror(d9, c9, O);
+    check(d9.m.get(S) === goodNew && !d9.m.has("inbox-snapshot.json.prev.enc") && (await c9.read(S)).text === goodNew && (q.repaired || []).includes(S) && q.problems.some(p => /replaced with the local copy/.test(p)),
+      "R1 repro: the hub's rejected older snapshot does NOT overwrite the newer local one; the good copy is uploaded over it");
+    const validOld = await SN("2026-11-02T08:00:00-06:00"); await c9.write(S, validOld); q = await H.mirror(d9, c9, O);
+    check(d9.m.get(S) === goodNew && (await c9.read(S)).text === goodNew && q.up.includes(S), "R2 an older VALID hub snapshot loses to the newer local one (by generated_at), even though GitHub used to win");
+    const goodNewer = await SN("2026-11-02T10:00:00-06:00"); await c9.write(S, goodNewer); q = await H.mirror(d9, c9, O);
+    check(d9.m.get(S) === goodNewer && d9.m.get("inbox-snapshot.json.prev.enc") === goodNew && q.down.includes(S), "R3 a newer hub snapshot wins; the older local one is kept as .prev.enc");
+    const reenc = await SN("2026-11-02T10:00:00-06:00"); d9.m.set(S, reenc); const n0 = g9.log.filter(x => x.method === "PUT").length; q = await H.mirror(d9, c9, O);
     check(!q.up.length && !q.down.length && g9.log.filter(x => x.method === "PUT").length === n0, "R4 same snapshot (same generated_at), different ciphertext: nothing moves, no ping-pong");
-    d9.m.set(S, await SN("2026-10-23T11:00:00-05:00", "wrong-source")); q = await H.mirror(d9, c9, O);
-    check((await c9.read(S)).text === good1000 && d9.m.get(S) === good1000 && q.problems.some(p => /local copy failed the check/.test(p)), "R5 a local snapshot that fails validation is never uploaded and is replaced by the valid hub copy (bad one kept as .prev.enc)");
-    const d10 = memDir({ "keyring.json": KR, "inbox-snapshot.json.enc": good948, "notebook-log.js.enc": await V.encrypt(key, keyring, "log", "{}") }), g10 = fakeGitHub(), c10 = H.opaque(H.client({ repo: REPO, token: TOK, fetch: g10.fetch }), getCd);
+    d9.m.set(S, await SN("2026-11-02T11:00:00-06:00", "wrong-source")); q = await H.mirror(d9, c9, O);
+    check((await c9.read(S)).text === goodNewer && d9.m.get(S) === goodNewer && q.problems.some(p => /local copy failed the check/.test(p)), "R5 a local snapshot that fails validation is never uploaded and is replaced by the valid hub copy (bad one kept as .prev.enc)");
+    const d10 = memDir({ "keyring.json": KR, "inbox-snapshot.json.enc": goodNew, "notebook-log.js.enc": await V.encrypt(key, keyring, "log", "{}") }), g10 = fakeGitHub(), c10 = H.opaque(H.client({ repo: REPO, token: TOK, fetch: g10.fetch }), getCd);
     q = await H.mirror(d10, c10, O); check(q.up.includes(S) && q.up.includes("notebook-log.js.enc"), "R6 files the hub is missing are uploaded");
-    const d11 = memDir({ "keyring.json": KR, [S]: bad911 }), g11 = fakeGitHub(), c11 = H.opaque(H.client({ repo: REPO, token: TOK, fetch: g11.fetch }), getCd);
+    const d11 = memDir({ "keyring.json": KR, [S]: badOld }), g11 = fakeGitHub(), c11 = H.opaque(H.client({ repo: REPO, token: TOK, fetch: g11.fetch }), getCd);
     q = await H.mirror(d11, c11, O); check(!q.up.includes(S) && g11.files.size === 1, "R7 a rejected snapshot is never uploaded, even when the hub has none");
     // no content stamp (notebook log): newer by last-change time; the hub's time is inside its encrypted envelope
     const L = "notebook-log.js.enc", logA = await V.encrypt(key, keyring, "log", '{"lines":["a"]}'), logB = await V.encrypt(key, keyring, "log", '{"lines":["b"]}');
@@ -139,14 +139,14 @@ function memDir(init) { const m = new Map(Object.entries(init || {})), mt = new 
     await c10.write(L, logA, "sync", { mtime: 1000 }); q = await H.mirror(d10, c10, O);
     check((await c10.read(L)).text === logB && q.up.includes(L), "R9 no content stamp: a hub copy last changed earlier loses to the local one");
     const envT = async at => V.encrypt(key, keyring, "time", JSON.stringify({ machine: "pc", updated_at: at, events: [] }));
-    const d12 = memDir({ "keyring.json": KR, "time-pc.json.enc": await envT("2026-10-23T09:00:00Z") }); await c10.write("time-pc.json.enc", await envT("2026-10-23T09:30:00Z"));
+    const d12 = memDir({ "keyring.json": KR, "time-pc.json.enc": await envT("2026-11-02T14:00:00Z") }); await c10.write("time-pc.json.enc", await envT("2026-11-02T15:00:00Z"));
     q = await H.mirror(d12, c10, O); check(q.down.includes("time-pc.json.enc") && d12.m.has("time-pc.json.prev.enc"), "R10 another machine's time file: newer updated_at wins, older kept as .prev.enc");
     // renamed local backups and other *.enc are never mirrored
     const g13 = fakeGitHub(), c13 = H.opaque(H.client({ repo: REPO, token: TOK, fetch: g13.fetch }), getCd);
-    const d13 = memDir({ "keyring.json": KR, [S]: good948, "inbox-snapshot.json.bad-0911.enc": bad911, "inbox-snapshot.json.prev.enc": valid911, "time-mac.json-PC.enc": env, "backup-old.enc": env, "time-mac.json.enc": env });
+    const d13 = memDir({ "keyring.json": KR, [S]: goodNew, "inbox-snapshot.json.bad-copy.enc": badOld, "inbox-snapshot.json.prev.enc": validOld, "time-mac.json-PC.enc": env, "backup-old.enc": env, "time-mac.json.enc": env });
     q = await H.mirror(d13, c13, O); const upn = q.up.slice().sort().join();
-    check(upn === "inbox-snapshot.json.enc,keyring.json,time-mac.json.enc" && g13.files.size === 3, "R11 only known data files are uploaded: .bad-0911.enc, .prev.enc, conflict copies and other *.enc stay local (" + upn + ")");
-    check(H.dataName("time-workpc.json.enc") && H.dataName("notebook-log.js.enc") && !H.dataName("inbox-snapshot.json.bad-0911.enc") && !H.dataName("time-pc.json.prev.enc") && !H.dataName("x.enc"), "R12 data file name allowlist");
+    check(upn === "inbox-snapshot.json.enc,keyring.json,time-mac.json.enc" && g13.files.size === 3, "R11 only known data files are uploaded: .bad-copy.enc, .prev.enc, conflict copies and other *.enc stay local (" + upn + ")");
+    check(H.dataName("time-workpc.json.enc") && H.dataName("notebook-log.js.enc") && !H.dataName("inbox-snapshot.json.bad-copy.enc") && !H.dataName("time-pc.json.prev.enc") && !H.dataName("x.enc"), "R12 data file name allowlist");
   }
   console.log(`\n${pass}/${pass + fail} passed`); process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

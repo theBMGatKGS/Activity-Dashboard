@@ -1,12 +1,12 @@
 # Changelog — Activity Dashboard
 
 ## 00.04.001_261023 (Oct 23 2026)
-- Fix (live bug): the mirror let an older hub snapshot ("GitHub wins") replace a newer local one. On Oct 23 a snapshot the app rejects (wrong `source`) was encrypted and uploaded at 9:11; the corrected 9:48 snapshot was then overwritten by it. Now: both copies are decrypted and validated (`hubInspect`); invalid copies are never uploaded and never replace anything (a bad hub copy is repaired from the local one); newer wins by snapshot `generated_at` / time-file `updated_at`, else by last-change time (hub `mtime` is stored inside the encrypted envelope); equal stamps move nothing; own time file always goes up; missing on the hub = uploaded; the local loser is kept as `<name>.prev.enc`.
+- Fix (live bug): the mirror let an older hub snapshot ("GitHub wins") replace a newer local one. A snapshot the app rejects (wrong `source`) was encrypted and uploaded; a later corrected snapshot was then overwritten by it. Now: both copies are decrypted and validated (`hubInspect`); invalid copies are never uploaded and never replace anything (a bad hub copy is repaired from the local one); newer wins by snapshot `generated_at` / time-file `updated_at`, else by last-change time (hub `mtime` is stored inside the encrypted envelope); equal stamps move nothing; own time file always goes up; missing on the hub = uploaded; the local loser is kept as `<name>.prev.enc`.
 - A plaintext snapshot is encrypted (and so uploaded) only if it passes `readSnapshot`; an invalid existing `.enc` snapshot no longer blocks a valid newer one.
-- Only known data files are mirrored (`time-*.json.enc`, `inbox-snapshot.json.enc`, `notebook-log.js.enc`, `keyring.json`); renamed backups such as `inbox-snapshot.json.bad-0911.enc`, `.prev.enc` and other `*.enc` are never uploaded or downloaded.
+- Only known data files are mirrored (`time-*.json.enc`, `inbox-snapshot.json.enc`, `notebook-log.js.enc`, `keyring.json`); renamed backups such as `inbox-snapshot.json.bad-copy.enc`, `.prev.enc` and other `*.enc` are never uploaded or downloaded.
 - With several snapshot files in the folder the dashboard uses the newest valid one.
 - Mirror without a check function moves nothing in either direction.
-- Tests: `hub.test.js` 48 (R1–R12 reproduce the Oct 23 sequence, newer-wins, invalid-never-uploaded, missing-uploaded, mtime fallback, renamed-backup allowlist); `t23_hub.py` adds R1–R7 end to end.
+- Tests: `hub.test.js` 48 (R1–R12 reproduce the reported sequence, newer-wins, invalid-never-uploaded, missing-uploaded, mtime fallback, renamed-backup allowlist); `t23_hub.py` adds R1–R7 end to end.
 - N2 not folded in: the content stamps and authenticated mtime stop an older copy replacing a newer one on computers with a folder; a per-file counter bound into the AAD (for folder-less devices) is still deferred.
 
 ## 00.04.000_261021 (Oct 21 2026)

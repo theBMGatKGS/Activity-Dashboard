@@ -225,7 +225,7 @@
     async function pull(n, ht, lt, mtime) { if (lt != null) await writeLocal(prevName(n), lt); await writeLocal(n, ht); out.down.push(n); }
     async function push(n, lt, mtime, repair) { await c.write(n, lt, msg, { mtime }); out.up.push(n); if (repair) (out.repaired = out.repaired || []).push(n); }
     // 00.04.001: only the known data files are mirrored. Any other *.enc (.prev.enc, renamed backups such as
-    // inbox-snapshot.json.bad-0911.enc, conflict copies) stays where it is and is never uploaded or downloaded.
+    // inbox-snapshot.json.bad-copy.enc, conflict copies) stays where it is and is never uploaded or downloaded.
     const isData = (opts && opts.isData) || dataName;
     const localNames = []; for await (const [n, h] of local.entries()) if (h.kind === "file" && (n === KEYRING || isData(n))) localNames.push(n);
     const hubList = await c.list(), hubNames = hubList.map(x => x.name).filter(n => n === KEYRING || isData(n));
