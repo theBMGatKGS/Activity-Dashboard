@@ -1,5 +1,10 @@
 # Release notes — Activity Dashboard
 
+## 00.04.001_261023 (Oct 23 2026)
+- Fixed: with GitHub sync on, an older snapshot from GitHub could replace a newer one in your Data folder. Now the newer valid copy always wins, and the one replaced is kept as a `.prev.enc` file.
+- A snapshot the dashboard rejects is never uploaded and never replaces a good one; if GitHub holds a bad copy, the good local one replaces it.
+- Renamed backup files in the Data folder are left alone and never uploaded.
+
 ## 00.04.000_261021 (Oct 21 2026)
 Sync through your own private GitHub repo, so the work PC, the Mac and the iPad share the same data.
 - File → GitHub sync…: enter the private repo and paste this computer's own access token. The dialog shows how to make the token (only the data repo, Contents read and write, one year).

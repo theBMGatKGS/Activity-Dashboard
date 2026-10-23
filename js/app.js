@@ -3,7 +3,7 @@
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
   const R = DASH.rules, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.04.000_261021";
+  const REV = "00.04.001_261023";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -164,7 +164,7 @@
       let text = R2.serialize(S.machine, S.own, new Date().toISOString(), S.myReports);
       if (S.vault.kr) text = await V.encrypt(S.vault.key, S.vault.kr, "time", text);
       const f = await writeText(name, text); S.seen[name] = f.lastModified + ":" + f.size; S.fileEvents[inner] = S.own.filter(e => e.machine === S.machine); delete S.fileProblems[name];
-      if (S.hub && !S.hubOnly && S.vault.kr) { try { await S.hub.write(name, text, "sync"); delete S.hubState.pending; } catch (e) { S.hubState.pending = true; S.hubState.error = e.message || String(e); } }
+      if (S.hub && !S.hubOnly && S.vault.kr) { try { await S.hub.write(name, text, "sync", { mtime: Number(f.lastModified) || Date.now() }); delete S.hubState.pending; } catch (e) { S.hubState.pending = true; S.hubState.error = e.message || String(e); } }
     } catch (e) { S.problems.push(`could not write ${name}: ${e.message || e}`); }
     renderSync();
   }
@@ -405,8 +405,10 @@
           try { const old = await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, "time"), q = R2.parseTimeFile(old, name); events = R2.dedupe(q.events.concat(events)); } catch (e) { if (e && e.name !== "NotFoundError" && !/not found/i.test(e.message || "")) throw e; }
           body = R2.serialize(p.machine, events, new Date().toISOString(), reports);
         } else if (purpose === "snapshot") {
-          target = "inbox-snapshot.json" + ENC; const raw = parseSnapshotText(name, text); body = JSON.stringify(raw);
-          try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, "snapshot")); if (new Date(old.generated_at) > new Date(raw.generated_at)) body = null; } catch (e) { /* none yet */ }
+          target = "inbox-snapshot.json" + ENC; const raw = parseSnapshotText(name, text);
+          try { R.readSnapshot(raw); } catch (e) { throw new Error("snapshot rejected (" + e.message + "); not encrypted or uploaded, the previous one is kept"); }   // 00.04.001
+          body = JSON.stringify(raw);
+          try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, "snapshot")); R.readSnapshot(old); if (new Date(old.generated_at) > new Date(raw.generated_at)) body = null; } catch (e) { /* none yet, or the old one is invalid: replace it */ }
         } else { target = "notebook-log.js" + ENC; parseLogJs(text); body = text; }
         if (body != null) {
           const ct = await V.encrypt(S.vault.key, S.vault.kr, purpose, body); await writeText(target, ct);
@@ -490,16 +492,20 @@
     if (S.hubOnly) { const kr = await loadKeyring(); if (kr && kr.keyId === cfg.keyId && JSON.stringify(kr) !== JSON.stringify(cfg.keyring)) { cfg.keyring = kr; await DB.set("hubCfg", cfg); } if (kr && !S.vault.key) await ensureUnlocked(); }
   }
   // 00.04 N1: decrypt + parse a hub file with the data key before it may replace anything in the local backup folder.
-  async function hubVerify(name, text) {
-    const inner = innerName(name), purpose = purposeOf(inner); if (!purpose) throw new Error("unknown file type");
-    const plain = await V.decrypt(S.vault.key, S.vault.kr, text, purpose);
-    if (purpose === "time") { const p = R2.parseTimeFile(plain, inner); if (p.bad || !p.machine) throw new Error(p.bad || "not a time log"); }
-    else if (purpose === "log") parseLogJs(plain); else parseSnapshotText(inner, plain);
+  // 00.04.001: decrypt + validate a copy (local or hub) and return its content stamp, so the mirror can pick the newer valid one.
+  async function hubInspect(name, text) {
+    const inner = innerName(name), purpose = purposeOf(inner); if (!purpose) return { ok: false, why: "unknown file type" };
+    let plain; try { plain = await V.decrypt(S.vault.key, S.vault.kr, text, purpose); } catch (e) { return { ok: false, why: e.message || String(e) }; }
+    try {
+      if (purpose === "time") { const p = R2.parseTimeFile(plain, inner); if (p.bad || !p.machine) return { ok: false, why: p.bad || "not a time log" }; return { ok: true, stamp: p.updated_at }; }
+      if (purpose === "log") { parseLogJs(plain); return { ok: true, stamp: null }; }
+      const raw = parseSnapshotText(inner, plain); R.readSnapshot(raw); return { ok: true, stamp: raw.generated_at };   // invalid snapshot (e.g. wrong source) = not ok
+    } catch (e) { return { ok: false, why: e.message || String(e) }; }
   }
   async function hubMirror() {
     if (S.hubOnly || !S.hub || !S.dir || !S.granted || !S.vault.key) return;
     try {
-      const r = await H.mirror(S.dir, S.hub, { ownFile: R2.fileName(S.machine) + ENC, message: "sync", verify: hubVerify });
+      const r = await H.mirror(S.dir, S.hub, { ownFile: R2.fileName(S.machine) + ENC, message: "sync", inspect: hubInspect });
       S.hubState.last = new Date(); S.hubState.error = r.problems.length ? r.problems.join(" ") : null; S.hubState.up = r.up.length; S.hubState.down = r.down.length;
       if (r.down.includes(KEYRING)) await loadKeyring();
     } catch (e) { S.hubState.error = e.message || String(e); }
@@ -603,7 +609,7 @@
     S.problems = S.problems.filter(p => p.startsWith("picked"));
     if (!S.dir) { await scriptPoll(); S.lastSync = new Date(); renderSync(); return; }
     if (!window.DASH_TEST_FS && !(await permOK(S.dir))) { S.granted = false; renderSync(); return; }
-    S.granted = true; let changed = false; const names = new Set(); let snapRaw = null, logObj = null, plain = [], kept = [], keyringSeen = false;
+    S.granted = true; let changed = false; const names = new Set(); let snapOk = false, snapRaw = null, logObj = null, plain = [], kept = [], keyringSeen = false;
     if (S.vault.kr && !S.vault.key) { S.lastSync = new Date(); renderSync(); return; }   // encrypted and locked: touch nothing
     if (S.hub && !again) await hubMirror();
     try {
@@ -624,7 +630,11 @@
           if (isEnc) r.text = await V.decrypt(S.vault.key, S.vault.kr, r.text, purpose);
           if (purpose === "time") { const p = R2.parseTimeFile(r.text, inner); if (p.bad) S.fileProblems[name] = p.bad; S.fileEvents[inner] = p.events; (S.fileReports = S.fileReports || {})[inner] = p.reports || []; (S.fileUpdated = S.fileUpdated || {})[inner] = p.updated_at; changed = true; }
           else if (purpose === "log") logObj = parseLogJs(r.text);
-          else if (!snapRaw || inner.endsWith(".json")) snapRaw = parseSnapshotText(inner, r.text);
+          else {   // 00.04.001: several snapshot files (e.g. a renamed backup): use the newest one that passes validation
+            const cand = parseSnapshotText(inner, r.text); let okc = true; try { R.readSnapshot(cand); } catch (e) { okc = false; }
+            const better = !snapRaw || (okc && (!snapOk || Date.parse(cand.generated_at) > Date.parse(snapRaw.generated_at)));
+            if (better) { snapRaw = cand; snapOk = okc; }
+          }
         } catch (e) { S.fileProblems[name] = `${name}: unreadable (${e.message || e})`; if (purpose === "time") { delete S.fileEvents[inner]; changed = true; } }
       }
     } catch (e) { if (S.hubOnly) { S.hubState.error = e.message || String(e); S.problems.push("GitHub: " + S.hubState.error); renderSync(); return; } S.problems.push("Data folder: " + (e.message || e)); }

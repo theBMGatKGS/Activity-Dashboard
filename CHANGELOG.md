@@ -1,5 +1,14 @@
 # Changelog — Activity Dashboard
 
+## 00.04.001_261023 (Oct 23 2026)
+- Fix (live bug): the mirror let an older hub snapshot ("GitHub wins") replace a newer local one. On Oct 23 a snapshot the app rejects (wrong `source`) was encrypted and uploaded at 9:11; the corrected 9:48 snapshot was then overwritten by it. Now: both copies are decrypted and validated (`hubInspect`); invalid copies are never uploaded and never replace anything (a bad hub copy is repaired from the local one); newer wins by snapshot `generated_at` / time-file `updated_at`, else by last-change time (hub `mtime` is stored inside the encrypted envelope); equal stamps move nothing; own time file always goes up; missing on the hub = uploaded; the local loser is kept as `<name>.prev.enc`.
+- A plaintext snapshot is encrypted (and so uploaded) only if it passes `readSnapshot`; an invalid existing `.enc` snapshot no longer blocks a valid newer one.
+- Only known data files are mirrored (`time-*.json.enc`, `inbox-snapshot.json.enc`, `notebook-log.js.enc`, `keyring.json`); renamed backups such as `inbox-snapshot.json.bad-0911.enc`, `.prev.enc` and other `*.enc` are never uploaded or downloaded.
+- With several snapshot files in the folder the dashboard uses the newest valid one.
+- Mirror without a check function moves nothing in either direction.
+- Tests: `hub.test.js` 48 (R1–R12 reproduce the Oct 23 sequence, newer-wins, invalid-never-uploaded, missing-uploaded, mtime fallback, renamed-backup allowlist); `t23_hub.py` adds R1–R7 end to end.
+- N2 not folded in: the content stamps and authenticated mtime stop an older copy replacing a newer one on computers with a folder; a per-file counter bound into the AAD (for folder-less devices) is still deferred.
+
 ## 00.04.000_261021 (Oct 21 2026)
 - GitHub encrypted data hub (`js/hub.js`): REST Contents API client (private-repo check, ETag listing, sha-checked PUT with 409/422 retry, DELETE, `git/blobs` for files over 1 MB, explained 401/403/404/rate-limit/offline errors). Plaintext guard: only a valid keyring or an exact AES-256-GCM envelope may be written; checked before any request.
 - Per-machine fine-grained token (classic `ghp_` refused), stored in IndexedDB only as a vault envelope (purpose `token`) together with the keyring; never in localStorage or git. File → GitHub sync… dialog with the token-creation steps, Connect / Save / Disconnect this computer.

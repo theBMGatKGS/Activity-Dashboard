@@ -35,6 +35,8 @@
     return null;
   }
   const hubName = n => n === KEYRING || /\.enc$/i.test(n);
+  const DATA_RE = /^(time-[A-Za-z0-9][A-Za-z0-9_-]*\.json|inbox-snapshot\.json|notebook-log\.js)\.enc$/;
+  const dataName = n => DATA_RE.test(n) && !/\.prev\.enc$/i.test(n);
 
   class HubError extends Error { constructor(msg, status, code) { super(msg); this.name = code || "HubError"; this.status = status; } }
   function explain(status, body, what) {
@@ -136,7 +138,7 @@
     const names = new Map();
     return { keyId: keyring.keyId,
       async nameOf(real) { if (real === KEYRING) return KEYRING; if (!names.has(real)) names.set(real, "blob-" + hex(await SUB.sign("HMAC", hk, TE.encode(real))).slice(0, 32) + ".enc"); return names.get(real); },
-      wrap: (real, text) => v.encrypt(key, keyring, "hub", JSON.stringify({ name: real, text })),
+      wrap: (real, text, mtime) => v.encrypt(key, keyring, "hub", JSON.stringify({ name: real, text, mtime: typeof mtime === "number" ? mtime : Date.now() })),   // 00.04.001: mtime = when the local copy last changed (authenticated)
       async unwrap(t) { const o = JSON.parse(await v.decrypt(key, keyring, t, "hub")); if (!o || typeof o.name !== "string" || typeof o.text !== "string") throw new Error("not a hub file"); return o; } };
   }
   // Same interface as client(), with real names. getCodec() returns the codec (throws while locked); only keyring.json works without it.
@@ -146,7 +148,7 @@
       if (cache.has(x.sha)) return cache.get(x.sha);
       const o = await cd.unwrap((await c.read(x.name)).text);
       if (await cd.nameOf(o.name) !== x.name) throw new Error("name doesn't match its contents");
-      const e = { name: o.name, text: o.text, sha: await gitSha(o.text), raw: x.name }; cache.set(x.sha, e); return e;
+      const e = { name: o.name, text: o.text, sha: await gitSha(o.text), raw: x.name, mtime: typeof o.mtime === "number" ? o.mtime : 0 }; cache.set(x.sha, e); return e;
     }
     let byName = new Map();
     async function list() {
@@ -165,16 +167,17 @@
       const e = byName.get(name); if (!e) { const er = new Error("not found"); er.name = "NotFoundError"; throw er; }
       return { text: e.text, sha: e.sha, size: e.text.length };
     }
-    async function write(name, text, message) {
+    async function write(name, text, message, meta) {
       if (name === KEYRING) return c.write(name, text, message);
       const p = writeProblem(name, text); if (p) throw new HubError(p, 0, "Refused");
-      const cd = await getCodec(), raw = await cd.nameOf(name), r = await c.write(raw, await cd.wrap(name, text), message);
-      const e = { name, text, sha: await gitSha(text), raw }; if (r && r.sha) cache.set(r.sha, e); byName.set(name, e);
+      const mtime = meta && typeof meta.mtime === "number" ? meta.mtime : Date.now();
+      const cd = await getCodec(), raw = await cd.nameOf(name), r = await c.write(raw, await cd.wrap(name, text, mtime), message);
+      const e = { name, text, sha: await gitSha(text), raw, mtime }; if (r && r.sha) cache.set(r.sha, e); byName.set(name, e);
       return { sha: e.sha, size: text.length };
     }
     async function remove(name, message) { if (name === KEYRING) return c.remove(name, message); const cd = await getCodec(); await c.list(); return c.remove(await cd.nameOf(name), message); }
     return { repo: c.repo, opaque: true, list, read, write, remove, test: () => c.test(), problems: () => problems.slice(),
-      shaOf: n => n === KEYRING ? c.shaOf(n) : (byName.get(n) ? byName.get(n).sha : null) };
+      shaOf: n => n === KEYRING ? c.shaOf(n) : (byName.get(n) ? byName.get(n).sha : null), mtimeOf: n => (byName.get(n) ? byName.get(n).mtime : 0) };
   }
 
   // A folder-handle look-alike over the hub (for iPad / no local folder). File "lastModified" is the git blob sha,
@@ -207,18 +210,25 @@
     const readLocal = async n => { try { const h = await local.getFileHandle(n); const f = await h.getFile(); return await f.text(); } catch (e) { return null; } };
     const writeLocal = async (n, t) => { const h = await local.getFileHandle(n, { create: true }); const w = await h.createWritable(); await w.write(t); await w.close(); };
     const isPrev = n => /\.prev\.enc$/i.test(n), prevName = n => n.replace(/\.enc$/i, "") + ".prev.enc";
-    // 00.04 N1: a hub file reaches the local backup only after it decrypts with the data key and parses (opts.verify throws if not).
-    // The local file it replaces is kept as <name>.prev.enc (local only, never uploaded).
-    const verify = opts && opts.verify;
-    async function pull(n, ht, lt) {
-      if (writeProblem(n, ht)) { out.problems.push(`hub ${n}: not an encrypted file; not copied`); return; }
-      if (!verify) { out.problems.push(`hub ${n}: can't be checked here; not copied`); return; }
-      try { await verify(n, ht); } catch (e) { out.problems.push(`hub ${n}: failed the decrypt check (${e.message || e}); local copy kept, not overwritten`); return; }
-      if (lt != null) await writeLocal(prevName(n), lt);
-      await writeLocal(n, ht); out.down.push(n);
+    // 00.04 N1 / 00.04.001: both copies are decrypted and checked (opts.inspect → { ok, stamp, why }). A copy that fails is never
+    // uploaded and never replaces anything. When both pass, the NEWER one wins: by its content stamp (snapshot generated_at, time
+    // file updated_at), else by when the file last changed (local file time vs the mtime inside the hub envelope). The own time
+    // file always goes up. Whatever the local folder loses is kept as <name>.prev.enc (local only, never uploaded).
+    const inspect = (opts && opts.inspect) || (opts && opts.verify ? async (n, t) => { try { await opts.verify(n, t); return { ok: true, stamp: null }; } catch (e) { return { ok: false, why: e.message || String(e) }; } } : null);
+    const readLocalF = async n => { try { const h = await local.getFileHandle(n); const f = await h.getFile(); return { text: await f.text(), mtime: Number(f.lastModified) || 0 }; } catch (e) { return null; } };
+    async function check(n, text, side) {
+      const p = writeProblem(n, text); if (p) return { ok: false, why: side === "hub" ? "not an encrypted file" : p };
+      if (!inspect) return { ok: false, why: "can't be checked here" };   // nothing moves without a decrypt check
+      try { return await inspect(n, text); } catch (e) { return { ok: false, why: e.message || String(e) }; }
     }
-    const localNames = []; for await (const [n, h] of local.entries()) if (h.kind === "file" && hubName(n) && !isPrev(n)) localNames.push(n);
-    const hubList = await c.list(), hubNames = hubList.map(x => x.name).filter(n => hubName(n) && !isPrev(n));
+    const ts = s => { const v = s == null ? NaN : (typeof s === "number" ? s : Date.parse(s)); return isNaN(v) ? null : v; };
+    async function pull(n, ht, lt, mtime) { if (lt != null) await writeLocal(prevName(n), lt); await writeLocal(n, ht); out.down.push(n); }
+    async function push(n, lt, mtime, repair) { await c.write(n, lt, msg, { mtime }); out.up.push(n); if (repair) (out.repaired = out.repaired || []).push(n); }
+    // 00.04.001: only the known data files are mirrored. Any other *.enc (.prev.enc, renamed backups such as
+    // inbox-snapshot.json.bad-0911.enc, conflict copies) stays where it is and is never uploaded or downloaded.
+    const isData = (opts && opts.isData) || dataName;
+    const localNames = []; for await (const [n, h] of local.entries()) if (h.kind === "file" && (n === KEYRING || isData(n))) localNames.push(n);
+    const hubList = await c.list(), hubNames = hubList.map(x => x.name).filter(n => n === KEYRING || isData(n));
     const lk = await readLocal(KEYRING); let hk = null;
     if (hubNames.includes(KEYRING)) hk = (lk != null && await gitSha(lk) === c.shaOf(KEYRING)) ? lk : (await c.read(KEYRING)).text;
     const kid = t => { try { return JSON.parse(t).keyId; } catch (e) { return null; } };
@@ -232,21 +242,28 @@
     const all = new Set(localNames.concat(hubNames)); all.delete(KEYRING);
     for (const n of all) {
       try {
-        const inL = localNames.includes(n), inH = hubNames.includes(n);
-        if (inL && !inH) { const t = await readLocal(n); const p = writeProblem(n, t); if (p) { out.problems.push(p); continue; } await c.write(n, t, msg); out.up.push(n); continue; }
-        if (inL) { const lt0 = await readLocal(n); if (lt0 != null && await gitSha(lt0) === c.shaOf(n)) continue; }   // same content: no download
-        const ht = (await c.read(n)).text;
-        if (!inL) { await pull(n, ht, null); continue; }
-        const lt = await readLocal(n); if (lt === ht) continue;
-        if (n === own) { const p = writeProblem(n, lt); if (p) { out.problems.push(p); continue; } await c.write(n, lt, msg); out.up.push(n); }
-        else await pull(n, ht, lt);
+        const inL = localNames.includes(n), inH = hubNames.includes(n), lf = inL ? await readLocalF(n) : null;
+        if (lf && inH && await gitSha(lf.text) === c.shaOf(n)) continue;   // same content: nothing to do, no download
+        const ht = inH ? (await c.read(n)).text : null, hm = inH && c.mtimeOf ? c.mtimeOf(n) || 0 : 0;
+        const L = lf ? await check(n, lf.text, "local") : null, Hc = ht != null ? await check(n, ht, "hub") : null;
+        if (L && !L.ok) out.problems.push(`${n}: local copy failed the check (${L.why}); not uploaded`);
+        if (Hc && !Hc.ok) out.problems.push(`hub ${n}: failed the decrypt check (${Hc.why}); ${L && L.ok ? "replaced with the local copy" : "local copy kept, not overwritten"}`);
+        const lok = !!(L && L.ok), hok = !!(Hc && Hc.ok);
+        if (lok && !hok) { await push(n, lf.text, lf.mtime, inH); continue; }    // hub missing or bad: upload (repair)
+        if (!lok && hok) { await pull(n, ht, lf ? lf.text : null); continue; }   // local missing or bad
+        if (!lok && !hok) continue;
+        if (lf.text === ht) continue;
+        if (n === own) { await push(n, lf.text, lf.mtime); continue; }
+        const a = ts(L.stamp), b = ts(Hc.stamp);
+        const cmp = a != null && b != null && a !== b ? a - b : (a != null && b != null ? 0 : lf.mtime - hm);
+        if (cmp > 0) await push(n, lf.text, lf.mtime); else if (cmp < 0) await pull(n, ht, lf.text);
       } catch (e) { out.problems.push(`${n}: ${e.message || e}`); }
     }
     if (c.problems) out.problems.push(...c.problems());
     return out;
   }
 
-  const api = { API, gitSha, client, opaque, codec, BLOB_RE, dir, mirror, writeProblem, tokenProblem, repoProblem, b64encode, b64decode, HubError, KEYRING };
+  const api = { API, DATA_RE, dataName, gitSha, client, opaque, codec, BLOB_RE, dir, mirror, writeProblem, tokenProblem, repoProblem, b64encode, b64decode, HubError, KEYRING };
   g.DASH = g.DASH || {}; g.DASH.hub = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

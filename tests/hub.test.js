@@ -6,10 +6,10 @@ let pass = 0, fail = 0;
 function check(c, msg) { if (c) { pass++; console.log("PASS " + msg); } else { fail++; console.log("FAIL " + msg); } }
 async function rejects(p, re) { try { await p; return false; } catch (e) { return re ? re.test(e.message) : true; } }
 const TOK = "github_pat_" + "A".repeat(40), REPO = "owner/activity-data-hub";
-function memDir(init) { const m = new Map(Object.entries(init || {})); const nf = () => { const e = new Error("nf"); e.name = "NotFoundError"; return e; };
-  const fh = n => ({ kind: "file", name: n, async getFile() { if (!m.has(n)) throw nf(); const t = m.get(n); return { lastModified: 1, size: t.length, text: async () => t }; },
-    async createWritable() { let b = ""; return { write: async t => { b += t; }, close: async () => { m.set(n, b); } }; } });
-  return { m, kind: "directory", async *entries() { for (const n of [...m.keys()]) yield [n, fh(n)]; }, async getFileHandle(n, o) { if (!m.has(n) && !(o && o.create)) throw nf(); return fh(n); }, async removeEntry(n) { m.delete(n); } }; }
+function memDir(init) { const m = new Map(Object.entries(init || {})), mt = new Map(); const nf = () => { const e = new Error("nf"); e.name = "NotFoundError"; return e; };
+  const fh = n => ({ kind: "file", name: n, async getFile() { if (!m.has(n)) throw nf(); const t = m.get(n); return { lastModified: mt.get(n) || 1, size: t.length, text: async () => t }; },
+    async createWritable() { let b = ""; return { write: async t => { b += t; }, close: async () => { m.set(n, b); mt.set(n, Date.now()); } }; } });
+  return { m, mt, kind: "directory", async *entries() { for (const n of [...m.keys()]) yield [n, fh(n)]; }, async getFileHandle(n, o) { if (!m.has(n) && !(o && o.create)) throw nf(); return fh(n); }, async removeEntry(n) { m.delete(n); } }; }
 (async () => {
   const { keyring, key } = await V.createKeyring("synthetic hub passphrase");
   const KR = JSON.stringify(keyring, null, 1) + "\n", SECRET = JSON.stringify({ synthetic: true, account: "Account A", minutes: 40 });
@@ -65,8 +65,15 @@ function memDir(init) { const m = new Map(Object.entries(init || {})); const nf 
   // H21–H28: mirror (opaque names, N1 decrypt check)
   const cd = await H.codec(key, keyring), getCd = async () => cd;
   const verify = async (n, text) => { const purpose = /^time-/.test(n) ? "time" : /^inbox-snapshot/.test(n) ? "snapshot" : "log"; JSON.parse(await V.decrypt(key, keyring, text, purpose)); };
+  // like the app's hubInspect: decrypt, validate, return the content stamp (snapshot generated_at / time updated_at; logs have none)
+  const inspect = async (n, text) => { const purpose = /^time-/.test(n) ? "time" : /^inbox-snapshot/.test(n) ? "snapshot" : "log";
+    let o; try { o = JSON.parse(await V.decrypt(key, keyring, text, purpose)); } catch (e) { return { ok: false, why: e.message }; }
+    if (purpose === "snapshot") return o.source === "inbox-export" ? { ok: true, stamp: o.generated_at } : { ok: false, why: "source must be inbox-export" };
+    return { ok: true, stamp: purpose === "time" ? o.updated_at || null : null }; };
+  const SN = async (at, source) => V.encrypt(key, keyring, "snapshot", JSON.stringify({ synthetic: true, source: source || "inbox-export", generated_at: at }));
+  const snap1 = await SN("2026-10-19T07:00:00-05:00");
   const g8 = fakeGitHub(), raw8 = H.client({ repo: REPO, token: TOK, fetch: g8.fetch }), c8 = H.opaque(raw8, getCd);
-  const loc = memDir({ "keyring.json": KR, "time-workpc.json.enc": env, "inbox-snapshot.json.enc": env, "time-workpc.json": SECRET, "notes.txt": "x" });
+  const loc = memDir({ "keyring.json": KR, "time-workpc.json.enc": env, "inbox-snapshot.json.enc": snap1, "time-workpc.json": SECRET, "notes.txt": "x" });
   let r = await H.mirror(loc, c8, { ownFile: "time-workpc.json.enc", verify });
   check(r.up.sort().join() === "inbox-snapshot.json.enc,keyring.json,time-workpc.json.enc" && [...g8.files.keys()].every(n => n === "keyring.json" || H.BLOB_RE.test(n)), "H21 mirror uploads keyring + .enc only, under opaque names (plaintext and other files stay local)");
   const blob = [...g8.files.values()].map(f => f.buf.toString()).join(""); check(!blob.includes("Account A") && !blob.includes("synthetic"), "H22 nothing readable reached the fake hub");
@@ -82,7 +89,7 @@ function memDir(init) { const m = new Map(Object.entries(init || {})); const nf 
   const snap2 = await V.encrypt(key, keyring, "snapshot", JSON.stringify({ synthetic: true, generated_at: "2026-10-19T07:30:00-05:00" })); await c8.write("inbox-snapshot.json.enc", snap2);
   r = await H.mirror(loc, c8, { ownFile: "time-workpc.json.enc", verify });
   check(loc.m.get("time-ipad.json.enc") === env2 && (await c8.read("time-workpc.json.enc")).text === envMine && loc.m.get("inbox-snapshot.json.enc") === snap2, "H23 others' files come down, own time file goes up, hub wins for shared files");
-  check(loc.m.get("inbox-snapshot.json.prev.enc") === env && !loc.m.has("time-ipad.json.prev.enc") && ![...g8.files.keys()].includes(await cd.nameOf("inbox-snapshot.json.prev.enc")), "H32 N1: the replaced local file is kept as <name>.prev.enc, and never uploaded");
+  check(loc.m.get("inbox-snapshot.json.prev.enc") === snap1 && !loc.m.has("time-ipad.json.prev.enc") && ![...g8.files.keys()].includes(await cd.nameOf("inbox-snapshot.json.prev.enc")), "H32 N1: the replaced local file is kept as <name>.prev.enc, and never uploaded");
   const reads = g8.log.length; r = await H.mirror(loc, c8, { ownFile: "time-workpc.json.enc", verify });
   check(!r.up.length && !r.down.length && !g8.log.slice(reads).some(x => x.method === "GET" && /contents\/./.test(x.url)), "H24 unchanged files aren't downloaded again (cached by blob sha)");
   // N1 tamper: a well-formed envelope on the hub whose ciphertext was changed must not replace the local backup
@@ -92,8 +99,8 @@ function memDir(init) { const m = new Map(Object.entries(init || {})); const nf 
   check(loc.m.get("inbox-snapshot.json.enc") === goodLocal && !loc.m.has("inbox-snapshot.json.prev.enc") && r.problems.some(p => /decrypt check/.test(p)), "H33 N1 tamper: a damaged hub file is refused, the local copy is kept, a warning is raised");
   await c8.write("time-new.json.enc", tampered); r = await H.mirror(loc, c8, { ownFile: "time-workpc.json.enc", verify });
   check(!loc.m.has("time-new.json.enc") && r.problems.some(p => /time-new.*decrypt check/.test(p)), "H34 N1 tamper: a damaged new hub file is not copied down");
-  r = await H.mirror(memDir({ "keyring.json": KR, "inbox-snapshot.json.enc": env }), c8, { ownFile: "x" });
-  check(!r.down.length && r.problems.some(p => /can't be checked/.test(p)), "H35 N1: without a verify function nothing is copied down");
+  r = await H.mirror(memDir({ "keyring.json": KR, "inbox-snapshot.json.enc": snap1 }), c8, { ownFile: "x" });
+  check(!r.down.length && !r.up.length && r.problems.some(p => /can't be checked/.test(p)), "H35 N1: without a check function nothing is copied either way");
   g8.put("time-x.json.enc", SECRET); await c8.list();
   check(c8.problems().some(p => /not an opaque hub file/.test(p)), "H25 a readable-named or non-blob file on the hub is ignored and reported");
   const other = await V.createKeyring("a different passphrase setup"), loc2 = memDir({ "keyring.json": JSON.stringify(other.keyring) });
@@ -104,5 +111,42 @@ function memDir(init) { const m = new Map(Object.entries(init || {})); const nf 
   check(r.problems.some(p => /No keyring yet/.test(p)) && !r.up.length, "H28 no keyring anywhere: nothing sent");
   const locked = H.opaque(H.client({ repo: REPO, token: TOK, fetch: fakeGitHub().fetch }), async () => { throw new Error("locked"); });
   check(await rejects(locked.write("time-a.json.enc", env), /locked/), "H36 N3: while locked no data file can be written (no codec)");
+  // ---- 00.04.001 regression: the Oct 23 sequence and the newer-wins rules (inspect = decrypt + validate + stamp) ----
+  {
+    const g9 = fakeGitHub(), c9 = H.opaque(H.client({ repo: REPO, token: TOK, fetch: g9.fetch }), getCd), S = "inbox-snapshot.json.enc", O = { ownFile: "time-mac.json.enc", inspect };
+    const bad911 = await SN("2026-10-23T09:11:00-05:00", "wrong-source"), good948 = await SN("2026-10-23T09:48:00-05:00");
+    // 9:11 (as 00.04.000 did): a snapshot the app rejects reached the hub; 9:48: the corrected one is encrypted locally
+    const d9 = memDir({ "keyring.json": KR, [S]: good948 }); await c9.write("keyring.json", KR); await c9.write(S, bad911);
+    let q = await H.mirror(d9, c9, O);
+    check(d9.m.get(S) === good948 && !d9.m.has("inbox-snapshot.json.prev.enc") && (await c9.read(S)).text === good948 && (q.repaired || []).includes(S) && q.problems.some(p => /replaced with the local copy/.test(p)),
+      "R1 Oct 23 repro: the hub's rejected 9:11 snapshot does NOT overwrite the local 9:48 one; the good copy is uploaded over it");
+    const valid911 = await SN("2026-10-23T09:11:00-05:00"); await c9.write(S, valid911); q = await H.mirror(d9, c9, O);
+    check(d9.m.get(S) === good948 && (await c9.read(S)).text === good948 && q.up.includes(S), "R2 an older VALID hub snapshot loses to the newer local one (by generated_at), even though GitHub used to win");
+    const good1000 = await SN("2026-10-23T10:00:00-05:00"); await c9.write(S, good1000); q = await H.mirror(d9, c9, O);
+    check(d9.m.get(S) === good1000 && d9.m.get("inbox-snapshot.json.prev.enc") === good948 && q.down.includes(S), "R3 a newer hub snapshot wins; the older local one is kept as .prev.enc");
+    const reenc = await SN("2026-10-23T10:00:00-05:00"); d9.m.set(S, reenc); const n0 = g9.log.filter(x => x.method === "PUT").length; q = await H.mirror(d9, c9, O);
+    check(!q.up.length && !q.down.length && g9.log.filter(x => x.method === "PUT").length === n0, "R4 same snapshot (same generated_at), different ciphertext: nothing moves, no ping-pong");
+    d9.m.set(S, await SN("2026-10-23T11:00:00-05:00", "wrong-source")); q = await H.mirror(d9, c9, O);
+    check((await c9.read(S)).text === good1000 && d9.m.get(S) === good1000 && q.problems.some(p => /local copy failed the check/.test(p)), "R5 a local snapshot that fails validation is never uploaded and is replaced by the valid hub copy (bad one kept as .prev.enc)");
+    const d10 = memDir({ "keyring.json": KR, "inbox-snapshot.json.enc": good948, "notebook-log.js.enc": await V.encrypt(key, keyring, "log", "{}") }), g10 = fakeGitHub(), c10 = H.opaque(H.client({ repo: REPO, token: TOK, fetch: g10.fetch }), getCd);
+    q = await H.mirror(d10, c10, O); check(q.up.includes(S) && q.up.includes("notebook-log.js.enc"), "R6 files the hub is missing are uploaded");
+    const d11 = memDir({ "keyring.json": KR, [S]: bad911 }), g11 = fakeGitHub(), c11 = H.opaque(H.client({ repo: REPO, token: TOK, fetch: g11.fetch }), getCd);
+    q = await H.mirror(d11, c11, O); check(!q.up.includes(S) && g11.files.size === 1, "R7 a rejected snapshot is never uploaded, even when the hub has none");
+    // no content stamp (notebook log): newer by last-change time; the hub's time is inside its encrypted envelope
+    const L = "notebook-log.js.enc", logA = await V.encrypt(key, keyring, "log", '{"lines":["a"]}'), logB = await V.encrypt(key, keyring, "log", '{"lines":["b"]}');
+    await c10.write(L, logB, "sync", { mtime: Date.now() + 60000 }); q = await H.mirror(d10, c10, O);
+    check(d10.m.get(L) === logB && d10.m.has("notebook-log.js.prev.enc") && q.down.includes(L), "R8 no content stamp: the copy changed more recently wins (hub newer → pulled, old kept as .prev.enc)");
+    await c10.write(L, logA, "sync", { mtime: 1000 }); q = await H.mirror(d10, c10, O);
+    check((await c10.read(L)).text === logB && q.up.includes(L), "R9 no content stamp: a hub copy last changed earlier loses to the local one");
+    const envT = async at => V.encrypt(key, keyring, "time", JSON.stringify({ machine: "pc", updated_at: at, events: [] }));
+    const d12 = memDir({ "keyring.json": KR, "time-pc.json.enc": await envT("2026-10-23T09:00:00Z") }); await c10.write("time-pc.json.enc", await envT("2026-10-23T09:30:00Z"));
+    q = await H.mirror(d12, c10, O); check(q.down.includes("time-pc.json.enc") && d12.m.has("time-pc.json.prev.enc"), "R10 another machine's time file: newer updated_at wins, older kept as .prev.enc");
+    // renamed local backups and other *.enc are never mirrored
+    const g13 = fakeGitHub(), c13 = H.opaque(H.client({ repo: REPO, token: TOK, fetch: g13.fetch }), getCd);
+    const d13 = memDir({ "keyring.json": KR, [S]: good948, "inbox-snapshot.json.bad-0911.enc": bad911, "inbox-snapshot.json.prev.enc": valid911, "time-mac.json-PC.enc": env, "backup-old.enc": env, "time-mac.json.enc": env });
+    q = await H.mirror(d13, c13, O); const upn = q.up.slice().sort().join();
+    check(upn === "inbox-snapshot.json.enc,keyring.json,time-mac.json.enc" && g13.files.size === 3, "R11 only known data files are uploaded: .bad-0911.enc, .prev.enc, conflict copies and other *.enc stay local (" + upn + ")");
+    check(H.dataName("time-workpc.json.enc") && H.dataName("notebook-log.js.enc") && !H.dataName("inbox-snapshot.json.bad-0911.enc") && !H.dataName("time-pc.json.prev.enc") && !H.dataName("x.enc"), "R12 data file name allowlist");
+  }
   console.log(`\n${pass}/${pass + fail} passed`); process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });
