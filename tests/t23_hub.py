@@ -25,7 +25,7 @@ def fs(op, name, text):
     if op == "write": t = data / (name + ".crswap"); t.write_text(text); os.replace(t, p); return True
     if op == "remove": p.unlink(); return True
 # ---- fake GitHub (shared by all contexts) ----
-TOK = {"workpc": "github_pat_" + "W" * 50, "ipad": "github_pat_" + "I" * 50}; REPO = "owner/activity-data-hub"
+TOK = {"workpc": "github_pat_" + "W" * 50, "ipad": "github_pat_" + "I" * 50, "laptop": "github_pat_" + "L" * 50}; REPO = "owner/activity-data-hub"
 HUB = {}; STATE = {"commits": 0, "private": True, "offline": False}; CALLS = []
 def gsha(b): return hashlib.sha1(b"blob %d\0" % len(b) + b).hexdigest()
 CORS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Authorization, Content-Type, X-GitHub-Api-Version, If-None-Match, Accept",
@@ -188,6 +188,70 @@ with sync_playwright() as p:
     sw = (app / "sw.js").read_text()
     check("u.origin !== self.location.origin) return" in sw and '"js/hub.js"' in sw and '"js/frame.js"' in sw, "service worker: off-site (API) requests are never handled or cached; hub/frame scripts in the shell")
     m = json.loads((app / "manifest.webmanifest").read_text()); check(m["name"] == "Activity Dashboard" and m["short_name"] == "Activity Dashboard", "manifest: installed name is Activity Dashboard")
+    # ---- 00.05.002 L1-L4: a Data folder holding only keyring.json, GitHub sync set up, but locked when the app started
+    # (unlock postponed, or folder permission given later). Before 00.05.002 the hub attached only at start-up, so after a later
+    # unlock the chip said "Synced" (no ☁) and nothing was pulled or pushed.
+    data2 = tmp / "Data2"; data2.mkdir(); shutil.copy(data / "keyring.json", data2 / "keyring.json")
+    def fs2(op, name, text):
+        if op == "list": return sorted(x for x in os.listdir(data2) if not x.endswith(".crswap"))
+        q = data2 / name
+        if op == "read":
+            if not q.exists(): return None
+            st = q.stat(); return {"m": int(st.st_mtime_ns // 1_000_000), "size": st.st_size, "text": q.read_text()}
+        if op == "write": t = data2 / (name + ".crswap"); t.write_text(text); os.replace(t, q); return True
+        if op == "remove": q.unlink(); return True
+    lctx = b.new_context(viewport={"width": 1280, "height": 860}); lctx.route("https://api.github.com/**", handle); lctx.expose_function("__fs", fs2); lctx.add_init_script(FS_JS)
+    lp = lctx.new_page(); lp.on("pageerror", lambda e: errors.append(f"laptop: {e}")); lp.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+    lp.goto((app / "index.html").as_uri() + Q + "laptop"); lp.wait_for_selector("#vaultunlock", timeout=20000)
+    lp.fill("#vault-pass", PASS1); lp.uncheck("#vault-remember"); lp.click("#vault-ok"); lp.wait_for_function("() => !document.querySelector('#vaultunlock')", timeout=30000)
+    lp.wait_for_selector(".tile"); menu(lp, "hub"); lp.wait_for_selector("#hubdlg"); lp.fill("#hub-repo", REPO); lp.fill("#hub-token", TOK["laptop"]); lp.click("#hub-ok")
+    lp.wait_for_function("() => !document.querySelector('#hubdlg')", timeout=30000)
+    check("☁" in lp.inner_text("#sync") and (data2 / "inbox-snapshot.json.enc").exists(), "L1 set-up: folder with only keyring.json connects to GitHub and pulls the snapshot")
+    for f in os.listdir(data2):
+        if f != "keyring.json": (data2 / f).unlink()   # back to a folder holding only keyring.json
+    before = STATE["commits"]
+    lp.reload(); lp.wait_for_selector("#vaultunlock", timeout=20000); lp.click("#vault-later"); lp.wait_for_selector(".tile")   # locked at start-up
+    menu(lp, "encryption"); lp.wait_for_selector("#vaultunlock", timeout=20000); lp.fill("#vault-pass", PASS1); lp.click("#vault-ok")
+    lp.wait_for_function("() => !document.querySelector('#vaultunlock')", timeout=30000); lp.evaluate("DASH.app.syncNow(true)"); lp.evaluate("DASH.app.syncNow(true)")
+    chip = lp.inner_text("#sync")
+    check("☁" in chip, f"L2 unlocked after start-up: GitHub sync attaches (☁ in the chip: {chip!r})")
+    check((data2 / "inbox-snapshot.json.enc").exists() and lp.evaluate("!DASH.app.state.snap.example"), f"L3 …and pulls the snapshot from GitHub (no EXAMPLE DATA; folder: {sorted(os.listdir(data2))})")
+    lp.evaluate("(() => { const S = DASH.app.state; S.entries.push({ id: 'i-laptop-1', taskId: 'EX-2', eventId: null, date: '2026-10-19', minutes: 15, audience: 'Integrator/partner', subject: 'Training/education', account: 'Account D', source: 'manual', confirmed: true }); return DASH.app.commit(); })()")
+    lp.evaluate("DASH.app.flush()"); lp.evaluate("DASH.app.syncNow(true)")
+    check(STATE["commits"] > before and len(HUB) == 5 and hub_clean() and paths_opaque(), f"L4 …and pushes its own encrypted time file (hub files {len(HUB)}, commits +{STATE['commits'] - before})")
+    # ---- 00.05.002 Lock: the hub client (with its token) is detached; nothing is requested while locked; unlock re-attaches
+    menu(lp, "encryption"); lp.wait_for_selector("#vaultmenu"); lp.click("#vaultmenu [data-v=lock]"); lp.wait_for_function("() => !document.querySelector('#vaultmenu')")
+    n0 = len(CALLS); lp.evaluate("DASH.app.syncNow(true)")
+    check(lp.evaluate("DASH.app.state.hub === null && !JSON.stringify(DASH.app.state.hubState).includes('github_pat_')") and "🔒" in lp.inner_text("#sync") and len(CALLS) == n0,
+          f"Lock: GitHub sync detached (token leaves memory), no API requests while locked ({len(CALLS) - n0})")
+    menu(lp, "encryption"); lp.wait_for_selector("#vaultunlock", timeout=20000); lp.fill("#vault-pass", PASS1); lp.click("#vault-ok")
+    lp.wait_for_function("() => !document.querySelector('#vaultunlock')", timeout=30000); lp.evaluate("DASH.app.syncNow(true)")
+    check("☁" in lp.inner_text("#sync") and lp.evaluate("DASH.app.state.hub !== null"), "Lock → unlock: GitHub sync attaches again")
+    # ---- K1: hub has keyring A, the local folder now has keyring B (a different encryption setup)
+    PASS2 = "second synthetic passphrase"
+    krB = lp.evaluate("DASH.vault.createKeyring(%s).then(r => JSON.stringify(r.keyring, null, 1) + '\\n')" % json.dumps(PASS2))
+    for f in os.listdir(data2): (data2 / f).unlink()
+    (data2 / "keyring.json").write_text(krB); hubA = HUB["keyring.json"]; localB = (data2 / "keyring.json").read_bytes()
+    lp.evaluate("new Promise(res => { indexedDB.open('activity-dashboard').onsuccess = e => { e.target.result.transaction('kv', 'readwrite').objectStore('kv').delete('vaultKey').onsuccess = () => res(1); }; })")
+    k0 = len(CALLS); lp.reload(); lp.wait_for_selector("#vaultunlock", timeout=20000); lp.fill("#vault-pass", PASS2); lp.click("#vault-ok")
+    lp.wait_for_function("() => !document.querySelector('#vaultunlock')", timeout=30000); lp.wait_for_selector(".tile"); lp.evaluate("DASH.app.syncNow(true)"); lp.evaluate("DASH.app.syncNow(true)")
+    chip, tip = lp.inner_text("#sync"), lp.get_attribute("#sync", "title"); writes = [c for c in CALLS[k0:] if c[0] in ("PUT", "DELETE")]
+    check(chip.startswith("⚠ GitHub not connected") and "1 problem" in chip and "☁" not in chip, f"K1 chip: '⚠ GitHub not connected', 1 problem, no cloud mark ({chip!r})")
+    check("different keyring" in tip, f"K1 tooltip says 'different keyring' ({tip[:120]!r})")
+    check(not writes and HUB["keyring.json"] == hubA and (data2 / "keyring.json").read_bytes() == localB, f"K1 nothing written: 0 PUT/DELETE ({len(writes)}), hub keyring.json byte-identical, local keyring.json unchanged")
+    saved = dict(HUB); HUB.clear()
+    menu(lp, "hub"); lp.wait_for_selector("#hubdlg"); lp.fill("#hub-repo", REPO); lp.fill("#hub-token", TOK["laptop"]); lp.click("#hub-ok")
+    lp.wait_for_function("() => !document.querySelector('#hubdlg')", timeout=30000); lp.evaluate("DASH.app.syncNow(true)")
+    chip = lp.inner_text("#sync")
+    check("☁" in chip and "not connected" not in chip and "keyring.json" in HUB, f"K1 set up again on an empty hub: cloud mark back ({chip!r})")
+    # ---- K2: the saved token can't be opened (corrupted): same warning, and no request at all
+    lp.evaluate("""new Promise(res => { indexedDB.open('activity-dashboard').onsuccess = e => { const st = e.target.result.transaction('kv', 'readwrite').objectStore('kv'), q = st.get('hubCfg');
+      q.onsuccess = () => { const c = q.result, env = JSON.parse(c.tokenEnv); env.ct = env.ct.split('').reverse().join(''); c.tokenEnv = JSON.stringify(env); st.put(c, 'hubCfg').onsuccess = res; }; }; })""")
+    lp.reload(); lp.wait_for_selector(".tile"); t0 = len(CALLS); lp.evaluate("DASH.app.syncNow(true)"); lp.evaluate("DASH.app.syncNow(true)")
+    chip, tip = lp.inner_text("#sync"), lp.get_attribute("#sync", "title")
+    check(chip.startswith("⚠ GitHub not connected") and "1 problem" in chip and "☁" not in chip and "token" in tip and len(CALLS) == t0, f"K2 corrupted token: same warning, tooltip names the token, no requests ({chip!r}, {len(CALLS) - t0} requests)")
+    HUB.clear(); HUB.update(saved)
+    lctx.close()
     b.close()
 check(not errors, "no page errors or CSP violations" + (f": {errors[:3]}" if errors else ""))
 print("T23 PASS" if ok else "T23 FAIL"); sys.exit(0 if ok else 1)

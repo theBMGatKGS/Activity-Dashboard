@@ -1,5 +1,12 @@
 # Changelog — Activity Dashboard
 
+## 00.05.002_261023 (Oct 23 2026)
+- Fix: GitHub sync attached only at start-up (`hubBoot`), and only if the Data folder was already allowed and unlocked then. A computer unlocked later (unlock postponed with "Not now", "Reconnect Data folder" after a browser restart, a recovery-key passphrase reset) never attached the hub: the chip said "🔐 Synced" without ☁, the snapshot and other machines' files were never pulled (EXAMPLE DATA), and its keyring and time file were never pushed. Now every sync (and an unlock from File → Encryption…) attaches GitHub sync as soon as the folder is unlocked, and mirrors at once.
+- A saved GitHub set-up that can't attach (set up for a different keyring, or a token that can't be opened) shows "⚠ GitHub not connected · … · 1 problem" with the reason in the tooltip, instead of "Synced"; clicking it opens File → GitHub sync…. Nothing is sent to the hub in that state.
+- Lock now detaches GitHub sync as well: the hub client (holding the token) and the name codec leave memory; unlock attaches them again.
+- `hub.js` unchanged: the mirror itself handled this folder state correctly (opaque names resolve from the hub listing, the newer keyring goes up, the known-names list matches).
+- Tests: `t23_hub.py` L1–L4 (folder with only keyring.json, GitHub set up, locked at start-up, unlocked later: ☁ attaches, snapshot pulled, own time file pushed), Lock (detached, no requests while locked, unlock re-attaches), K1 (hub keyring A, local keyring B: warning chip, 1 problem, no ☁, tooltip "different keyring", 0 PUT/DELETE, both keyrings byte-identical; set-up again on an empty hub brings ☁ back), K2 (corrupted saved token: same warning, no requests). T13 revision.
+
 ## 00.05.001_261023 (Oct 23 2026)
 - Time zone follows the computer's clock (`Intl…resolvedOptions().timeZone`), no setting; fallback and default America/Chicago (unchanged behaviour on a Central-time computer).
 - `rules.js`: zone state (`detectTimeZone`/`setTimeZone`/`getTimeZone`/`validTimeZone`), cached formatters per zone, `tzLabel` (CT/ET/PT/MST… or the IANA id), generic DST-safe `ctIso` via `zoneOffsetMs`. `ymd`/`hm`/`hourCT`/`snoozeUntil` use the current zone.

@@ -1,5 +1,10 @@
 # Release notes — Activity Dashboard
 
+## 00.05.002_261023 (Oct 23 2026)
+- Fixed: if a computer was unlocked after the dashboard had started (for example after "Not now", reconnecting the Data folder, or resetting the passphrase with the recovery key), GitHub sync didn't start. It showed "Synced" but no ☁, kept showing EXAMPLE DATA and sent nothing. It now connects as soon as you unlock.
+- If GitHub sync is set up but can't start (for example it was set up with a different passphrase setup), the top bar now says "⚠ GitHub not connected"; click it to set it up again.
+- Lock now also disconnects GitHub sync until you unlock again.
+
 ## 00.05.001_261023 (Oct 23 2026)
 - The dashboard now uses your computer's time zone, so it stays right when you travel. There's nothing to set: on a computer in Central time everything works as before.
 - Today, Due Today, Overdue, the 8:00 return of Snooze, meeting times and the "As of" stamp all follow the zone. When the computer's zone changes, the dashboard notices within a minute (or as soon as you come back to the window) and updates without reloading.

@@ -3,7 +3,7 @@
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
   const R = DASH.rules, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.05.001_261023";
+  const REV = "00.05.002_261023";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -436,7 +436,7 @@
   }
   async function encryptionDialog() {
     if (!S.vault.kr) { await turnOnEncryption(); return; }
-    if (!S.vault.key) { if (await ensureUnlocked()) { S.seen = {}; await syncNow(true); } return; }
+    if (!S.vault.key) { if (await ensureUnlocked()) { S.seen = {}; if (!S.hub) await hubBoot(); await syncNow(true); } return; }
     const act = await dialog("vaultmenu", `<b class="vt">🔐 Encryption</b>
       <p>This Data folder is encrypted (keyring <span class="mono">${esc(S.vault.kr.keyId)}</span>, created ${esc(new Date(S.vault.kr.created).toLocaleDateString())}). It's unlocked on this computer${S.vault.remembered ? " and remembered" : " for this session only"}.</p>
       ${S.vault.plainLeft.length ? `<p class="verr">⚠ ${S.vault.plainLeft.length} plaintext file(s) are still in the Data folder: ${esc(S.vault.plainLeft.join(", "))}</p>` : ""}
@@ -449,7 +449,8 @@
       </div><div class="vbtns"><button class="btn primary" data-v="">Close</button></div>`,
     (d, done) => d.querySelectorAll("[data-v]").forEach(b => b.onclick = () => done(b.dataset.v)));
     if (act === "rem") { await rememberKey(!S.vault.remembered); toast(S.vault.remembered ? "Remembered on this computer." : "Forgotten: you'll be asked for the passphrase next time."); }
-    if (act === "lock") { DB.setCipher(null); S.vault.key = null; await rememberKey(false); S.vault.locked = true; banner("🔒 Locked. File → Encryption… to unlock.", true); renderSync(); }
+    // Lock: the hub client (and the token it holds) and the name codec leave memory too; unlocking attaches them again.
+    if (act === "lock") { detachHub(); hubCodec = null; DB.setCipher(null); S.vault.key = null; await rememberKey(false); S.vault.locked = true; banner("🔒 Locked. File → Encryption… to unlock.", true); renderSync(); }
     if (act === "del") await deletePlainNow();
     if (act === "pass") {
       const r = await dialog("vaultpass", `<b class="vt">Change passphrase</b><label class="vlab">Current passphrase<input type="password" id="vc-old"></label>${passFields("New passphrase", "New passphrase again")}
@@ -619,7 +620,13 @@
     if (!window.DASH_TEST_FS && !(await permOK(S.dir))) { S.granted = false; renderSync(); return; }
     S.granted = true; let changed = false; const names = new Set(); let snapOk = false, snapRaw = null, logObj = null, plain = [], kept = [], keyringSeen = false;
     if (S.vault.kr && !S.vault.key) { S.lastSync = new Date(); renderSync(); return; }   // encrypted and locked: touch nothing
-    if (S.hub && !again) await hubMirror();
+    // 00.05.002: GitHub sync is attached on any sync once the folder is unlocked, not only at start-up (a folder unlocked later,
+    // e.g. after "Not now", a folder reconnect or a recovery-key reset, otherwise never synced with the hub). A saved set-up
+    // that can't attach (different keyring, unreadable token) is reported in the chip as "⚠ GitHub not connected".
+    let hubNew = false;
+    if (!S.hub && S.vault.kr && S.vault.key) { await hubBoot(); hubNew = !!S.hub; if (hubNew) S.seen = {}; }
+    if (!S.hub && S.hubState && S.hubState.error) S.problems.push("GitHub: " + S.hubState.error);
+    if (S.hub && (!again || hubNew)) await hubMirror();
     try {
       for await (const [name, h] of S.dir.entries()) {
         if (h.kind !== "file") continue; names.add(name);
@@ -726,7 +733,9 @@
       txt = `⚠ Clock ahead · ${who} · ${S.held.length} held`; tip = `${S.held.length} change(s) from ${who} are stamped more than ${CFG.holdHours || 24} h in the future (latest ${S.held.map(e => e.ts).sort().pop()}). They are held — not applied — until real time reaches them. Fix: on ${who}, set the clock to automatic and use File → Repair clock stamps…. See Help → FAQ.`; }
     else if (S.future.length) { warn = true; const mx = S.future.reduce((a, e) => Math.max(a, Date.parse(e.ts)), 0), mins = Math.round((mx - Date.now()) / 60000), who = [...new Set(S.future.map(e => e.machine))].join(", ");
       txt = `⚠ Clock ahead · ${who}`; tip = `${S.future.length} time stamp(s) from ${who} are up to ${mins} min in the future. Check that clock is set automatically. Edits here still count after them (the dashboard's clock moves past the newest stamp it has seen).` + (S.problems.length ? "\n\n" + S.problems.join("\n") : ""); }
-    else { warn = S.problems.length > 0; txt = `${warn ? "⚠" : S.vault && S.vault.kr ? "🔐" : "⟳"} Synced ${hhmm(S.lastSync)} · ${ms}${warn ? ` · ${S.problems.length} problem${S.problems.length > 1 ? "s" : ""}` : ""}`; tip = (warn ? S.problems.join("\n") + "\n\n" : "") + `Machines seen: ${ms}. Checks ${S.hubOnly ? "GitHub" : S.hub ? "the Data folder and GitHub" : "the Data folder"} every ${POLL_MS / 1000} s. Click to sync now.`;
+    else { warn = S.problems.length > 0; const hubDown = !S.hub && !!(S.hubState && S.hubState.error);   // GitHub sync set up but not running
+      if (hubDown) { warn = true; act = "hub"; }
+      txt = `${hubDown ? "⚠ GitHub not connected" : `${warn ? "⚠" : S.vault && S.vault.kr ? "🔐" : "⟳"} Synced ${hhmm(S.lastSync)}`} · ${ms}${warn ? ` · ${S.problems.length} problem${S.problems.length > 1 ? "s" : ""}` : ""}`; tip = (warn ? S.problems.join("\n") + "\n\n" : "") + `Machines seen: ${ms}. Checks ${S.hubOnly ? "GitHub" : S.hub ? "the Data folder and GitHub" : "the Data folder"} every ${POLL_MS / 1000} s. Click to sync now.`;
       if (S.hub) txt += S.hubState.error ? " · ☁ ⚠" : " · ☁"; }
     c.textContent = txt; c.title = tip; c.dataset.act = act; c.classList.toggle("stale", warn);
   }
