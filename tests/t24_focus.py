@@ -105,9 +105,16 @@ with sync_playwright() as p:
     check(pg.evaluate("performance.getEntriesByType('resource').filter(r => /woff2/.test(r.name)).every(r => r.name.startsWith(location.href.split('/index.html')[0]))"), "font files come from the app's own folder")
     # print emulation: print palette, no shadows / animation
     pg.click(".mtop >> text=File"); check(pg.is_visible("[data-act=printFocus]"), "File → Print Daily Focus… (Q8)"); pg.keyboard.press("Escape")
+    if pg.get_attribute('[data-nodate]', 'aria-expanded') != 'true': pg.click('[data-nodate]')   # U2: rows with the 'no date' pill
     pg.evaluate("document.getElementById('view-focus').classList.add('printing')"); pg.emulate_media(media="print")
     pr = pg.evaluate("(() => { const v = document.getElementById('view-focus'), q = document.querySelector('.sq.t-today'), r = document.querySelector('.frow'); return [getComputedStyle(v).backgroundColor, getComputedStyle(q).backgroundColor, getComputedStyle(q).boxShadow, getComputedStyle(r).animationName, getComputedStyle(document.querySelector('#fs-dueToday h2')).color, getComputedStyle(document.querySelector('.btns')).display]; })()")
     check(pr[0] == "rgb(255, 255, 255)" and pr[1] == "rgb(255, 255, 255)" and pr[2] == "none" and pr[3] == "none" and pr[4] == "rgb(16, 38, 69)" and pr[5] == "none", f"print: white page, outlined squares, no shadow/animation, navy headings, no buttons ({pr})")
+    # the longest form (cold key row): "no touch set ⚠ no date"; put it into one printed row's due cell
+    pg.evaluate("""() => { const c = document.querySelector('#fs-overdue .frow .nx'); c.innerHTML = '<span class="muted">no touch set</span> <span class="nodate">⚠ no date</span>'; }""")
+    ov = pg.evaluate("""() => { const p = [...document.querySelectorAll('#view-focus .nodate')].filter(e => e.offsetParent);
+      return p.map(e => { const r = e.getBoundingClientRect(), row = e.closest('.frow, .blk').getBoundingClientRect(), c = e.closest('.nx') ? e.closest('.nx').getBoundingClientRect() : row;
+        return [Math.round(r.right - row.right), Math.round(r.right - c.right)]; }); }""")
+    check(len(ov) > 0 and all(a <= 0 and b <= 1 for a, b in ov), f"U2 print: every 'no date' pill stays inside its row and cell ({ov})")
     tmpd = pathlib.Path(os.environ.get("T24_PDF_DIR") or tempfile.mkdtemp()); pg.pdf(path=str(tmpd / "f.pdf"), width="11in", height="8.5in", print_background=True, margin={"top": "0", "bottom": "0", "left": "0", "right": "0"})
     import subprocess; info = subprocess.run(["pdfinfo", str(tmpd / "f.pdf")], capture_output=True, text=True).stdout
     check(re.search(r"Pages:\s+1\n", info) is not None and "792 x 612" in info, "Print Daily Focus = one landscape letter page")

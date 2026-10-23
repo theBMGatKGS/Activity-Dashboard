@@ -306,8 +306,11 @@ table.tbl select{background:var(--surface2);border:1px solid var(--line);border-
   #view-focus.printing .sh{color:#102645;border-bottom:1.5px solid #0C77BC}
   #view-focus.printing .badge{background:#F2F2F2;color:#1a1a1a}
   #view-focus.printing .sh .delta{color:#1a1a1a}
-  #view-focus.printing .frow{grid-template-columns:80px 170px 70px minmax(0,1fr) 110px;border-top:1px solid #E2E2E2;font-size:8.5pt;padding:1px 0}
+  #view-focus.printing .frow{grid-template-columns:80px 170px 70px minmax(0,1fr) 130px;border-top:1px solid #E2E2E2;font-size:8.5pt;padding:1px 0}
   #view-focus.printing .hero .frow{font-size:9pt}
   #view-focus.printing .nodate{background:#fff;color:#AC242A;border:1px solid #AC242A}
+  #view-focus.printing .frow>*{min-width:0}
+  #view-focus.printing .nx{display:flex;flex-wrap:wrap;align-items:center;gap:1px 4px;overflow-wrap:anywhere}   /* U2: the no-date pill wraps inside its cell, never past the row border */
+  #view-focus.printing .nx .nodate{font-size:7pt;padding:0 3px;max-width:100%;box-sizing:border-box}
   #view-focus.printing .note,#view-focus.printing .wchip{color:#474747;border-color:#9e9e9e}
 }
