@@ -33,8 +33,11 @@ with sync_playwright() as p:
     check(all(dl[:4]) and dl[4] == "▲+1", f"delta chip sits inside the Due Today square ({dl[4]})")
     dt = pg.evaluate("[...document.querySelectorAll('.sq.t-today .delta, #fh-dueToday .delta')].map(e => [e.getAttribute('title'), e.getAttribute('aria-label'), e.getAttribute('role'), e.getAttribute('aria-hidden')])")
     want = ("last snapshot of the previous business day", "Totals definition of Due Today", "includes Waiting items due today")
-    check(len(dt) == 2 and all(t and l and all(w in t and w in l for w in want) and r == "img" and h is None for t, l, r, h in dt) and dt[0][1].startswith("Up +1:"),
-          f"delta chip (square and section header): tooltip + aria-label say it's counted against the last snapshot with the Totals Due Today definition incl. Waiting ({dt})")
+    check(len(dt) == 2 and all(t and all(w in t for w in want) for t, l, r, h in dt), f"delta chip (square and section header): tooltip says it's counted against the last snapshot with the Totals Due Today definition incl. Waiting ({dt})")
+    check(dt[0][2] == "img" and dt[0][3] is None and dt[0][1].startswith("Up 1: ") and all(w in dt[0][1] for w in want), f"square delta chip: role=img, spoken 'Up 1: …' with the explanation ({dt[0][1]!r})")
+    check(dt[1][3] == "true" and dt[1][1] is None and dt[1][2] is None, f"heading delta chip: aria-hidden, keeps its title ({dt[1]})")
+    sp = pg.evaluate("""() => { const e = document.querySelector('.sq.t-today .delta').getAttribute('aria-label'); return e; }""")
+    check(not re.search(r"Up \+|No change 0|−", sp), "spoken delta has no '+', '−' or 'No change 0'")
     sn = pg.evaluate("document.querySelector('.sq.t-today').getAttribute('aria-label')")
     check("Totals definition of Due Today" in sn, f"Due Today square's accessible name includes the delta explanation ({sn!r})")
     check(pg.inner_text(".sq.t-today b") == "3" and pg.inner_text(".sq.t-over b") == "2" and pg.inner_text(".sq.t-wait b") == "2", "square counts: 3 due today, 2 overdue, 2 waiting past due")

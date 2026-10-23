@@ -35,7 +35,7 @@ The home screen (always opens first; `?view=dashboard|workload|print|manager` op
 
 | Square / section | Rule (open tasks; Withhold items show on screen as before) | Snapshot fields |
 |---|---|---|
-| Due Today | `next_date` = today (CT), any list except Waiting on | `tasks[].next_date`, `list`, `status` |
+| Due Today | `next_date` = today (local time: the computer's zone, 00.05.001), any list except Waiting on | `tasks[].next_date`, `list`, `status` |
 | Overdue | `next_date` < today, any list except Waiting on | same |
 | Owed to outside | Follow-ups / Account touches, `not_started`/`in_progress`, due after today or no date, and **outside**: the task has an account, or its person isn't on the internal-people list | `list`, `status`, `account`, `person` |
 | Waiting · past check-back (square "Waiting past due") | Waiting on with `next_date` ≤ today; the due date **is** the check-back date | `list`, `next_date` |

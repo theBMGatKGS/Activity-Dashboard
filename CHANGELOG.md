@@ -6,7 +6,10 @@
 - `app.js`: `checkTz` on every poll (60 s, own timer, also without a folder), window focus and visibility change; on a zone or day change re-reads the snapshot's day fields, recomputes and re-renders without a reload, with a message. As-of stamps, calendar strip, snooze message and sync time use the local zone label instead of a fixed "CT". REV 00.05.001_261023; `sw.js` cache bumped.
 - `index.html`: read-only zone chip `#tz` (role=status) in the top bar; Help → How Do I "…change the time zone?"; calendar help text; revision log.
 - Tests: `rules.test.js` Z1–Z5; new `t25_tz.py` (in `run_all.sh`); T13 revision.
-- Due Today delta chip (▲/▼, in the square and the section header): tooltip and `aria-label` say it is counted against the last snapshot of the previous business day with the Totals definition of Due Today, which includes Waiting items due today (`role="img"`; the header chip is no longer `aria-hidden`). T24 asserts both.
+- Due Today delta chip (▲/▼, in the square and the section header): tooltip says it is counted against the last snapshot of the previous business day with the Totals definition of Due Today, which includes Waiting items due today. The square chip is `role="img"` with an `aria-label` spoken as "Up 1" / "Down 2" / "No change" plus that explanation (also in the square's name); the header chip keeps the tooltip and is `aria-hidden` (QA follow-up). T24 asserts both.
+- QA follow-ups: the top-bar zone chip's `aria-label` names the zone ("Time zone America/Chicago (CT), from this computer's clock"); README Due Today rule says local time; Help → FAQ "Which time zone does the dashboard use?".
+### Known issues (later)
+- **Z-GAP:** `ctIso` moves a wall time inside a spring-forward gap forward by trying the offset from 3 h earlier; that is exact for 1-hour DST gaps (all US zones) but not checked for zones with 30- or 45-minute shifts (e.g. Australia/Lord_Howe 30 min, historical 45-minute zones). Snooze 08:00 is never inside a gap in practice; add tests and a general gap rule later.
 
 ## 00.05.000_261023 (Oct 23 2026)
 - **Daily Focus** home view (`#view-focus`, default; `?view=` deep links). Tabs: Focus · Totals (renamed Dashboard) · Workload · Print sheet · Manager's sheet; View menu gains Daily Focus.

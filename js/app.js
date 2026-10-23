@@ -694,7 +694,7 @@
   function renderTz() {
     const c = $("#tz"); if (!c) return;
     const z = R.getTimeZone(), l = R.tzLabel();
-    c.textContent = l === z ? z : `${l} · ${z}`;
+    c.textContent = l === z ? z : `${l} · ${z}`; c.setAttribute("aria-label", `Time zone ${l === z ? z : `${z} (${l})`}, from this computer's clock`);
     c.title = `Time zone: ${z}, from this computer's clock (no setting). Today, Due Today, Overdue, the 08:00 snooze return, meeting times and the as-of stamp use it. Checked every ${POLL_MS / 1000} s and when the window comes back.`;
     const a = $("#about-tz"); if (a) a.textContent = `${z} (${l}), from this computer's clock`;
   }
@@ -1031,7 +1031,7 @@
     const sq = (key, cls, lab, ic, n, extra, aria) => `<div class="tw"><span class="sqlab l-${cls}" id="lab-${key}">${icon(ic)} ${lab}</span>
       <button class="sq t-${cls}" data-sq="${key}" aria-label="${aria}"><b>${n}</b>${extra || ""}</button></div>`;
     const doneNote = f.doneDueToday ? `; ${f.doneDueToday} marked done here` : "";
-    const squares = sq("dueToday", "today", "Due Today", "i-today", c.dueToday, d ? `<em class="delta" role="img" title="${esc(deltaTip)}" aria-label="${esc(d.text.replace("▲", "Up ").replace("▼−", "Down ").replace("=", "No change "))}: ${esc(deltaTip)}">${esc(d.text)}</em>` : "",
+    const squares = sq("dueToday", "today", "Due Today", "i-today", c.dueToday, d ? `<em class="delta" role="img" title="${esc(deltaTip)}" aria-label="${d.delta > 0 ? "Up " + d.delta : d.delta < 0 ? "Down " + -d.delta : "No change"}: ${esc(deltaTip)}">${esc(d.text)}</em>` : "",
         `Due Today, ${c.dueToday} item${c.dueToday === 1 ? "" : "s"}${doneNote}${d ? ". " + deltaTip.replace(/\.$/, "") : ""}. Go to section`)
       + sq("overdue", "over", "Overdue", "i-over", c.overdue, "", `Overdue, ${c.overdue} item${c.overdue === 1 ? "" : "s"}. Go to section`)
       + sq("waiting", "wait", "Waiting past due", "i-wait", c.waiting, "", `Waiting past due, ${c.waiting} item${c.waiting === 1 ? "" : "s"}. Go to section`)
@@ -1048,7 +1048,7 @@
     const sections = f.sections.map(x => {
       const [title, cls] = SEC[x.key], hero = x.key === "dueToday";
       const rows = x.rows.map(r => focusRow(r, i++, anim)).join("");
-      return `<section class="blk b-${cls}${hero ? " hero" : ""}" id="fs-${x.key}" aria-labelledby="fh-${x.key}"><h2 class="sh" id="fh-${x.key}" tabindex="-1">${title} <span class="badge" aria-label="${x.total} item${x.total === 1 ? "" : "s"}">${x.total}</span>${hero && d ? ` <span class="delta" role="img" title="${esc(deltaTip)}" aria-label="${esc(deltaTip)}">${esc(d.text)}</span>` : ""}</h2>
+      return `<section class="blk b-${cls}${hero ? " hero" : ""}" id="fs-${x.key}" aria-labelledby="fh-${x.key}"><h2 class="sh" id="fh-${x.key}" tabindex="-1">${title} <span class="badge" aria-label="${x.total} item${x.total === 1 ? "" : "s"}">${x.total}</span>${hero && d ? ` <span class="delta" aria-hidden="true" title="${esc(deltaTip)}">${esc(d.text)}</span>` : ""}</h2>
         ${x.total ? `<div role="list">${rows}</div>` : `<div class="none">${EMPTY[x.key]}</div>`}
         ${x.more > 0 ? `<button class="lnk more" data-fmore="${x.key}" aria-label="Show ${x.more} more in ${title}">+${x.more} more</button>` : ""}${S.focusExp.has(x.key) && x.total > 1 ? `<button class="lnk more" data-fless="${x.key}">show fewer</button>` : ""}</section>`;
     }).join("");
