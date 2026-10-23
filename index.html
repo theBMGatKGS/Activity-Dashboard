@@ -6,7 +6,7 @@
 <!-- 00.03.003 CSP: only this site's own scripts and connections (00.04: plus the GitHub API, for the encrypted data hub). style-src also allows inline style ATTRIBUTES, which the UI uses for layout (no script can run from them). -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; connect-src 'self' https://api.github.com; form-action 'none'">
 <title>Activity Dashboard</title>
-<meta name="description" content="Activity Dashboard 00.04.001_261023 — local-first app, encrypted Data folder, installable">
+<meta name="description" content="Activity Dashboard 00.05.000_261023 — local-first app, encrypted Data folder, installable">
 <link rel="icon" href="assets/icon-64.png">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0b0e12">
@@ -15,6 +15,16 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
+<!-- 00.05 status icons (inline SVG, currentColor; every icon sits next to a visible word) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-today" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.5" fill="currentColor"/></symbol>
+  <symbol id="i-over" viewBox="0 0 12 12"><path d="M6 1.2 11.2 10.6H.8z" fill="currentColor"/></symbol>
+  <symbol id="i-wait" viewBox="0 0 12 14"><path d="M2 1h8M2 13h8M3 1c0 4 6 4 6 6s-6 2-6 6M9 1c0 4-6 4-6 6s6 2 6 6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+  <symbol id="i-cold" viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6 1.4a4.6 4.6 0 0 0 0 9.2z" fill="currentColor"/></symbol>
+  <symbol id="i-week" viewBox="0 0 12 12"><path d="M6 .8 11.2 6 6 11.2.8 6z" fill="currentColor"/></symbol>
+  <symbol id="i-travel" viewBox="0 0 12 12"><path d="M11 5.2 7 4.6 4.6.6H3.4l1.2 4L1.9 4.3 1 3H.3l.5 3-.5 3H1l.9-1.3 2.7-.3-1.2 4h1.2L7 7.4l4-.6c.5-.1.8-.4.8-.8s-.3-.7-.8-.8z" fill="currentColor"/></symbol>
+  <symbol id="i-later" viewBox="0 0 12 12"><path d="M3.5 1.5 9 6l-5.5 4.5z" fill="currentColor"/></symbol>
+</svg>
 <header class="top">
   <div class="brand">
     <img id="avatar" class="avatar" src="assets/avatar.png" alt="AD">
@@ -38,37 +48,40 @@
           <button data-act="export" role="menuitem">Export local data…</button>
           <button data-act="import" role="menuitem">Import local data…</button>
           <button data-act="clear" role="menuitem">Clear local data…</button><hr>
+          <button data-act="keyAccounts" role="menuitem">Key accounts &amp; internal people…</button><hr>
+          <button data-act="printFocus" role="menuitem">Print Daily Focus…</button>
           <button data-act="print" role="menuitem">Print my sheet…</button>
           <button data-act="printManager" role="menuitem">Print Manager's sheet…</button>
         </div></div>
       <div class="mitem"><button class="mtop" aria-haspopup="true" aria-expanded="false">View</button>
         <div class="mmenu hidden" role="menu">
-          <button data-act="vDash" role="menuitem">Dashboard</button><button data-act="vWork" role="menuitem">Workload</button>
+          <button data-act="vFocus" role="menuitem">Daily Focus</button><button data-act="vDash" role="menuitem">Totals</button><button data-act="vWork" role="menuitem">Workload</button>
           <button data-act="vPrint" role="menuitem">Print sheet (mine)</button><button data-act="vManager" role="menuitem">Manager's sheet (sanitized)</button>
         </div></div>
       <div class="mitem"><button class="mtop" aria-haspopup="true" aria-expanded="false">Help</button>
         <div class="mmenu hidden" role="menu">
           <button data-act="install" role="menuitem" class="hidden">Install app…</button><button data-act="hQuick" role="menuitem">Quick Start</button><button data-act="hHelp" role="menuitem">Help</button>
-          <button data-act="hHow" role="menuitem">How Do I…</button><button data-act="hFaq" role="menuitem">FAQ</button><hr>
+          <button data-act="hHow" role="menuitem">How Do I…</button><button data-act="hFaq" role="menuitem">FAQ</button><button data-act="hKeys" role="menuitem">Keyboard shortcuts</button><hr>
           <button data-act="hRev" role="menuitem">Revision log</button>
         </div></div>
     </nav>
     <div class="tabs" role="tablist">
-      <button class="tab" role="tab" data-view="dashboard">Dashboard</button><button class="tab" role="tab" data-view="workload">Workload</button>
+      <button class="tab" role="tab" data-view="focus">Focus</button><button class="tab" role="tab" data-view="dashboard">Totals</button><button class="tab" role="tab" data-view="workload">Workload</button>
       <button class="tab" role="tab" data-view="print">Print sheet</button><button class="tab" role="tab" data-view="manager">Manager's sheet</button>
     </div>
   </div>
   <div class="right">
     <span id="exbadge" class="chip example hidden" title="Fictional example data. Real data loads from Dashboard/Data/inbox-snapshot.js.">⚠ EXAMPLE DATA</span>
     <span id="asof" class="chip asof">Loading…</span>
-    <button id="sync" class="chip asof syncchip" data-act="syncNow" type="button">Sync…</button>
+    <button id="sync" class="chip asof syncchip" data-act="syncNow" type="button" aria-live="polite">Sync…</button>
     <span id="machine" class="chip faint"></span>
     <span id="rev" class="rev mono"></span>
   </div>
 </header>
 <div id="banner" class="hidden"></div>
 <main>
-  <section id="view-dashboard" class="view">
+  <section id="view-focus" class="view" aria-label="Daily Focus"></section>
+  <section id="view-dashboard" class="view hidden">
     <div class="rowhead"><span class="cap">Status</span><span class="faint" style="font-size:11px"><span id="trend-since"></span> · <button id="trends-toggle" class="btn" style="padding:0 8px">Show trends ▾</button></span></div>
     <div id="tiles-status" class="tiles s" style="margin-top:4px"></div>
     <div class="cap" style="margin-top:8px">To Do lists</div>
@@ -85,11 +98,13 @@
 </main>
 <div id="toast" class="chip hidden" role="status" style="position:fixed;bottom:16px;right:16px;padding:6px 12px;z-index:95;background:#000;border-color:var(--accent2)"></div>
 
+<div id="undo" class="hidden" role="status" aria-live="polite"></div>
 <div id="help" class="overlay" role="dialog" aria-label="Help">
  <div class="helpbox">
   <div class="helphd"><b>Activity Dashboard · Help</b><button id="help-close" class="btn">Close ✕</button></div>
   <div class="helpbody">
    <section id="help-quick"><h2>Quick Start</h2><ol>
+    <li><b>Daily Focus opens first.</b> Four squares show Due Today (with the change since the previous business day), Overdue, Waiting past due and Going cold. Click a square to jump to its section. Each row has <b>✓ Done</b>, <b>Snooze</b> and <b>Log touch</b>. The other views are tabs: Totals, Workload, Print sheet, Manager's sheet.</li>
     <li>Open <code>index.html</code> in your OneDrive <code>Dashboard</code> folder in <b>Chrome or Edge</b> (Mac: <code>&lt;synced folder&gt;/Dashboard/</code>; work PC: usually <code>C:\Users\&lt;you&gt;\OneDrive\Dashboard\</code>).</li>
     <li>First time on each computer: give it a short name (e.g. <b>mac</b>, <b>workpc</b>), then click the <b>⚠ Connect Data folder</b> chip and pick <code>Dashboard/Data</code>. Allow edit access. Time then syncs both ways through OneDrive.</li>
     <li><b>GitHub sync (iPad, or computers without OneDrive):</b> File → GitHub sync…, enter your private data repo and paste this device's own token (the dialog shows how to make it). Only encrypted files are sent. See Help → FAQ.</li>
@@ -100,10 +115,13 @@
     <li>Calls and chats you didn't schedule: <b>+ Log call</b> (above the list), or write <code>- [log]</code> lines in your notebook log. They load by themselves from <code>Data/notebook-log.js</code> once it's synced, and <b>File → Import notebook log…</b> is the fallback.</li>
     <li>Print: <b>File → Print my sheet…</b> or <b>Print Manager's sheet…</b> (landscape, one page).</li></ol></section>
    <section id="help-help"><h2>Help</h2>
+    <h3>Daily Focus</h3><p>The home screen. <b>Squares</b>: Due Today (the ▲/▼ chip compares the snapshot's Due Today total with the previous business day's latest snapshot; Monday compares with Friday; it ignores items you mark Done here), Overdue, Waiting past due (Waiting on items whose due date, the check-back date, is today or earlier) and Going cold (★ key accounts with no touch in 14+ days). <b>Sections</b>, in order: Due Today, Overdue, Owed to outside (Follow-ups and Account touches you owe someone outside: the task has an account, or its person isn't on your internal-people list), Waiting · past check-back, Going cold · key, Travel ≤ 7 days, then <b>Later this week</b> (collapsed). About 12 rows show in total (<code>focusRowCap</code> in config.js); each section keeps at least one row, Due Today and Overdue at least three, and <b>+n more</b> opens the rest. Open items with no date are counted under the sections, and show a red <b>⚠ no date</b> in Owed to outside and Going cold.</p>
+    <h3>Done, Snooze and Log touch</h3><p><b>✓ Done</b> hides the row here (Undo for 8 seconds) and counts it in "n done here, not yet in To Do" until you tick it off in To Do. The dashboard never changes To Do: when a later snapshot shows the task done, the mark clears itself; if you edited the task in To Do after marking it, To Do wins and the row comes back ("reopened in To Do"). <b>Snooze</b>: Later today (+3 h), Tomorrow 8:00, Next Monday 8:00 or a date you pick; the due date doesn't change, and if To Do re-dates the task the snooze ends. <b>Log touch</b> opens + Log call with the account and person filled in (Phone, 15 min); it counts as a touch for Going cold. Stars, Done and Snooze sync between your computers inside your encrypted time file.</p>
+    <h3>Key accounts and colors</h3><p>☆/★ next to an account stars it as a key account (Focus rows, the Totals list, Workload). File → Key accounts &amp; internal people… lists them all. On first run the dashboard offers to star your T1 accounts. Colors mean urgency only and always come with a word and an icon: ● Today green, ▲ Overdue red, hourglass Waiting amber, ◐ Cooling blue, ◆ This week ivory, ✈ Travel, ▸ Later grey.</p>
     <h3>Totals</h3><p>Status row: Overdue, Due Today, This Week, I Owe, Owed to Me, Going Cold. To Do lists row: Follow-ups, Waiting on, Account touches, Travel. Each tile shows the count, the change from last week (▲ +n / ▼ −n / no change / n/a) and a small trend line. For Overdue, I Owe and Going Cold, a rise is shown in red. Hover a tile for its exact rule. <b>Show trends</b> opens all ten trend lines since the dashboard started.</p>
     <h3>Week over week</h3><p>The current week's latest snapshot is compared with the previous week's latest snapshot. If the previous week has no snapshot, the nearest older week is used and marked *. With only one week of data you'll see n/a.</p>
     <h3>Going Cold</h3><p>An open item with no activity in 14 or more days. Activity is the latest of: its To Do edit, time logged on that item (time on other items, calls or meetings doesn't count for it), or any meeting with its account (a meeting counts for every item on that account).</p>
-    <h3>List</h3><p>Grouped Overdue, Due Today, This Week (tomorrow through Sunday), Next. Each line is <i>Person/account: action · Weekday M/D</i> with its To Do list, account (★ = top tier) and a status word. Click a line for details. ⚡ = quick win (15 min or less). ❄ = going cold. ⊘ Withheld = tagged Withhold in To Do: shown on your own screen and print sheet (marked [WITHHELD]), never on Manager's sheet. Your photo appears on screen only, not on printed sheets.</p>
+    <h3>List</h3><p>Grouped Overdue, Due Today, This Week (tomorrow through Sunday), Next. Each line is <i>Person/account: action · Weekday M/D</i> with its To Do list, account (T1 = top tier, ★ = your key account) and a status word. Click a line for details. ⚡ = quick win (15 min or less). ❄ = going cold. ⊘ Withheld = tagged Withhold in To Do: shown on your own screen and print sheet (marked [WITHHELD]), never on Manager's sheet. Your photo appears on screen only, not on printed sheets.</p>
     <h3>Calendar</h3><p>Today and tomorrow, 7 AM–6 PM CT. Overlapping events get an amber outline and <b>⚠ Conflict</b>.</p>
     <h3>Syncing between your computers</h3><p>Each computer has a name and saves the time you log there in <code>Data/time-&lt;name&gt;.json</code>; it never writes another computer's file. Every computer reads all <code>time-*.json</code> files in Data (OneDrive conflict copies such as <code>time-mac-Laptop2.json</code> too) and merges them the same way, so both show the same totals. If the same entry was changed on both, the later change wins (same second: the alphabetically later machine name). The Data folder is checked every 60 seconds and when you come back to the tab. The sync chip (top right) shows the last sync and the machines seen; <b>⚠</b> means the folder isn't connected, needs your OK again (<b>Reconnect</b>), or a file couldn't be read (hover for which). Keep both computers' clocks set automatically: if a time stamp from a computer is more than 5 minutes in the future the chip shows <b>⚠ Clock ahead</b> and names it. Changes you make after seeing such a stamp still count (the dashboard's clock always moves past the newest stamp it has seen). Browsers without folder access (e.g. Safari): use <b>File → Save my time file…</b> into Data and <b>File → Open time files…</b>.</p>
     <h3>Time and workload</h3><p>Time entries are never written to To Do; they sync between your computers through the Data folder (see above). Meeting time from the calendar <b>counts in the totals right away</b>; there's no pending step. Press <b>Adjust</b> under the meeting (or in Workload) to change minutes, audience, subject or account. <b>Overlapping meetings fill no time</b> until you press <b>Attended?</b> on one; only that meeting counts. Pick another to move the time, or choose <i>Not attended</i> in Adjust. Audience and subject are guessed (marked <span class="guess">guessed</span>, hover for why) from the attendee domains and title: internal domains → Internal - Domestic; international internal domains → Internal - International; a mapped account domain → its audience; otherwise Owner/operator. Subjects come from title words (training/webinar, software/product, design/review/submittal, travel/flight), otherwise Account strategy. When you change an audience, the dashboard remembers it for those domains.</p>
@@ -115,6 +133,10 @@
     <h3>Removing time</h3><p>Removing a meeting's time in Workload is remembered: it doesn't come back on reload. Press <b>Removed · Count again</b> under the meeting to count it again.</p>
     <h3>Example data in this browser</h3><p>While the example is showing, time you log is kept only until you reload, so example entries never mix with your real ones.</p></section>
    <section id="help-howdoi"><h2>How Do I…</h2><input id="howdoi-input" type="search" placeholder="Type to filter, e.g. print, time, stale" aria-label="Filter How Do I">
+    <details><summary>…mark something done from Daily Focus?</summary>Press <b>✓ Done</b> on the row (or <b>d</b> on a focused row). Then tick it off in To Do; until the next snapshot shows it done, the header counts it as "done here, not yet in To Do".</details>
+    <details><summary>…snooze a row?</summary>Press <b>Snooze</b> (or <b>s</b>) and pick Later today, Tomorrow, Next Monday or a date. Use Undo in the message to cancel.</details>
+    <details><summary>…star a key account?</summary>Click ☆ next to the account, or File → Key accounts &amp; internal people….</details>
+    <details><summary>…print Daily Focus?</summary>File → Print Daily Focus… (one landscape page, print colors).</details>
     <details><summary>…see only what's overdue?</summary>Click the <b>Overdue</b> tile. Click it again or press <b>Clear</b> to undo.</details>
     <details><summary>…log 30 minutes on a task?</summary>Press <b>+30</b> on its line. For another amount, or to change audience, subject or account, press <b>⋯</b>.</details>
     <details><summary>…change a meeting's time?</summary>It already counts. Click <b>✓ … Adjust</b> under the meeting (or Adjust in Workload), change it, then <b>Save</b>.</details>
@@ -134,6 +156,10 @@
     <details><summary>…back up or move my time entries?</summary>They're already in <code>Data/time-*.json</code> in OneDrive. <b>File → Export local data…</b> still saves a JSON backup of this browser.</details>
     <details><summary>…see trends?</summary>Press <b>Show trends</b> above the totals.</details></section>
    <section id="help-faq"><h2>FAQ</h2>
+    <h3>Why did a done item come back?</h3><p>The dashboard can't change To Do. A Done mark hides the row until the snapshot catches up. If the task was edited in To Do after you marked it (for example re-dated) and is still open, To Do wins and the row returns with "reopened in To Do".</p>
+    <h3>What counts as a touch?</h3><p>For Going cold · key: an outbound email, call, LinkedIn message or visit in the snapshot, a meeting with the account that has happened (from the calendar, or a proposed meeting once its date has passed), an edit to one of the account's To Do tasks, and any time you log with that account (Log touch, + Log call, a notebook log line). Emails they send you (inbound) don't count. ✓ Done doesn't count either.</p>
+    <h3>What's Owed to outside?</h3><p>Open Follow-ups and Account touches you owe (not started or in progress) that aren't already in Due Today or Overdue, where the task has an account or its person isn't on your internal-people list (File → Key accounts &amp; internal people…).</p>
+    <h3>Does a computer on the older version see my stars?</h3><p>No. A 00.04 copy ignores stars, Done and Snooze marks (it keeps all time entries). Update every computer the same day.</p>
     <h3>How do I encrypt my Data folder?</h3><p>Connect the Data folder, then File → Encryption…. Pick a passphrase (12+ characters) and save the recovery key it shows you somewhere off this computer. Every data file becomes <code>&lt;name&gt;.enc</code> (AES-256-GCM, encrypted in this browser) and a <code>keyring.json</code> holds the key, locked by your passphrase and by the recovery key. Plaintext originals are deleted after their encrypted copies are checked, unless you untick that.</p>
     <h3>I forgot my passphrase.</h3><p>On the unlock screen choose Use recovery key, enter it and set a new passphrase. Without the passphrase or the recovery key the data can't be read by anyone, including you.</p>
     <h3>Is the browser's own cache encrypted?</h3><p>Yes, once the Data folder is encrypted (00.03.001): the copy this browser keeps is stored encrypted with the same key, and nothing readable is cached while the app is locked. Exports (File → Export…) are plain on purpose and ask first.</p>
@@ -158,7 +184,10 @@
     <h3>Why didn't my overlapping meetings add time?</h3><p>Overlaps fill nothing until you mark the one you attended.</p>
     <h3>Why does it read notebook-log.js instead of notebook-log.md?</h3><p>A page opened as a local file can load a script but can't read a .md file by itself. So the box converts the <code>- [log]</code> lines into <code>notebook-log.js</code>. If that file isn't there, use File → Import notebook log….</p>
     <h3>Will my time entries survive a browser cache clear?</h3><p>Yes, if the Data folder was connected: they're in <code>Data/time-&lt;machine&gt;.json</code>. You'll need to name the computer (use the same name) and reconnect the folder.</p></section>
+   <section id="help-keys"><h2>Keyboard shortcuts</h2><p>On Daily Focus (off while you type in a field or a dialog is open):</p><table><tr><th>Key</th><th>Does</th></tr>
+    <tr><td><code>j</code> / <code>k</code></td><td>Next / previous row</td></tr><tr><td><code>d</code></td><td>✓ Done on the focused row</td></tr><tr><td><code>s</code></td><td>Snooze menu (arrow keys, Enter, Esc)</td></tr><tr><td><code>t</code></td><td>Log touch</td></tr><tr><td><code>Tab</code></td><td>Squares → meetings → sections; Enter on a square jumps to its section</td></tr></table></section>
    <section id="help-rev"><h2>Revision log</h2><table><tr><th>Revision</th><th>Date</th><th>Changes</th></tr>
+    <tr><td class="mono">00.05.000_261023</td><td>Oct 23 2026</td><td>Daily Focus is the new home screen: four squares (Due Today with the change since the previous business day, Overdue, Waiting past due, Going cold), today's next meetings, and sections Due Today, Overdue, Owed to outside, Waiting past check-back, Going cold (key accounts), Travel within 7 days and Later this week, capped at about 12 rows with +n more. Row actions ✓ Done, Snooze and Log touch; key-account stars (offer to star T1 accounts on first run); internal-people list. Stars, Done and Snooze are synced as encrypted events in each computer's time file; To Do stays the source of truth. Print Daily Focus (one landscape page, print colors). Self-hosted fonts, keyboard shortcuts j/k and d/s/t, reduced motion honored. The old Dashboard tab is now Totals.</td></tr>
     <tr><td class="mono">00.04.001_261023</td><td>Oct 23 2026</td><td>Fix: with GitHub sync on, an older copy on GitHub could replace a newer snapshot in the Data folder. Now both copies are decrypted and checked, and the newer valid one wins (snapshot date, time-file date, or when the file last changed). A snapshot that fails its checks (for example a wrong source) is never encrypted, uploaded or used to replace a good one; a bad copy on GitHub is replaced by the good local one. Whatever the folder loses is kept as name.prev.enc.</td></tr>
     <tr><td class="mono">00.04.000_261021</td><td>Oct 21 2026</td><td>GitHub sync: File → GitHub sync… connects a PRIVATE GitHub repo that holds only encrypted files (.enc) and the keyring. Each computer uses its own fine-grained access token (one repo, Contents read/write, 1-year expiry), stored encrypted under your passphrase key. With a Data folder connected, the folder stays the backup and encrypted files are copied both ways; without one (iPad Safari), GitHub is the store. Plaintext is refused before anything is sent. Same merge rules. The page refuses to run inside another site's frame. Installed name: Activity Dashboard.</td></tr>
     <tr><td class="mono">00.03.003_261021</td><td>Oct 21 2026</td><td>Security policy (CSP): the page runs only its own scripts and connects only to its own address, so injected or third-party code can't run or send data out. Keyrings must use exactly 600,000 iterations. Deleting the older version's copy now waits if another tab still has it open and is confirmed on the next launch. Test fixes.</td></tr>

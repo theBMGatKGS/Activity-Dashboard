@@ -10,6 +10,7 @@ window.DASH_CONFIG = {
   examplePath: "examples/example-snapshot.js",
   staleHours: 24,
   holdHours: 24,   // 00.02: time stamps more than this many hours in the future are held (not applied) and flagged
+  focusRowCap: 12, // 00.05: about this many rows on Daily Focus (each non-empty section keeps ≥1, Due Today and Overdue ≥3; "+n more" shows the rest)
   pollSeconds: 60, // 00.02: how often the connected Data folder is checked for new time files, snapshot and notebook log
   // 00.03: names an older build used, for the one-time migration. Keep real values in config.local.js (git-ignored), never here.
   legacyDbNames: [],      // older IndexedDB database names to copy the browser cache from

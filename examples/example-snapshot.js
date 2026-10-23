@@ -230,6 +230,51 @@ window.DASH_EXAMPLE_SNAPSHOT = {
    "next_date": "2026-10-14",
    "status": "done",
    "last_modified": "2026-10-14T09:00:00-05:00",
+   "withhold": false
+  },
+  {
+   "id": "EX-21",
+   "list": "Follow-ups",
+   "title": "send NFPA 318 Fab Ceiling spec",
+   "account": "Account B",
+   "person": "Alex R.",
+   "next_date": "2026-10-19",
+   "status": "in_progress",
+   "last_modified": "2026-10-16T09:00:00-05:00",
+   "withhold": false,
+   "est_minutes": 30
+  },
+  {
+   "id": "EX-22",
+   "list": "Waiting on",
+   "title": "return signed PO",
+   "account": "Acme Fab",
+   "person": "Priya M.",
+   "next_date": "2026-10-16",
+   "status": "waiting",
+   "last_modified": "2026-10-09T09:00:00-05:00",
+   "withhold": false
+  },
+  {
+   "id": "EX-23",
+   "list": "Follow-ups",
+   "title": "send meeting invite",
+   "account": "Account E",
+   "person": "Dana L.",
+   "next_date": null,
+   "status": "not_started",
+   "last_modified": "2026-10-15T09:00:00-05:00",
+   "withhold": false
+  },
+  {
+   "id": "EX-24",
+   "list": "Account touches",
+   "title": "reconnect after reorg",
+   "account": "Account F",
+   "person": null,
+   "next_date": null,
+   "status": "not_started",
+   "last_modified": "2026-09-08T09:00:00-05:00",
    "withhold": false,
    "completed_at": "2026-10-14T15:00:00-05:00"
   }
@@ -297,6 +342,13 @@ window.DASH_EXAMPLE_SNAPSHOT = {
    "domains": [
     "globex.example"
    ]
+  },
+  {
+   "name": "Account F",
+   "tier": "T1",
+   "domains": [
+    "account-f.example"
+   ]
   }
  ],
  "touches": [
@@ -318,6 +370,12 @@ window.DASH_EXAMPLE_SNAPSHOT = {
    "direction": "outbound",
    "kind": "meeting_proposed",
    "meeting_date": null
+  },
+  {
+   "account": "Account F",
+   "date": "2026-10-13",
+   "direction": "inbound",
+   "kind": "email"
   }
  ],
  "calendar": [
@@ -465,6 +523,21 @@ window.DASH_EXAMPLE_SNAPSHOT = {
    "totals": {
     "overdue": 1,
     "dueToday": 4,
+    "thisWeek": 10,
+    "iOwe": 6,
+    "owedToMe": 5,
+    "goingCold": 3,
+    "followUps": 7,
+    "waitingOn": 5,
+    "accountTouches": 8,
+    "travel": 0
+   }
+  },
+  {
+   "generated_at": "2026-10-16T07:30:00-05:00",
+   "totals": {
+    "overdue": 1,
+    "dueToday": 2,
     "thisWeek": 10,
     "iOwe": 6,
     "owedToMe": 5,

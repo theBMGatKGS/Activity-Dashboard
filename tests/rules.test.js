@@ -5,14 +5,14 @@ const ex = JSON.parse(fs.readFileSync(path.join(__dirname, "../examples/example-
 const clone = o => JSON.parse(JSON.stringify(o)); let n = 0, fail = 0;
 function t(name, fn) { n++; try { fn(); console.log("PASS", name); } catch (e) { fail++; console.log("FAIL", name, "-", e.message); } }
 const today = "2026-10-19", s = R.readSnapshot(ex), ctx = { today, calendar: s.calendar, timeEntries: [] };
-t("U1 example snapshot loads with no rejects", () => { assert.strictEqual(s.items.length, 20); assert.deepStrictEqual(s.rejects, []); assert.ok(s.example); });
+t("U1 example snapshot loads with no rejects", () => { assert.strictEqual(s.items.length, 24); assert.deepStrictEqual(s.rejects, []); assert.ok(s.example); });
 t("U2 schema_version and generated_at enforced", () => {
   assert.throws(() => R.readSnapshot({ ...clone(ex), schema_version: 2 }), /schema_version/);
   assert.throws(() => R.readSnapshot({ ...clone(ex), generated_at: "2026-10-19 07:30" }), /generated_at/); });
 t("U3 '@' in attendee_domains rejects whole snapshot (domains only)", () => { const b = clone(ex); b.calendar[0].attendee_domains = ["sam@contoso.example"]; assert.throws(() => R.readSnapshot(b), /email/); });
 t("U3b '@' in person rejects whole snapshot", () => { const b = clone(ex); b.tasks[0].person = "a@b.example"; assert.throws(() => R.readSnapshot(b), /email/); });
 t("U4 bad rows rejected with reason, rest load", () => { const b = clone(ex); b.tasks[0].list = "Someday"; b.tasks[1].withhold = "yes"; b.tasks[2].status = "maybe"; b.tasks[3].account = "Nobody";
-  const r = R.readSnapshot(b); assert.strictEqual(r.items.length, 16); assert.strictEqual(r.rejects.length, 4); assert.ok(r.rejects.some(x => /withhold must be true or false/.test(x))); });
+  const r = R.readSnapshot(b); assert.strictEqual(r.items.length, 20); assert.strictEqual(r.rejects.length, 4); assert.ok(r.rejects.some(x => /withhold must be true or false/.test(x))); });
 t("U5 status words and groups", () => {
   const by = id => s.items.find(i => i.id === id);
   assert.strictEqual(R.statusWord(by("EX-1"), today), "Overdue"); assert.strictEqual(R.statusWord(by("EX-2"), today), "Today");
@@ -21,7 +21,7 @@ t("U5 status words and groups", () => {
   assert.strictEqual(R.statusWord(by("EX-20"), today), "Done"); assert.strictEqual(R.group(by("EX-2"), today), "Due Today");
   assert.strictEqual(R.dateWord("2026-10-25", "2026-10-25"), "Today"); assert.strictEqual(R.dateWord("2026-10-26", "2026-10-25"), "Next"); });
 t("U6 totals match tooltips", () => { const x = R.totals(s.items, ctx);
-  assert.deepStrictEqual(x, { overdue: 3, dueToday: 2, thisWeek: 9, iOwe: 12, owedToMe: 5, goingCold: 4, followUps: 8, waitingOn: 5, accountTouches: 4, travel: 2 }); });
+  assert.deepStrictEqual(x, { overdue: 4, dueToday: 3, thisWeek: 9, iOwe: 15, owedToMe: 6, goingCold: 5, followUps: 10, waitingOn: 6, accountTouches: 5, travel: 2 }); });
 t("U7 Going Cold: flat 14 days; activity = To Do edit, time entry, account meeting", () => {
   const it = { id: "x", status: "not_started", account: "Northwind DC", lastModified: "2026-10-01" };
   assert.ok(R.isCold(it, { today, calendar: [], timeEntries: [] }));
@@ -53,7 +53,7 @@ t("U9 calendar conflicts and domain-only guesses", () => {
 t("U10 line under 70 chars; Manager excludes withheld + done; workload sums", () => {
   s.items.forEach(it => assert.ok(R.formatLine(it).length <= 69, R.formatLine(it)));
   assert.ok(R.formatLine({ person: "Jordan P.", title: "x".repeat(90), due: "2026-10-19" }).endsWith("… · Mon 10/19"));
-  const tm = R.managerItems(s.items); assert.ok(!tm.some(i => i.withhold || i.status === "done")); assert.strictEqual(tm.length, 17);
+  const tm = R.managerItems(s.items); assert.ok(!tm.some(i => i.withhold || i.status === "done")); assert.strictEqual(tm.length, 21);
   const wl = R.workload([{ date: "2026-10-19", minutes: 30, audience: "Owner/operator", subject: "Account strategy", account: "Account B", source: "manual", confirmed: true },
     { date: "2026-10-20", minutes: 60, audience: "Owner/operator", subject: "Training/education", account: "Account A", source: "calendar", confirmed: true },
     { date: "2026-10-20", minutes: 45, source: "interaction", kind: "Phone", confirmed: true }, { date: "2026-10-27", minutes: 99, confirmed: true, source: "manual" }], "2026-10-19");
@@ -121,7 +121,7 @@ t("U20 F16 source and touches enforced", () => {
     { account: "Nobody", date: "2026-10-18", direction: "inbound", kind: "email" }, { account: "Account B", date: "2026-02-30", direction: "inbound", kind: "email" },
     { account: "Account B", date: "2026-10-18", direction: "inbound", kind: "email", meeting_date: "2026-10-30" });
   b.tasks[0].importance = "urgent";
-  const r = R.readSnapshot(b); assert.strictEqual(r.touches.length, 3); assert.strictEqual(r.rejects.length, 6, r.rejects.join("; ")); });
+  const r = R.readSnapshot(b); assert.strictEqual(r.touches.length, 4); assert.strictEqual(r.rejects.length, 6, r.rejects.join("; ")); });
 t("U21 R1 inserting/deleting lines above and re-importing adds nothing", () => {
   const names = s.accounts.map(a => a.name), txt = fs.readFileSync(path.join(__dirname, "fixtures/example-notebook-log.md"), "utf8");
   const first = R.parseNotebookLog(txt, names).entries, store = new Set(first.map(e => e.id));
@@ -158,4 +158,101 @@ t("U24 one-time migration: old line-number ids merge into current ids (5 stay 5)
   assert.deepStrictEqual(stored.filter(e => e.origin === "notebook-log").map(e => e.id).sort(), parsed.map(e => e.id).sort());
   assert.ok(stored.every(e => e.origin !== "notebook-log" || (e.idv === 2 && !e.legacy && e.audience === "Engineer of record")), "re-keyed, user edits kept");
   const again = R.mergeLog(stored, R.parseNotebookLog(txt, names).entries); assert.deepStrictEqual([again.added, again.merged, again.dup], [0, 0, 5]); });
+
+// ---------- 00.05 Daily Focus (F-series) ----------
+const NOWI = "2026-10-19T13:00:00.000Z", fctx = { today, nowIso: NOWI, timeEntries: [] };
+const T1 = () => { const f = {}; s.accounts.filter(a => a.tier === "T1").forEach(a => f["star:" + a.name] = { on: true }); return f; };
+const FS = (flags, opts, snap, c) => { const sn = snap || s, cx = c || fctx; return R.focusSections(sn, cx, R.overlays(flags || {}, sn, cx.nowIso), Object.assign({ history: sn.history }, opts || {})); };
+const sec = (f, k) => f.sections.find(x => x.key === k);
+const mk = (tasks, extra) => R.readSnapshot(Object.assign({ schema_version: 1, generated_at: "2026-10-19T07:30:00-05:00", source: "inbox-export",
+  accounts: [{ name: "Acct K", tier: "T1" }, { name: "Acct L", tier: "other" }], calendar: [], touches: [], totals_history: [],
+  tasks: tasks.map((t, i) => Object.assign({ id: "S-" + i, list: "Follow-ups", title: "task " + i, account: null, person: null, next_date: null, status: "not_started", last_modified: "2026-10-18T09:00:00-05:00", withhold: false }, t)) }, extra || {}));
+t("F1 sections on the example (T1 starred): order and rules", () => {
+  const f = FS(T1()); assert.deepStrictEqual(f.sections.map(x => x.key), ["dueToday", "overdue", "owed", "waiting", "cold", "travel"]);
+  assert.deepStrictEqual(sec(f, "dueToday").rows.map(r => r.id), ["EX-2", "EX-21", "EX-7"]);
+  assert.deepStrictEqual(sec(f, "overdue").rows.map(r => r.id), ["EX-14", "EX-1"]);
+  assert.deepStrictEqual(sec(f, "waiting").rows.map(r => r.id).concat(sec(f, "waiting").more), ["EX-22", 1]);
+  assert.ok(sec(f, "waiting").total === 2 && f.counts.waiting === 2, "EX-9 and EX-22 are past check-back; Waiting with no date isn't");
+  assert.deepStrictEqual(f.counts, { dueToday: 3, overdue: 2, waiting: 2, cold: 1 });
+  assert.ok(sec(f, "owed").total >= 8 && !sec(f, "owed").rows.some(r => r.it.due && r.it.due <= today), "owed: due after today or no date only");
+  assert.deepStrictEqual(f.noDate.map(i => i.id), ["EX-13"]); assert.deepStrictEqual(f.later.map(r => r.id), ["EX-10", "EX-11"]); });
+t("F2 travel within 7 days (task + travel-looking calendar event), edge at today+7", () => {
+  const a = mk([{ list: "Travel", next_date: "2026-10-26" }, { list: "Travel", next_date: "2026-10-27" }, { list: "Travel", next_date: "2026-10-20" }]);
+  assert.deepStrictEqual(sec(FS({}, {}, a), "travel").rows.map(r => r.id), ["S-2", "S-0"]);
+  assert.deepStrictEqual(sec(FS(T1()), "travel").rows.concat([]).map(r => r.id).slice(0, 1), ["cal:CAL-5"]); });
+t("F3 boundaries: today / tomorrow / Sunday; Sunday today has no 'later'", () => {
+  const a = mk([{ next_date: "2026-10-19" }, { next_date: "2026-10-20", account: null }, { next_date: "2026-10-25" }, { next_date: "2026-10-26" }]);
+  const f = FS({}, {}, a); assert.deepStrictEqual(sec(f, "dueToday").rows.map(r => r.id), ["S-0"]); assert.deepStrictEqual(f.later.map(r => r.id), ["S-1", "S-2"]);
+  const f2 = FS({}, {}, a, { today: "2026-10-25", nowIso: "2026-10-25T15:00:00Z", timeEntries: [] }); assert.deepStrictEqual(sec(f2, "dueToday").rows.map(r => r.id), ["S-2"]); assert.deepStrictEqual(f2.later, []); });
+t("F4 CST/CDT change: ctIso and snooze times stay 08:00 CT across Nov 1", () => {
+  assert.strictEqual(R.ctIso("2026-10-31", "08:00"), "2026-10-31T13:00:00.000Z"); assert.strictEqual(R.ctIso("2026-11-02", "08:00"), "2026-11-02T14:00:00.000Z");
+  assert.strictEqual(R.snoozeUntil("tomorrow", "2026-10-31T20:00:00Z"), "2026-11-01T14:00:00.000Z");
+  assert.strictEqual(R.snoozeUntil("monday", "2026-10-30T15:00:00Z"), "2026-11-02T14:00:00.000Z");
+  assert.strictEqual(R.snoozeUntil("monday", "2026-10-25T15:00:00Z"), "2026-10-26T13:00:00.000Z", "Sunday -> next day");
+  assert.strictEqual(R.snoozeUntil("later", NOWI), "2026-10-19T16:00:00.000Z"); assert.strictEqual(R.snoozeUntil("date", NOWI, "2026-10-28"), "2026-10-28T13:00:00.000Z");
+  assert.strictEqual(R.snoozeUntil("date", NOWI, "2026-02-30"), null); });
+t("F5 key cold: 13 / 14 / 15 days; inbound doesn't count; meeting_proposed only once its date has passed", () => {
+  const base = d => mk([{ account: "Acct K", last_modified: d + "T09:00:00-05:00" }]);
+  const cold = (sn, c) => R.keyCold("Acct K", sn, c || fctx);
+  assert.ok(!cold(base("2026-10-06")).cold, "13 days"); assert.ok(cold(base("2026-10-05")).cold, "14 days"); assert.ok(cold(base("2026-10-04")).cold, "15 days");
+  const old = "2026-09-01";
+  const w = tc => { const sn = base(old); sn.touches = tc; return cold(sn); };
+  assert.ok(w([{ account: "Acct K", date: "2026-10-18", direction: "inbound", kind: "email" }]).cold, "Q5: inbound is not a touch");
+  assert.ok(!w([{ account: "Acct K", date: "2026-10-18", direction: "outbound", kind: "email" }]).cold, "outbound is a touch");
+  assert.ok(w([{ account: "Acct K", date: "2026-10-18", direction: "outbound", kind: "meeting_proposed", meeting_date: null }]).cold, "proposed meeting without a date isn't a touch");
+  assert.ok(w([{ account: "Acct K", date: "2026-10-10", direction: "outbound", kind: "meeting_proposed", meeting_date: "2026-10-28" }]).cold, "future meeting date isn't a touch yet");
+  assert.ok(!w([{ account: "Acct K", date: "2026-10-10", direction: "inbound", kind: "meeting_proposed", meeting_date: "2026-10-16" }]).cold, "a proposed meeting that has happened counts");
+  assert.ok(!cold(base(old), Object.assign({}, fctx, { timeEntries: [{ account: "Acct K", date: "2026-10-17", minutes: 15 }] })).cold, "logged touch (time entry with the account) counts");
+  const cal = base(old); cal.calendar = [{ id: "c", account: "Acct K", start: "2026-10-12T10:00:00-05:00", end: "2026-10-12T11:00:00-05:00" }]; assert.ok(!cold(cal).cold, "past meeting counts");
+  assert.strictEqual(cold(base("2026-09-08")).days, 41); });
+t("F6 going cold rows: starred accounts only; oldest open task, else a 'Log a touch' row", () => {
+  const a = mk([{ account: "Acct K", last_modified: "2026-09-01T09:00:00-05:00", id: "K1" }, { account: "Acct K", last_modified: "2026-09-02T09:00:00-05:00", id: "K2", next_date: "2026-10-30" }, { account: "Acct L", last_modified: "2026-09-01T09:00:00-05:00", id: "L1" }]);
+  assert.deepStrictEqual(sec(FS({}, {}, a), "cold").rows, [], "nothing starred");
+  const f = FS({ "star:Acct K": { on: true } }, {}, a); assert.strictEqual(f.counts.cold, 1);
+  const r = sec(f, "cold").rows[0]; assert.ok(r.synthetic && r.account === "Acct K", "K1/K2 already shown in Owed to outside -> synthetic row");
+  const f2 = FS({ "star:Acct K": { on: true }, "star:Acct L": { on: false } }, { }, mk([{ account: "Acct K", last_modified: "2026-09-01T09:00:00-05:00", list: "Waiting on", status: "waiting", next_date: "2026-11-30" }]));
+  assert.strictEqual(sec(f2, "cold").rows[0].id, "S-0", "an open task not shown elsewhere is the cold row");
+  const f3 = FS({ "star:Acct K": { on: true } }, {}, mk([])); assert.ok(sec(f3, "cold").rows[0].synthetic && sec(f3, "cold").rows[0].when.nodate, "no open task -> no date flag"); });
+t("F7 row cap: >=1 per non-empty section, Due Today/Overdue >=3, total 12, +n more, expand", () => {
+  const many = []; for (let i = 0; i < 6; i++) many.push({ next_date: "2026-10-19" }); for (let i = 0; i < 6; i++) many.push({ next_date: "2026-10-12" });
+  for (let i = 0; i < 6; i++) many.push({ account: "Acct L", next_date: "2026-10-28" }); many.push({ list: "Waiting on", status: "waiting", next_date: "2026-10-10" }); many.push({ list: "Travel", next_date: "2026-10-21" });
+  const f = FS({}, {}, mk(many)), n = k => sec(f, k).rows.length;
+  assert.ok(n("dueToday") >= 3 && n("overdue") >= 3 && n("owed") >= 1 && n("waiting") === 1 && n("travel") === 1);
+  assert.strictEqual(f.sections.reduce((a, x) => a + x.rows.length, 0), 12); assert.strictEqual(sec(f, "owed").more, sec(f, "owed").total - n("owed"));
+  assert.deepStrictEqual([n("dueToday"), n("overdue"), n("owed")], [6, 3, 1]);
+  const f2 = FS({}, { expanded: new Set(["owed"]) }, mk(many)); assert.strictEqual(sec(f2, "owed").rows.length, 6);
+  const f3 = FS({}, { cap: 4 }, mk(many)); assert.deepStrictEqual(f3.sections.map(x => x.rows.length), [3, 3, 1, 1, 0, 1], "minimums win over a small cap"); });
+t("F8 delta: previous business day, Monday -> Friday, none -> hidden, snapshot-only (ignores dashboard Done)", () => {
+  const h = d => ({ generated_at: d + "T07:30:00-05:00", totals: { dueToday: 1 } });
+  assert.strictEqual(R.prevBusinessDay("2026-10-19"), "2026-10-16"); assert.strictEqual(R.prevBusinessDay("2026-10-21"), "2026-10-20");
+  assert.deepStrictEqual(R.focusDelta([h("2026-10-16")], "2026-10-19", 3), { delta: 2, text: "▲+2", basisDay: "2026-10-16" });
+  assert.strictEqual(R.focusDelta([h("2026-10-15")], "2026-10-19", 3), null, "Thursday isn't the previous business day for Monday");
+  assert.strictEqual(R.focusDelta([], "2026-10-19", 3), null); assert.strictEqual(R.focusDelta([h("2026-10-16")], "2026-10-19", 0).text, "▼−1"); assert.strictEqual(R.focusDelta([h("2026-10-16")], "2026-10-19", 1).text, "=0");
+  const f = FS(Object.assign(T1(), { "done:EX-2": { on: true, at: NOWI, snapAt: s.generatedAt } }));
+  assert.strictEqual(f.counts.dueToday, 2, "square shows what's left"); assert.strictEqual(f.delta.text, "▲+1", "delta unchanged by Done"); assert.strictEqual(f.doneDueToday, 1); assert.strictEqual(f.doneHere, 1); });
+t("F9 no-date flag: owed and cold rows carry it; other undated items go to the footer", () => {
+  const f = FS(T1(), { expanded: new Set(["owed"]) }); const ow = sec(f, "owed").rows.find(r => r.id === "EX-23"); assert.strictEqual(ow.when.kind, "nodate");
+  assert.ok(sec(f, "cold").rows[0].when.nodate); assert.ok(f.noDate.every(i => !i.due)); });
+t("F10 Withhold rows show on the Focus screen; Manager items still exclude them", () => {
+  const f = FS(T1(), { expanded: new Set(["owed"]) }); assert.ok(sec(f, "owed").rows.some(r => r.it.withhold));
+  assert.ok(!R.managerItems(s.items).some(i => i.withhold)); });
+t("F11 G1 outside: account, or person not on the internal list", () => {
+  assert.ok(R.isOutside({ account: "Acct L", person: "Sam K." }, new Set(["sam k."])), "account wins");
+  assert.ok(R.isOutside({ account: null, person: "Sam K." }, new Set()));
+  assert.ok(!R.isOutside({ account: null, person: "Sam K." }, new Set(["sam k."])));
+  assert.ok(!R.isOutside({ account: null, person: "Me" }) && !R.isOutside({ account: null, person: null }));
+  const a = mk([{ person: "Sam K.", next_date: "2026-10-22" }]); assert.strictEqual(sec(FS({}, {}, a), "owed").total, 1); assert.strictEqual(sec(FS({ "internal:sam k.": { on: true } }, {}, a), "owed").total, 0); });
+t("F12 overlays: Done hides until To Do catches up; To Do edit after Done reopens; snooze until/re-date", () => {
+  const a = mk([{ id: "D1", next_date: "2026-10-19" }]);
+  let ov = R.overlays({ "done:D1": { on: true, at: "2026-10-19T14:00:00Z", snapAt: a.generatedAt } }, a, NOWI); assert.ok(ov.hidden.has("D1")); assert.strictEqual(ov.doneHere.length, 1);
+  const later = mk([{ id: "D1", next_date: "2026-10-19", last_modified: "2026-10-19T10:00:00-05:00" }], { generated_at: "2026-10-20T07:30:00-05:00" });
+  ov = R.overlays({ "done:D1": { on: true, at: "2026-10-19T14:00:00Z", snapAt: a.generatedAt } }, later, NOWI); assert.ok(!ov.hidden.has("D1")); assert.ok(ov.reopened.has("D1"), "edited in To Do after the Done -> To Do wins");
+  const same = mk([{ id: "D1", next_date: "2026-10-19" }], { generated_at: "2026-10-21T07:30:00-05:00" });
+  ov = R.overlays({ "done:D1": { on: true, at: "2026-10-19T14:00:00Z", snapAt: a.generatedAt } }, same, NOWI); assert.ok(ov.hidden.has("D1"), "unchanged in To Do -> stays hidden (never auto-expires)");
+  const closed = mk([{ id: "D1", status: "done" }]); ov = R.overlays({ "done:D1": { on: true, at: "x", snapAt: a.generatedAt } }, closed, NOWI); assert.deepStrictEqual(ov.cleared, ["done:D1"]); assert.strictEqual(ov.doneHere.length, 0);
+  assert.ok(!R.overlays({ "done:D1": { on: false, at: "x" } }, a, NOWI).hidden.has("D1"), "Undo = on:false");
+  ov = R.overlays({ "snooze:D1": { on: true, until: "2026-10-20T13:00:00Z", due: "2026-10-19" } }, a, NOWI); assert.ok(ov.snoozed.has("D1"));
+  assert.ok(!R.overlays({ "snooze:D1": { on: true, until: "2026-10-20T13:00:00Z", due: "2026-10-19" } }, a, "2026-10-20T13:00:01Z").snoozed.has("D1"), "back after until");
+  assert.deepStrictEqual(R.overlays({ "snooze:D1": { on: true, until: "2026-10-20T13:00:00Z", due: "2026-10-18" } }, a, NOWI).cleared, ["snooze:D1"], "re-dated in To Do -> snooze cleared");
+  const f = FS({ "snooze:D1": { on: true, until: "2026-10-20T13:00:00Z", due: "2026-10-19" } }, {}, a); assert.strictEqual(f.counts.dueToday, 0); assert.deepStrictEqual(f.later.map(r => r.id), ["D1"], "snoozed into this week -> Later this week"); });
 console.log(`\n${n - fail}/${n} passed`); process.exit(fail ? 1 : 0);

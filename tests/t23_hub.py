@@ -54,7 +54,7 @@ def handle(route):
         HUB[name] = base64.b64decode(body["content"]); STATE["commits"] += 1; return reply(201, {"content": {"name": name, "sha": gsha(HUB[name]), "size": len(HUB[name])}})
     if r.method == "DELETE": HUB.pop(name, None); STATE["commits"] += 1; return reply(200, {})
     reply(405, {})
-Q = "?now=2026-10-19T08:00:00-05:00&machine="
+Q = "?now=2026-10-19T08:00:00-05:00&view=dashboard&machine="
 TOT = "JSON.stringify(DASH.app.state.entries.map(e => [e.id, e.minutes]).sort())"
 RAW = """new Promise(res => { const r = indexedDB.open('activity-dashboard'); r.onsuccess = () => { const out = {}, t = r.result.transaction('kv'), c = t.objectStore('kv').openCursor();
   c.onsuccess = () => { const x = c.result; if (x) { out[x.key] = x.value; x.continue(); } };
@@ -115,6 +115,11 @@ with sync_playwright() as p:
     pc.evaluate("(() => { const S = DASH.app.state; S.entries = S.entries.filter(e => e.id !== 'i-ipad-1'); return DASH.app.commit(); })()"); pc.evaluate("DASH.app.flush()")
     ipad.evaluate("DASH.app.syncNow()")
     check(ipad.evaluate("!DASH.app.state.entries.some(e => e.id === 'i-ipad-1')"), "sync: removal on the PC wins on the iPad (rules unchanged)")
+    # 00.05: key-account star and a Done mark travel through the hub inside the encrypted time files
+    pc.evaluate("DASH.app.setFlag('star:Account C', { on: true })"); pc.evaluate("DASH.app.flush()"); ipad.evaluate("DASH.app.syncNow()")
+    check(ipad.evaluate("!!(DASH.app.state.flags['star:Account C'] && DASH.app.state.flags['star:Account C'].on)") and hub_clean() and paths_opaque(), "00.05 star made on the PC reaches the iPad via the hub; hub still holds nothing readable")
+    ipad.evaluate("DASH.app.setFlag('done:EX-2', { on: true, at: '2026-10-19T13:00:00.000Z', snapAt: DASH.app.state.snap.generatedAt })"); ipad.evaluate("DASH.app.flush()"); pc.evaluate("DASH.app.syncNow()")
+    check(pc.evaluate("DASH.app.focusModel().ov.hidden.has('EX-2')") and hub_clean() and "Account C" not in (data / "time-workpc.json.enc").read_text(), "00.05 Done on the iPad hides the row on the PC; folder and hub copies stay encrypted")
     local = sorted(x for x in os.listdir(data) if not x.endswith(".crswap") and ".prev." not in x)
     check(local == ["inbox-snapshot.json.enc", "keyring.json", "time-ipad.json.enc", "time-workpc.json.enc"] and len(HUB) == len(local), f"backup: the PC folder holds the same encrypted files as the hub ({local})")
     # N1 tamper: a well-formed but damaged snapshot envelope on the hub must not replace the PC's backup copy

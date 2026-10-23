@@ -30,7 +30,7 @@ def fs_for(m):
         if op == "write":
             writes[m].append(name); t = d / (name + ".crswap"); t.write_text(text); os.replace(t, p); return True
     return fs
-Q = "?now=2026-10-19T08:00:00-05:00&machine="
+Q = "?now=2026-10-19T08:00:00-05:00&view=dashboard&machine="
 TOT = """(() => { const R = DASH.rules, S = DASH.app.state; const w = R.workload(S.entries, R.mondayOf(S.today));
   return JSON.stringify({ entries: S.entries.map(e => [e.id, e.minutes, e.audience, e.subject]), w }); })()"""
 with sync_playwright() as p:

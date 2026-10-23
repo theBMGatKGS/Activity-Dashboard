@@ -21,7 +21,7 @@ check(f'REV = "{rev}"' in sw, f"service worker cache is versioned with the app r
 class Q(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a): pass
 srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Q, directory=str(app))); threading.Thread(target=srv.serve_forever, daemon=True).start()
-url = f"http://127.0.0.1:{srv.server_address[1]}/index.html?now=2026-10-19T08:00:00-05:00&machine=mac"
+url = f"http://127.0.0.1:{srv.server_address[1]}/index.html?now=2026-10-19T08:00:00-05:00&view=dashboard&machine=mac"
 errors = []
 with sync_playwright() as p:
     b = p.chromium.launch(); ctx = b.new_context(viewport={"width": 1280, "height": 860}); pg = ctx.new_page(); pg.on("pageerror", lambda e: errors.append(str(e)))
@@ -46,7 +46,7 @@ with sync_playwright() as p:
     check(pg.evaluate("fetch('Data/probe.js').then(() => 'net').catch(() => 'blocked')") == "blocked", "offline: Data/ is not served from the cache")
     ctx.set_offline(False)
     c2 = b.new_context(); p2 = c2.new_page(); p2.on("pageerror", lambda e: errors.append("file: " + str(e))); p2.on("console", lambda msg: csp.append("file: " + msg.text) if "Content Security Policy" in msg.text else None)
-    p2.goto((app / "index.html").as_uri() + "?now=2026-10-19T08:00:00-05:00&machine=mac"); p2.wait_for_selector(".tile")
+    p2.goto((app / "index.html").as_uri() + "?now=2026-10-19T08:00:00-05:00&view=dashboard&machine=mac"); p2.wait_for_selector(".tile")
     check(p2.evaluate("!navigator.serviceWorker || !navigator.serviceWorker.controller"), "file:// still works (no service worker there)")
     p2.click('.mtop:has-text("Help")'); p2.click('[data-act="hHelp"]'); p2.wait_for_timeout(300)
     check(p2.evaluate("DASH.app.state.snap && document.querySelectorAll('.tile').length > 3"), "file://: example snapshot script loaded and rendered under the CSP")

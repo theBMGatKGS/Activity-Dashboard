@@ -10,7 +10,7 @@ def lum(rgb):
     r, g, b = rgb; return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b)
 def rgb(s): return tuple(int(x) for x in re.findall(r"\d+", s)[:3])
 def contrast(a, b): la, lb = sorted([lum(rgb(a)), lum(rgb(b))], reverse=True); return (la + 0.05) / (lb + 0.05)
-Q = "?now=2026-10-19T08:00:00-05:00&machine=test"
+Q = "?now=2026-10-19T08:00:00-05:00&view=dashboard&machine=test"
 with sync_playwright() as p:
     b = p.chromium.launch(); ctx = b.new_context(offline=True, viewport={"width": 1440, "height": 900}); pg = ctx.new_page(); net = []
     pg.on("request", lambda r: not r.url.startswith("file:") and net.append(r.url))
@@ -29,7 +29,7 @@ with sync_playwright() as p:
         pg.click(".mtop >> text=Help"); pg.click(f"[data-act={act}]")
         top = pg.evaluate(f"(()=>{{const s=document.getElementById('{sec}').getBoundingClientRect(),b=document.querySelector('.helpbody').getBoundingClientRect();return s.top-b.top}})()")
         check(pg.is_visible("#help") and abs(top) < 40, f"T13 Help → {sec} opens at that section"); pg.keyboard.press("Escape")
-    rev = pg.inner_text("#rev"); REVNOW = pg.evaluate("DASH.app.REV"); check(rev == "Rev " + REVNOW and REVNOW == "00.04.001_261023", f"T13/T14 Revision cell '{rev}'")
+    rev = pg.inner_text("#rev"); REVNOW = pg.evaluate("DASH.app.REV"); check(rev == "Rev " + REVNOW and REVNOW == "00.05.000_261023", f"T13/T14 Revision cell '{rev}'")
     check(REVNOW in pg.inner_text("#help-rev") and "00.02.000_261019" in pg.inner_text("#help-rev") and "00.01.000_261019" in pg.inner_text("#help-rev"), "T13 Revision log lists the running revision")
     # T14
     check(pg.title() == "Activity Dashboard" and pg.inner_text(".appname") == "Activity Dashboard", "T14 exact name in title and header")

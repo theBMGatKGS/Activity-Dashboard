@@ -349,4 +349,55 @@ const st = evs => JSON.stringify(Y.materialize(Y.fold(evs)));
   const pcOk = { eid: "pc.ok", ts: iso(now - H), c: 0, machine: "pc", op: "upsert", id: "k", data: { m: 1 } };
   check(Y.fold([pcOk, { eid: "mac.v", ts: iso(now), c: 0, machine: "mac", op: "upsert", id: "z", data: {}, sup: "pc.ok" }]).entries.has("k") && !Y.fold([pcOk, { eid: "pc.v", ts: iso(now), c: 0, machine: "pc", op: "upsert", id: "z", data: {}, sup: "pc.ok" }]).entries.has("k"), "d4 DH6 sup voids only same-machine events");
 }
+
+// ---------- 00.05 flag op: stars, Done/Snooze overlays, internal people ----------
+{
+  const mac = machine("mac"), pc = machine("workpc");
+  mac.edit(v => { v.flags = { "star:Account B": { on: true } }; }, T0);
+  pc.seen.push(...Y.parseTimeFile(mac.file(), "time-mac.json").events);
+  check(view(pc.all()).flags["star:Account B"].on === true, "F-S1 a star made on one machine reaches the other through its time file");
+  pc.edit(v => { v.flags["star:Account B"] = { on: false }; }, T0 + 60e3);
+  mac.seen.push(...Y.parseTimeFile(pc.file(), "time-workpc.json").events);
+  check(view(mac.all()).flags["star:Account B"].on === false && view(pc.all()).flags["star:Account B"].on === false, "F-S2 a later unstar wins on both machines (on:false, not a removal)");
+  const ev = Y.parseTimeFile(pc.file(), "time-workpc.json").events.filter(e => e.op === "flag");
+  check(ev.length === 1 && ev[0].data.on === false, "F-S3 unstar is logged as a flag event");
+  // tie on stamp: machine name breaks it (workpc > mac)
+  const a = { eid: "mac.x", ts: "2026-10-19T14:00:00.000Z", c: 0, machine: "mac", op: "flag", id: "star:Acct", data: { on: true } };
+  const b = { eid: "workpc.x", ts: "2026-10-19T14:00:00.000Z", c: 0, machine: "workpc", op: "flag", id: "star:Acct", data: { on: false } };
+  check(view([a, b]).flags["star:Acct"].on === false && view([b, a]).flags["star:Acct"].on === false, "F-S4 same stamp: machine name tiebreak, whatever the order");
+  check(!Y.validEvent({ eid: "m.1", ts: "2026-10-19T14:00:00Z", machine: "mac", op: "flag", id: "star:X", data: { on: "yes" } }) && !Y.validEvent({ eid: "m.1", ts: "2026-10-19T14:00:00Z", machine: "mac", op: "flag", id: "nocolon", data: { on: true } }),
+    "F-S5 flag needs data.on boolean and a kind:key id");
+  const m2 = machine("mac"); m2.edit(v => { v.flags = { "done:EX-2": { on: true, at: "2026-10-19T14:00:00.000Z", snapAt: "2026-10-19T07:30:00-05:00" } }; }, T0);
+  m2.edit(v => { v.flags["done:EX-2"] = Object.assign({}, v.flags["done:EX-2"], { on: false }); }, T0 + 1000);
+  const vv = view(m2.all()); check(vv.flags["done:EX-2"].on === false && m2.own.length === 2, "F-S6 Undo writes the opposite flag and keeps both events");
+  m2.edit(v => { v.entries.push(E("t1", 15, { account: "Account B" })); }, T0 + 2000);
+  check(m2.own.length === 3 && m2.own[2].op === "upsert", "F-S7 unchanged flags emit nothing; time entries still upsert");
+}
+// Reconciliation is deterministic from the snapshot + folded flags (To Do wins)
+{
+  const R = globalThis.DASH.rules;
+  const snap = (gen, tasks) => R.readSnapshot({ schema_version: 1, generated_at: gen, source: "inbox-export", accounts: [], calendar: [], touches: [], totals_history: [],
+    tasks: tasks.map(t => Object.assign({ list: "Follow-ups", title: "x", account: null, person: null, next_date: "2026-10-19", status: "not_started", last_modified: "2026-10-18T09:00:00-05:00", withhold: false }, t)) });
+  const flags = view([{ eid: "mac.1", ts: "2026-10-19T14:00:00.000Z", c: 0, machine: "mac", op: "flag", id: "done:A", data: { on: true, at: "2026-10-19T14:00:00.000Z", snapAt: "2026-10-19T07:30:00-05:00" } },
+    { eid: "mac.2", ts: "2026-10-19T14:00:00.000Z", c: 1, machine: "mac", op: "flag", id: "snooze:B", data: { on: true, until: "2026-10-20T13:00:00.000Z", due: "2026-10-19" } }]).flags;
+  const now = "2026-10-19T15:00:00Z";
+  let o = R.overlays(flags, snap("2026-10-19T07:30:00-05:00", [{ id: "A" }, { id: "B" }]), now);
+  check(o.hidden.has("A") && o.snoozed.has("B"), "F-R1 Done hides, Snooze hides");
+  o = R.overlays(flags, snap("2026-10-20T07:30:00-05:00", [{ id: "A", status: "done" }, { id: "B", next_date: "2026-10-23" }]), now);
+  check(!o.hidden.has("A") && o.cleared.includes("done:A") && !o.snoozed.has("B") && o.cleared.includes("snooze:B"), "F-R2 To Do closes A -> overlay cleared; To Do re-dates B -> snooze cleared");
+  o = R.overlays(flags, snap("2026-10-20T07:30:00-05:00", [{ id: "A", last_modified: "2026-10-19T12:00:00-05:00" }, { id: "B" }]), now);
+  check(!o.hidden.has("A") && o.reopened.has("A"), "F-R3 A edited in To Do after the Done -> reopened");
+}
+// Mixed versions: a 00.04.001 reader drops the flag events and keeps the time entries
+{
+  const vm = require("vm"), cp = require("child_process");
+  let old = null; try { old = cp.execSync("git show 80ee7e0:js/sync.js", { cwd: path.join(__dirname, ".."), stdio: ["ignore", "pipe", "ignore"] }).toString(); } catch (e) { old = null; }
+  if (!old) console.log("SKIP F-V1 00.04.001 reader (git history not available)");
+  else {
+    const sb = { globalThis: {} }; sb.globalThis = sb; vm.createContext(sb); vm.runInContext(old, sb); const O = sb.DASH.sync;
+    const m = machine("mac"); m.edit(v => { v.entries.push(E("t1", 30)); v.flags = { "star:Account B": { on: true }, "snooze:EX-1": { on: true, until: "2026-10-20T13:00:00.000Z", due: "2026-10-16" } }; }, T0);
+    const r = O.parseTimeFile(m.file(), "time-mac.json"), st = O.materialize(O.fold(r.events));
+    check(r.events.length === 1 && st.entries.length === 1 && st.entries[0].id === "t1" && /2 invalid event/.test(r.bad || ""), "F-V1 00.04.001 parseTimeFile keeps the time entry and ignores the 2 flag events");
+  }
+}
 console.log(`\n${pass}/${pass + fail} passed`); if (fail) process.exit(1);

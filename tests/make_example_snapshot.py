@@ -35,6 +35,11 @@ tasks = [
  T(18, "Travel", "fly to Austin office", "Account D", "Chris T.", "2026-10-22", "not_started", M("10-15")),
  T(19, "Travel", "book hotel for Contoso visit", "Contoso Labs", "Me", "2026-10-27", "not_started", M("10-16")),
  T(20, "Follow-ups", "send meeting recap", "Acme Fab", "Priya M.", "2026-10-14", "done", M("10-14"), ),
+ # 00.05 Daily Focus: fictional rows so every section has something (synthetic spec title: "NFPA 318 Fab Ceiling")
+ T(21, "Follow-ups", "send NFPA 318 Fab Ceiling spec", "Account B", "Alex R.", "2026-10-19", "in_progress", M("10-16"), est=30),
+ T(22, "Waiting on", "return signed PO", "Acme Fab", "Priya M.", "2026-10-16", "waiting", M("10-09")),
+ T(23, "Follow-ups", "send meeting invite", "Account E", "Dana L.", None, "not_started", M("10-15")),
+ T(24, "Account touches", "reconnect after reorg", "Account F", None, None, "not_started", M("09-08")),
 ]
 tasks[-1]["completed_at"] = M("10-14", "15:00")
 accounts = [
@@ -43,11 +48,13 @@ accounts = [
  {"name": "Account E", "tier": "T1", "domains": ["account-e.example"]}, {"name": "Acme Fab", "tier": "other", "domains": ["acmefab.example"]},
  {"name": "Northwind DC", "tier": "other", "domains": ["northwind.example"]}, {"name": "Contoso Labs", "tier": "other", "domains": ["contoso.example"]},
  {"name": "Globex Mfg", "tier": "other", "domains": ["globex.example"]},
+ {"name": "Account F", "tier": "T1", "domains": ["account-f.example"]},
 ]
 touches = [
  {"account": "Account A", "date": "2026-10-12", "direction": "outbound", "kind": "email"},
  {"account": "Contoso Labs", "date": "2026-10-15", "direction": "inbound", "kind": "email"},
  {"account": "Northwind DC", "date": "2026-10-08", "direction": "outbound", "kind": "meeting_proposed", "meeting_date": None},
+ {"account": "Account F", "date": "2026-10-13", "direction": "inbound", "kind": "email"},
 ]
 calendar = [
  {"id": "CAL-1", "start": M("10-19", "08:00"), "end": M("10-19", "08:30"), "title": "Standup (internal)", "attendee_domains": ["example.com"]},
@@ -62,6 +69,8 @@ series = {"overdue":[2,1,3,2,1,2,1],"dueToday":[3,5,2,4,3,4,4],"thisWeek":[7,9,8
           "accountTouches":[5,6,7,6,8,9,8],"travel":[1,0,2,1,1,0,0]}
 weeks = ["08-31","09-07","09-14","09-21","09-28","10-05","10-12"]
 hist = [{"generated_at": M(w, "07:30"), "totals": {k: series[k][i] for k in keys}} for i, w in enumerate(weeks)]
+# 00.05: the previous business day's snapshot (Fri 10/16) so the Due Today delta chip has a basis on Mon 10/19
+hist.append({"generated_at": M("10-16", "07:30"), "totals": dict(hist[-1]["totals"], dueToday=2)})
 snap = {"schema_version": 1, "generated_at": M("10-19", "07:30"), "source": "inbox-export", "example": True,
         "tasks": tasks, "accounts": accounts, "touches": touches, "calendar": calendar, "totals_history": hist}
 body = json.dumps(snap, indent=1)

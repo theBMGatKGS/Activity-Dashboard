@@ -1,5 +1,17 @@
 # Release notes — Activity Dashboard
 
+## 00.05.000_261023 (Oct 23 2026)
+**Daily Focus** is the new home screen.
+- Four squares: **Due Today** (with ▲/▼ compared with the previous business day's snapshot), **Overdue**, **Waiting past due** and **Going cold** (your ★ key accounts with no touch in 14 days). Click one to jump to its section.
+- Today's next meetings beside the squares, then sections: Due Today, Overdue, Owed to outside, Waiting past check-back, Going cold, Travel within 7 days, and Later this week (folded). About 12 rows; **+n more** opens the rest.
+- On each row: **✓ Done** (with Undo), **Snooze** (Later today, Tomorrow, Next Monday, Pick date) and **Log touch**. Done hides the row until To Do catches up; the header counts what's "done here, not yet in To Do". The dashboard still never changes To Do.
+- ★ key accounts: the first time, it offers to star your T1 accounts and you confirm. Change them with ☆/★ or File → Key accounts & internal people…, which also holds your internal-people list for "Owed to outside".
+- Stars, Done and Snooze sync between your computers and the iPad inside your encrypted time file.
+- File → Print Daily Focus…: one landscape page in the print colors.
+- Keyboard: j/k move, d Done, s Snooze, t Log touch. Reduced-motion settings are honored. The fonts ship with the app, so it still works offline.
+- The old Dashboard tab is now **Totals**; everything else is where it was.
+- **Update every computer the same day:** a computer still on 00.04 ignores stars, Done and Snooze (it keeps all your time).
+
 ## 00.04.001_261023 (Oct 23 2026)
 - Fixed: with GitHub sync on, an older snapshot from GitHub could replace a newer one in your Data folder. Now the newer valid copy always wins, and the one replaced is kept as a `.prev.enc` file.
 - A snapshot the dashboard rejects is never uploaded and never replaces a good one; if GitHub holds a bad copy, the good local one replaces it.

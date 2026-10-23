@@ -86,3 +86,9 @@ No subjects, bodies or addresses: the touch is metadata only.
 
 ## 9. Example
 See `example-snapshot.js` / `example-snapshot.json` next to this file. They are fictional: placeholder people and `.example` domains (`example.com` appears only as the internal-domain rule input; the international example domain is `corp-intl.example`).
+
+## 10. Daily Focus (dashboard 00.05) — no schema change
+Daily Focus uses schema_version 1 as is. Two optional fields may be added later (schema 1.1, older snapshots stay valid):
+- `tasks[].external` (boolean): the person is outside the company. Today the dashboard infers "outside" from `account` or a local internal-people list.
+- `tasks[].check_back` (YYYY-MM-DD): a separate Waiting-on check-back date. Today the Waiting on `next_date` is the check-back date.
+

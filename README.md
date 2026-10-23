@@ -1,5 +1,5 @@
 # Activity Dashboard
-Revision **00.04.001_261023** · local-first app · encrypted Data folder (optional, in-browser AES-256-GCM) · optional encrypted sync through a private GitHub repo (00.04) · installable (PWA) over https · no server of its own.
+Revision **00.05.000_261023** · Daily Focus home screen (00.05) · local-first app · encrypted Data folder (optional, in-browser AES-256-GCM) · optional encrypted sync through a private GitHub repo (00.04) · installable (PWA) over https · no server of its own.
 
 ## Use
 1. The app lives in **`<synced folder>/Dashboard/`** on the user's Mac. It is **not** in the notebook repo. To update, copy the new app files over the old ones; the deploy folder never contains `Data/`.
@@ -11,8 +11,9 @@ Revision **00.04.001_261023** · local-first app · encrypted Data folder (optio
 ## Files
 | Path | What |
 |---|---|
-| `index.html`, `app.css` | UI, in-app Help / How Do I / FAQ / Quick Start / Revision log |
-| `js/rules.js` | pure rules (totals, Going Cold, WoW, conflicts, guesses, lines, Manager filter, workload) |
+| `index.html`, `app.css` | UI, in-app Help / How Do I / FAQ / Quick Start / Keyboard shortcuts / Revision log; 00.05 SVG status icons, Hardline palette scoped to `#view-focus`, Daily Focus print styles |
+| `assets/fonts/` | 00.05 self-hosted WOFF2 subsets (Space Grotesk, IBM Plex Mono) + SIL OFL 1.1 licences + `README.md` (source, SHA-256, subset command) |
+| `js/rules.js` | pure rules (totals, Going Cold, WoW, conflicts, guesses, lines, Manager filter, workload; 00.05 `focusSections`, `overlays`, `keyCold`, `isOutside`, `focusDelta`, `snoozeUntil`) |
 | `js/vault.js` | 00.03 encryption (keyring, AES-256-GCM envelopes), browser + Node |
 | `js/hub.js` | 00.04 GitHub data hub: REST Contents API client, plaintext guard, folder-handle adapter, folder ⇄ hub mirror; browser + Node |
 | `js/frame.js` | 00.04 frame-busting check (runs first) |
@@ -22,12 +23,39 @@ Revision **00.04.001_261023** · local-first app · encrypted Data folder (optio
 | `js/sync.js` | pure two-machine merge: time-file format, event fold (last writer wins), diff → events, migration |
 | `js/db.js` | IndexedDB local cache: this machine's events, merged entries, trend history, machine name, folder handle |
 | `js/app.js` | rendering and interactions |
-| `config.js` | snapshot path, notebook-log.js path, stale hours |
+| `config.js` | snapshot path, notebook-log.js path, stale hours, `focusRowCap` (00.05, default 12) |
 | `tools/make_log_js.py` | box-side: notebook-log.md → Data/notebook-log.js (only `- [log]` lines; .md read-only) |
 | `examples/example-snapshot.js/.json` | FICTIONAL example (fallback) |
 | `Data/` (not shipped) | the user's real files: `inbox-snapshot.js/.json`, `notebook-log.js`, `time-<machine>.json` per machine; OneDrive only |
 | `tests/`, `tools/`, `.gitignore` | box-side only; not in the deploy folder |
 | `tests/` | `run_all.sh`: unit tests (node), T11 offline local-file test, screenshots (Playwright); 00.04 `hub.test.js` + `fake_github.js` (mocked GitHub API), `t23_hub.py` (PC + iPad end to end, mocked API) |
+
+## Daily Focus (00.05)
+The home screen (always opens first; `?view=dashboard|workload|print|manager` opens another tab). The older views are tabs: Focus · Totals (the former Dashboard) · Workload · Print sheet · Manager's sheet.
+
+| Square / section | Rule (open tasks; Withhold items show on screen as before) | Snapshot fields |
+|---|---|---|
+| Due Today | `next_date` = today (CT), any list except Waiting on | `tasks[].next_date`, `list`, `status` |
+| Overdue | `next_date` < today, any list except Waiting on | same |
+| Owed to outside | Follow-ups / Account touches, `not_started`/`in_progress`, due after today or no date, and **outside**: the task has an account, or its person isn't on the internal-people list | `list`, `status`, `account`, `person` |
+| Waiting · past check-back (square "Waiting past due") | Waiting on with `next_date` ≤ today; the due date **is** the check-back date | `list`, `next_date` |
+| Going cold · key | ★ key account with no touch for 14+ days; one row per account (its oldest open task not shown elsewhere, else "Log a touch") | `touches[]`, `calendar[]`, `tasks[].last_modified`, time entries |
+| Travel ≤ 7 days | Travel tasks due today…today+7, plus travel-looking calendar events on days with no Travel task | `list`, `next_date`, `calendar[]` |
+| Later this week (collapsed) | open, due tomorrow…Sunday, not shown above; snoozed items returning this week | `next_date` |
+| Meetings | today's events that haven't ended, first 4 (+n more → Workload) | `calendar[]` |
+
+- **Touch** (Going cold · key): outbound touches; a meeting that happened (calendar, or `meeting_proposed` once its `meeting_date` has passed); a To Do edit on one of the account's tasks; a time entry with that account (Log touch, + Log call, notebook log). Inbound touches don't count. A dashboard Done doesn't count.
+- **Delta chip** on Due Today: the snapshot's Due Today total (the same definition as the Totals tile) minus the latest `totals_history` snapshot from the previous business day (Monday → Friday; a weekend snapshot counts for Monday). No basis → no chip. Local Done marks never change it; the big number shows what's left after them.
+- **Row cap** `focusRowCap` (12): each non-empty section keeps ≥ 1 row, Due Today and Overdue ≥ 3, the rest fill in section order; "+n more" expands a section in place. Squares always show full counts.
+- **No date:** owed and cold rows show a red ⚠ no date; other undated open items are counted in a footer line that expands.
+- **Status = word + SVG icon + color**: Today ● green, Overdue ▲ red, Waiting (hourglass) amber, Cooling ◐ blue, This week ◆ ivory, Travel ✈, Later ▸ grey. Color means urgency only.
+- **Actions** (To Do stays the source of truth; nothing is written to To Do): ✓ Done hides the row (8 s Undo) and is counted as "n done here, not yet in To Do" until a snapshot shows the task done or removed (mark clears itself) or shows it edited in To Do after the Done (row returns, "reopened in To Do"). Never auto-expires. Snooze: Later today (+3 h), Tomorrow 08:00 CT, Next Monday 08:00 CT, a picked date 08:00 CT; ends when To Do re-dates or closes the task; never changes the due date. Log touch opens + Log call pre-filled (account, person as note, Phone, 15 min).
+- **Sync format:** new event op `flag` in `time-<machine>.json` (encrypted like everything else; opaque name on the hub). Ids `star:<account>`, `done:<taskId>` `{on, at, snapAt}`, `snooze:<taskId>` `{on, until, due}`, `internal:<person, lower case>`, `setting:t1offer`. `data.on` is required (boolean); off = `on:false`, never a removal. Fold: last writer wins per id (stamp, counter, machine), as `upsert`. Reconciliation with the snapshot runs after the fold and depends only on the snapshot + folded flags, so every machine shows the same. **Mixed versions:** a 00.04.x reader drops `flag` events (invalid op) and keeps every time entry (tested against the 00.04.001 parser); update all computers the same day.
+- **Keyboard:** j/k rows, d/s/t Done/Snooze/Log touch on the focused row (off while typing or in a dialog); squares are buttons that jump to their section; Snooze is a menu button (arrows, Home/End, Esc).
+- **Accessibility:** sections are `<section aria-labelledby>` with h2 headings, rows are a list, every action button names its task, the Undo message and sync chip are `aria-live="polite"`, a gold 2 px focus ring, WCAG AA contrast on every Hardline text pair (tested), 10 px minimum labels, 200% zoom reflows to 2×2 squares and two-line rows. `prefers-reduced-motion` turns off all animation app-wide; otherwise rows fade in once on load only (never on 60 s re-renders).
+- **Fonts:** Space Grotesk + IBM Plex Mono, self-hosted WOFF2 Latin subsets in `assets/fonts/` (~54 KB, SIL OFL 1.1, SHA-256 and subset command in `assets/fonts/README.md`), cached by the service worker. The CSP is unchanged (`default-src 'self'` covers fonts).
+- **Print:** File → Print Daily Focus… (or Ctrl+P on the Focus tab): one landscape letter page in the print palette, outlined squares, no fills, shadows, gold frame or animation, no buttons. Print my sheet… and the Manager's sheet are unchanged (Withhold never prints there).
+- **Key accounts & internal people:** ☆/★ on account chips (Focus rows, Totals list, Workload) or File → Key accounts & internal people…. First run offers to star the T1 accounts (an inline dialog; nothing is starred until confirmed).
 
 ## Not in 00.02.000 (still deferred)
 By-account view (planned 00.02), account-based Going Cold, the "My next three things" ranking with its print strip, and the Proposed tray (hidden).
@@ -80,4 +108,4 @@ A **private** GitHub repo (e.g. `activity-data-hub`) is the shared store. It hol
 - Example data never writes to local storage.
 
 ## Test
-`bash tests/run_all.sh` (needs node, python3, playwright+chromium, poppler-utils). Includes `sync.test.js` (merge logic) and `t20_sync.py` (two simulated machines).
+`bash tests/run_all.sh` (needs node, python3, playwright+chromium, poppler-utils). Includes `sync.test.js` (merge logic) and `t20_sync.py` (two simulated machines). 00.05: `rules.test.js` F1–F12 (Daily Focus rules), `sync.test.js` F-S/F-R/F-V (flag op, reconciliation, 00.04.001 reader), `t24_focus.py` (Daily Focus in Chromium: layout, actions, keyboard, a11y tree, contrast, print, reduced motion, zoom, fonts offline, stars/Done/Snooze through an encrypted folder), `t23_hub.py` (stars/Done through the mocked hub). Older browser tests open `?view=dashboard`.

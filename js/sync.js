@@ -6,7 +6,7 @@
   "use strict";
   const MACHINE_RE = /^[a-z0-9]{1,20}$/;          // no hyphens, so "time-<machine>.json" is unambiguous
   const TIME_FILE_RE = /^time-.+\.json$/i;          // own file + any conflict copy
-  const OPS = ["upsert", "remove", "map"];
+  const OPS = ["upsert", "remove", "map", "flag"];   // 00.05: "flag" = key-account star, Done/Snooze overlay, internal person (data.on boolean)
   const FUTURE_MS = 5 * 60 * 1000;                 // a stamp more than 5 min ahead of this clock -> ⚠ on the sync chip
   let counter = 0;
   const pad = (n, w) => String(n).padStart(w, "0");
@@ -43,7 +43,8 @@
   function validEvent(e) {
     return e && typeof e.eid === "string" && typeof e.ts === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(e.ts) && !isNaN(Date.parse(e.ts)) && validMachine(e.machine)
       && (e.c === undefined || (Number.isInteger(e.c) && e.c >= 0)) && (e.sup === undefined || typeof e.sup === "string")
-      && OPS.includes(e.op) && typeof e.id === "string" && e.id.length > 0 && (e.op === "remove" || (e.data && typeof e.data === "object"));
+      && OPS.includes(e.op) && typeof e.id === "string" && e.id.length > 0 && (e.op === "remove" || (e.data && typeof e.data === "object"))
+      && (e.op !== "flag" || (/^[a-z]+:.+/.test(e.id) && typeof e.data.on === "boolean"));
   }
   // Parse one time file. Returns {machine, events, bad} — never throws on content, so one broken file can't stop the merge.
   function parseTimeFile(text, name) {
@@ -114,12 +115,13 @@
   function fold(events) {
     // DG5: an event that names another in "sup" (a repaired re-stamp) replaces it everywhere, even if a conflict copy still has the original.
     const all = dedupe(events), voided = supersededBy(all);
-    const evs = all.filter(e => !isVoided(voided, e)).sort(cmp), entries = new Map(), maps = new Map();
+    const evs = all.filter(e => !isVoided(voided, e)).sort(cmp), entries = new Map(), maps = new Map(), flags = new Map();
     evs.forEach(e => {
       if (e.op === "map") maps.set(e.id, e.data.audience);
+      else if (e.op === "flag") flags.set(e.id, e.data);   // last writer wins per id (stamp, counter, machine), like upsert; "off" is on:false, never a removal
       else entries.set(e.id, e.op === "remove" ? null : e.data);
     });
-    return { entries, maps, count: evs.length, machines: [...new Set(evs.map(e => e.machine))].sort() };
+    return { entries, maps, flags, count: evs.length, machines: [...new Set(evs.map(e => e.machine))].sort() };
   }
   // Materialise: live entries (sorted by id), removed calendar event ids (tombstones), learned domain map.
   function materialize(state) {
@@ -129,7 +131,8 @@
       if (d) live.push(Object.assign({}, d, { id })); else { removedIds.push(id); if (id.startsWith("cal:")) removedCal.push(id.slice(4)); }
     });
     const domainMap = {}; [...state.maps.keys()].sort().forEach(k => domainMap[k] = state.maps.get(k));
-    return { entries: live, removedCal, removedIds, domainMap };
+    const flags = {}; [...(state.flags || new Map()).keys()].sort().forEach(k => flags[k] = state.flags.get(k));
+    return { entries: live, removedCal, removedIds, domainMap, flags };
   }
   const strip = e => { const o = Object.assign({}, e); delete o.id; return o; };
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -147,6 +150,8 @@
     (next.removedCal || []).forEach(c => { if (!(prev.removedCal || []).includes(c) && !pm.has("cal:" + c) && !nm.has("cal:" + c)) ev("remove", "cal:" + c); });
     const pmap = prev.domainMap || {}, nmap = next.domainMap || {};
     Object.keys(nmap).forEach(d => { if (pmap[d] !== nmap[d]) ev("map", d, { audience: nmap[d] }); });
+    const pf = prev.flags || {}, nf = next.flags || {};
+    Object.keys(nf).sort().forEach(id => { if (nf[id] && typeof nf[id].on === "boolean" && !same(pf[id], nf[id])) ev("flag", id, nf[id]); });
     return out;
   }
   // One-time migration of 00.01 local entries (IndexedDB cache) into this machine's events (F2a).

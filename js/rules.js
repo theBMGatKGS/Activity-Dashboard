@@ -56,7 +56,7 @@
       if (t.next_date && !realDay(t.next_date)) return bad(`next_date ${t.next_date} does not exist`);
       seen.add(t.id);
       items.push({ id: t.id, list: t.list, title: String(t.title || "").trim(), account: t.account || null, person: t.person || null,
-        due: t.next_date || null, status: t.status, withhold: t.withhold, lastModified: isoDay(t.last_modified),
+        due: t.next_date || null, status: t.status, withhold: t.withhold, lastModified: isoDay(t.last_modified), lastModifiedAt: new Date(t.last_modified).toISOString(),
         completedOn: t.completed_at ? isoDay(t.completed_at) : null, estMinutes: t.est_minutes || null, importance: t.importance || "normal" });
     });
     const calendar = [];
@@ -332,10 +332,125 @@
     return { schema_version: 1, generated_at: gen, source: "inbox-csv", tasks, accounts: [...accts].map(n => ({ name: n, tier: ((g.DASH_CONFIG && g.DASH_CONFIG.tier1Accounts) || []).includes(n) ? "T1" : "other" })), calendar: [], touches: [], totals_history: [] };
   }
 
+  // ---------- 00.05 Daily Focus (pure; no DOM) ----------
+  // CT wall-clock time on a day -> ISO instant (tries CDT and CST, keeps the one that reads back as that CT time).
+  function ctIso(day, hhmm) {
+    for (const off of ["-05:00", "-06:00"]) { const d = new Date(`${day}T${hhmm}:00${off}`); const h = hourCT(d.toISOString()); if (ymd(d) === day && Math.abs(h - (+hhmm.slice(0, 2) + hhmm.slice(3) / 60)) < 1e-6) return d.toISOString(); }
+    return new Date(`${day}T${hhmm}:00-06:00`).toISOString();
+  }
+  // Snooze choices: Later today (+3 h), Tomorrow 08:00 CT, Next Monday 08:00 CT, a picked date 08:00 CT.
+  function snoozeUntil(choice, nowIso, pickedDay) {
+    const now = new Date(nowIso), today = ymd(now);
+    if (choice === "later") return new Date(now.getTime() + 3 * 3600e3).toISOString();
+    if (choice === "tomorrow") return ctIso(addDays(today, 1), "08:00");
+    if (choice === "monday") { const w = weekday(today); return ctIso(addDays(today, w === 0 ? 1 : 8 - w), "08:00"); }
+    if (choice === "date" && pickedDay && RE_DAY.test(pickedDay) && realDay(pickedDay)) return ctIso(pickedDay, "08:00");
+    return null;
+  }
+  function prevBusinessDay(day) { let d = addDays(day, -1); while (weekday(d) === 0 || weekday(d) === 6) d = addDays(d, -1); return d; }
+  // G1: "owed to outside" = the task has an account, or its person is not on the internal-people list.
+  function isOutside(it, internal) {
+    if (it.account) return true;
+    const p = (it.person || "").trim(); if (!p || p.toLowerCase() === "me") return false;
+    return !(internal || new Set()).has(p.toLowerCase());
+  }
+  // G3 + Q5: account-level last touch. Counts outbound touches, meetings that happened (calendar, or meeting_proposed once its
+  // meeting_date has passed), To Do edits on that account's tasks, and time entries with that account. Inbound touches don't count.
+  function lastTouch(account, s, ctx) {
+    let d = null; const up = x => { if (x && x <= ctx.today && (!d || x > d)) d = x; };
+    (s.touches || []).forEach(t => { if (t.account !== account) return;
+      if (t.kind === "meeting_proposed") { if (t.meeting_date) up(t.meeting_date); return; }
+      if (t.direction === "outbound") up(t.date); });
+    (s.calendar || []).forEach(ev => { if (ev.account === account && (!ctx.nowIso || new Date(ev.start) <= new Date(ctx.nowIso))) up(isoDay(ev.start)); });
+    (s.items || []).forEach(it => { if (it.account === account) up(it.lastModified); });
+    (ctx.timeEntries || []).forEach(e => { if (e.account === account) up(e.date); });
+    return d;
+  }
+  function keyCold(account, s, ctx) { const d = lastTouch(account, s, ctx); return { cold: !d || diffDays(ctx.today, d) >= COLD_DAYS, last: d, days: d ? diffDays(ctx.today, d) : null }; }
+  // Dashboard-side overlays from the synced flag events, reconciled with the snapshot. To Do always wins:
+  //  done:<id>   hidden until a snapshot shows the task done/removed (overlay cleared) or edited in To Do after the Done (reopened)
+  //  snooze:<id> hidden until "until"; cleared when To Do re-dates the task or closes it
+  function overlays(flags, s, nowIso) {
+    const byId = new Map((s.items || []).map(it => [it.id, it])), out = { hidden: new Set(), doneHere: [], reopened: new Set(), snoozed: new Map(), starred: new Set(), internal: new Set(), cleared: [] };
+    const gen = Date.parse(s.generatedAt), now = Date.parse(nowIso);
+    (flags instanceof Map ? [...flags.entries()] : Object.entries(flags || {})).forEach(([id, f]) => {
+      if (!f || f.on !== true) return;
+      const i = id.indexOf(":"), kind = id.slice(0, i), key = id.slice(i + 1);
+      if (kind === "star") { out.starred.add(key); return; }
+      if (kind === "internal") { out.internal.add(key.toLowerCase()); return; }
+      const it = byId.get(key);
+      if (kind === "done") {
+        if (!it || it.status === "done") { out.cleared.push(id); return; }
+        if (f.snapAt && gen > Date.parse(f.snapAt) && it.lastModifiedAt && Date.parse(it.lastModifiedAt) > Date.parse(f.at)) { out.reopened.add(key); return; }
+        out.hidden.add(key); out.doneHere.push(key); return;
+      }
+      if (kind === "snooze") {
+        if (!it || it.status === "done" || (f.due || null) !== (it.due || null)) { out.cleared.push(id); return; }
+        if (Date.parse(f.until) > now) out.snoozed.set(key, f.until);
+      }
+    });
+    return out;
+  }
+  const FOCUS_SECTIONS = ["dueToday", "overdue", "owed", "waiting", "cold", "travel"];
+  // The full Daily Focus model. s = readSnapshot() result; ctx = {today, nowIso, timeEntries}; ov = overlays(); opts = {cap, expanded:Set, history}.
+  function focusSections(s, ctx, ov, opts) {
+    opts = opts || {}; ov = ov || overlays({}, s, ctx.nowIso);
+    const cap = opts.cap > 0 ? opts.cap : 12, today = ctx.today, sun = sundayOf(today), wk7 = addDays(today, 7);
+    const open = s.items.filter(it => isOpen(it) && !ov.hidden.has(it.id));
+    const live = open.filter(it => !ov.snoozed.has(it.id)), used = new Set(), sec = {};
+    const take = (key, rows) => { sec[key] = rows; rows.forEach(r => r.it && used.add(r.it.id)); };
+    const row = (it, status, extra) => Object.assign({ it, id: it.id, status, account: it.account, person: it.person, title: it.title, reopened: ov.reopened.has(it.id) }, extra || {});
+    take("dueToday", live.filter(it => it.due === today && it.list !== "Waiting on").sort(sortItems).map(it => row(it, "today", { when: { kind: "today" } })));
+    take("overdue", live.filter(it => it.due && it.due < today && it.list !== "Waiting on").sort(sortItems).map(it => row(it, "overdue", { when: { kind: "late", days: diffDays(today, it.due) } })));
+    take("owed", live.filter(it => !used.has(it.id) && (it.list === "Follow-ups" || it.list === "Account touches") && ["not_started", "in_progress"].includes(it.status) && isOutside(it, ov.internal) && (!it.due || it.due > today))
+      .sort(sortItems).map(it => row(it, !it.due || it.due <= sun ? "week" : "later", { when: it.due ? { kind: "day", day: it.due } : { kind: "nodate" } })));
+    take("waiting", live.filter(it => !used.has(it.id) && it.list === "Waiting on" && it.due && it.due <= today).sort(sortItems).map(it => row(it, "waiting", { when: { kind: "was", day: it.due } })));
+    const cold = [];
+    [...ov.starred].sort().forEach(name => {
+      if (!s.accounts.some(a => a.name === name)) return;
+      const k = keyCold(name, s, ctx); if (!k.cold) return;
+      const tasks = open.filter(it => it.account === name).sort((a, b) => (a.lastModifiedAt || "") < (b.lastModifiedAt || "") ? -1 : (a.lastModifiedAt || "") > (b.lastModifiedAt || "") ? 1 : a.id.localeCompare(b.id));
+      const t = tasks.find(it => !used.has(it.id) && !ov.snoozed.has(it.id)), dated = tasks.some(it => it.due);
+      if (t) cold.push(row(t, "cold", { coldDays: k.days, coldLast: k.last, when: t.due ? { kind: "day", day: t.due } : { kind: "nodate" } }));
+      else cold.push({ it: null, id: "acct:" + name, status: "cold", account: name, person: null, title: "Log a touch", synthetic: true, coldDays: k.days, coldLast: k.last, when: { kind: "notouch", nodate: !dated } });
+    });
+    take("cold", cold.sort((a, b) => (b.coldDays === null ? 1e9 : b.coldDays) - (a.coldDays === null ? 1e9 : a.coldDays) || a.account.localeCompare(b.account)));
+    const trav = live.filter(it => !used.has(it.id) && it.list === "Travel" && it.due && it.due >= today && it.due <= wk7).sort(sortItems).map(it => row(it, "travel", { when: { kind: "day", day: it.due } }));
+    const travDays = new Set(s.items.filter(it => it.list === "Travel" && isOpen(it) && it.due).map(it => it.due));
+    (s.calendar || []).forEach(ev => { const d = isoDay(ev.start); if (d < today || d > wk7 || travDays.has(d) || guessSubject(ev.title).value !== "Admin/travel") return;
+      trav.push({ it: null, id: "cal:" + ev.id, status: "travel", account: ev.account || null, person: null, title: ev.title, calendar: true, when: { kind: "day", day: d } }); });
+    take("travel", trav.sort((a, b) => a.when.day < b.when.day ? -1 : a.when.day > b.when.day ? 1 : a.id.localeCompare(b.id)));
+    // Later this week (collapsed): open, due tomorrow..Sunday, not shown above; snoozed items that come back this week are listed here too.
+    const later = open.filter(it => !used.has(it.id) && ((!ov.snoozed.has(it.id) && it.due && it.due > today && it.due <= sun) || (ov.snoozed.has(it.id) && ymd(new Date(ov.snoozed.get(it.id))) <= sun)))
+      .sort(sortItems).map(it => row(it, ov.snoozed.has(it.id) ? "later" : "week", { when: it.due ? { kind: "day", day: it.due } : { kind: "nodate" }, snoozedUntil: ov.snoozed.get(it.id) || null }));
+    // §8: open Follow-ups / Account touches / Waiting on / Travel items with no date that aren't in a section -> footer list.
+    const noDate = open.filter(it => !used.has(it.id) && !it.due && !ov.snoozed.has(it.id)).sort(sortItems);
+    // Row cap (§3): every non-empty section gets at least 1 row (Due Today and Overdue at least 3), then fill in section order.
+    const exp = opts.expanded || new Set(), shown = {}; let budget = cap;
+    FOCUS_SECTIONS.forEach(k => { const min = Math.min(sec[k].length, k === "dueToday" || k === "overdue" ? 3 : 1); shown[k] = exp.has(k) ? sec[k].length : min; budget -= shown[k]; });
+    FOCUS_SECTIONS.forEach(k => { if (exp.has(k)) return; const add = Math.max(0, Math.min(sec[k].length - shown[k], budget)); shown[k] += add; budget -= add; });
+    const sections = FOCUS_SECTIONS.map(k => ({ key: k, total: sec[k].length, rows: sec[k].slice(0, shown[k]), more: sec[k].length - shown[k] }));
+    // Squares: full counts after overlays. Delta (§7, Q6): snapshot-only Due Today total vs the previous business day's latest snapshot.
+    const counts = { dueToday: sec.dueToday.length, overdue: sec.overdue.length, waiting: sec.waiting.length, cold: sec.cold.length };
+    const snapDue = totals(s.items, { today, calendar: s.calendar, timeEntries: [] }).dueToday;
+    const doneDueToday = s.items.filter(it => isOpen(it) && ov.hidden.has(it.id) && it.due === today && it.list !== "Waiting on").length;
+    return { sections, counts, later, noDate, delta: focusDelta(opts.history || [], today, snapDue), snapDueToday: snapDue, doneDueToday, doneHere: ov.doneHere.length, cap };
+  }
+  // Previous business day = the weekday before today (Monday -> Friday). Uses the latest history snapshot from that day up to
+  // (not including) today; none -> null (the chip is hidden).
+  function focusDelta(history, today, cur) {
+    const pb = prevBusinessDay(today); let best = null;
+    (history || []).forEach(h => { const d = isoDay(h.generated_at); if (d >= pb && d < today && h.totals && typeof h.totals.dueToday === "number" && (!best || new Date(h.generated_at) > new Date(best.generated_at))) best = h; });
+    if (!best) return null;
+    const d = cur - best.totals.dueToday;
+    return { delta: d, text: d > 0 ? `▲+${d}` : d < 0 ? `▼−${-d}` : "=0", basisDay: isoDay(best.generated_at) };
+  }
+
   g.DASH = g.DASH || {};
   g.DASH.rules = { LISTS, STATUSES, AUDIENCES, SUBJECTS, TOTAL_KEYS, LIST_KEY, GROUPS, COLD_DAYS, DEFAULT_RULES,
     ymd, hm, hourCT, addDays, diffDays, sundayOf, mondayOf, dayLabel, isoDay, readSnapshot, isOpen, dateWord, statusWord, group, sortItems,
     lastActivity, isCold, inTotal, totals, mergeHistory, weeklySeries, wow, wowTone, sparkPoints, withConflicts, minutesBetween,
     guessAudience, guessSubject, learnAudience, lineHead, formatLine, managerItems, workload, parseCSV, snapshotFromCSV,
-    KINDS, logFingerprint, migrateLogEntries, mergeLog, SOURCES, TOUCH_DIR, TOUCH_KIND, realDay, csvCell, calendarFills, conflictPartners, parseMinutes, parseNotebookLog, timeEntriesCSV, CSV_COLS, coldList };
+    KINDS, logFingerprint, migrateLogEntries, mergeLog, SOURCES, TOUCH_DIR, TOUCH_KIND, realDay, csvCell, calendarFills, conflictPartners, parseMinutes, parseNotebookLog, timeEntriesCSV, CSV_COLS, coldList,
+    ctIso, snoozeUntil, prevBusinessDay, isOutside, lastTouch, keyCold, overlays, focusSections, focusDelta, FOCUS_SECTIONS };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -20,7 +20,7 @@ with sync_playwright() as p:
             (tmp / "Data/inbox-snapshot.js").write_text("window.DASH_SNAPSHOT = " + json.dumps(snap) + ";\n")
         ctx = b.new_context(offline=True, viewport={"width": 1440, "height": 900}); pg = ctx.new_page(); net, errs = [], []
         pg.on("request", lambda r: (not r.url.startswith("file:")) and net.append(r.url)); pg.on("pageerror", lambda e: errs.append(str(e)))
-        url = (tmp / "index.html").as_uri() + "?now=2026-10-19T08:00:00-05:00&machine=test"; pg.goto(url); pg.wait_for_selector(".tile")
+        url = (tmp / "index.html").as_uri() + "?now=2026-10-19T08:00:00-05:00&view=dashboard&machine=test"; pg.goto(url); pg.wait_for_selector(".tile")
         check(len(pg.query_selector_all(".tile")) == 10, f"[{case}] 10 totals render offline")
         check(not net, f"[{case}] no network requests {net}"); check(not errs, f"[{case}] no page errors {errs}")
         badge = pg.is_visible("#exbadge")

@@ -32,7 +32,7 @@ def fs_for(d):
         if op == "write": t = d / (name + ".crswap"); t.write_text(text); os.replace(t, p); return True
         if op == "remove": p.unlink(); return True
     return fs
-Q = "?now=2026-10-19T08:00:00-05:00&machine="
+Q = "?now=2026-10-19T08:00:00-05:00&view=dashboard&machine="
 TOT = "JSON.stringify(DASH.app.state.entries.map(e => [e.id, e.minutes]).sort())"
 RAW = """new Promise(res => { const r = indexedDB.open('activity-dashboard'); r.onsuccess = () => { const out = {}, t = r.result.transaction('kv'), c = t.objectStore('kv').openCursor();
   c.onsuccess = () => { const x = c.result; if (x) { out[x.key] = x.value; x.continue(); } };
@@ -147,7 +147,7 @@ with sync_playwright() as p:
       const r = indexedDB.open('legacy-test-db', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv');
       r.onsuccess = () => { const t = r.result.transaction('kv', 'readwrite'), s = t.objectStore('kv'); s.put('oldpc', 'machine'); s.put(""" + json.dumps(ev[0]) + """, 'ownEvents'); s.put({ at: 'x', events: 0 }, 'migratedV2');
         t.oncomplete = () => { r.result.close(); done(true); }; }; })"""
-    n0 = len(dialogs); lg = page("legacy", d=d2, appdir=app2, init=init, q="?now=2026-10-19T08:00:00-05:00"); ready(lg)
+    n0 = len(dialogs); lg = page("legacy", d=d2, appdir=app2, init=init, q="?now=2026-10-19T08:00:00-05:00&view=dashboard"); ready(lg)
     asked = [m for m in dialogs[n0:] if "older version" in m]
     check(lg.evaluate("DASH.app.state.machine") == "oldpc" and lg.query_selector("#machinedlg") is None, "legacy cache: machine name copied from the older browser database (no name prompt)")
     check(lg.evaluate("DASH.app.state.entries.some(e => e.id === 'i-old1' && e.minutes === 35)"), "legacy cache: older build's time events copied")
@@ -160,7 +160,7 @@ with sync_playwright() as p:
     check(lg.evaluate("DASH.db.get('legacyImported').then(x => !!x.deleted)") and lg.evaluate("DASH.app.state.entries.some(e => e.id === 'i-old1')"), "legacy delete: data still there after the old copy is gone")
     # decline: kept, not asked again; then a failed verification gives no offer
     DLG["accept"] = False; n0 = len(dialogs)
-    dc = page("decline", d=d2, appdir=app2, init=init, q="?now=2026-10-19T08:00:00-05:00"); ready(dc)
+    dc = page("decline", d=d2, appdir=app2, init=init, q="?now=2026-10-19T08:00:00-05:00&view=dashboard"); ready(dc)
     dc.wait_for_function("() => DASH.db.get('legacyImported').then(x => !!(x && x.declined))", timeout=15000)
     check(len([m for m in dialogs[n0:] if "older version" in m]) == 1 and "legacy-test-db" in dc.evaluate(DBS), "legacy decline: Cancel keeps the old database")
     dc.wait_for_function("() => DASH.db.get('legacyImported').then(x => !!(x && x.declined))", timeout=15000)
@@ -172,7 +172,7 @@ with sync_playwright() as p:
     DLG["accept"] = True
     # encrypted folder: copied cache is encrypted on unlock, verified through decryption, then offered for deletion
     d3 = tmp / "Data3"; shutil.copytree(data, d3); n0 = len(dialogs)
-    le = page("legacyenc", d=d3, appdir=app2, init=init, q="?now=2026-10-19T08:00:00-05:00"); 
+    le = page("legacyenc", d=d3, appdir=app2, init=init, q="?now=2026-10-19T08:00:00-05:00&view=dashboard"); 
     le.wait_for_selector("#vaultunlock"); le.fill("#vault-pass", PASS2); le.click("#vault-ok"); ready(le)
     le.wait_for_function("() => DASH.db.get('legacyImported').then(x => !!(x && x.deleted))", timeout=15000)
     asked = [m for m in dialogs[n0:] if "older version" in m]

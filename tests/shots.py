@@ -4,11 +4,24 @@ import tempfile
 D = pathlib.Path(__file__).resolve().parents[1]
 # Output dir: first argument, else a fresh temp dir (never overwrites published shots by accident).
 OUT = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(tempfile.mkdtemp(prefix="dash-shots-")); OUT.mkdir(parents=True, exist_ok=True)
-URL = (D / "index.html").as_uri() + "?now=2026-10-19T08:00:00-05:00&machine=test"
+URL = (D / "index.html").as_uri() + "?now=2026-10-19T08:00:00-05:00&view=dashboard&machine=test"
 errs = []
 with sync_playwright() as p:
     b = p.chromium.launch(); pg = b.new_page(viewport={"width": 1440, "height": 900})
     pg.on("console", lambda m: m.type == "error" and errs.append(m.text)); pg.on("pageerror", lambda e: errs.append(str(e)))
+    # 00.05 Daily Focus (home), fictional example data
+    fq = (D / "index.html").as_uri() + "?now=2026-10-19T08:00:00-05:00&machine=test"
+    pg.goto(fq); pg.wait_for_selector(".sq"); pg.wait_for_timeout(400)
+    pg.screenshot(path=str(OUT / "00a-focus-first-run-offer.png"))
+    pg.click("#t1o-yes"); pg.wait_for_timeout(300); pg.screenshot(path=str(OUT / "00b-focus-1440.png"), full_page=True)
+    pg.click("#fs-overdue [data-fsnooze='EX-1']"); pg.screenshot(path=str(OUT / "00c-focus-snooze-menu.png")); pg.keyboard.press("Escape")
+    pg.click("#fs-dueToday [data-fdone='EX-7']"); pg.wait_for_timeout(100); pg.screenshot(path=str(OUT / "00d-focus-done-undo.png"))
+    pg.click("[data-later]"); pg.screenshot(path=str(OUT / "00e-focus-later-open.png"), full_page=True); pg.click("[data-later]")
+    pg.evaluate("document.getElementById('view-focus').classList.add('printing')"); pg.emulate_media(media="print")
+    pg.pdf(path=str(OUT / "00f-focus-print.pdf"), width="11in", height="8.5in", print_background=True, margin={"top": "0", "bottom": "0", "left": "0", "right": "0"})
+    pg.emulate_media(media="screen"); pg.evaluate("document.getElementById('view-focus').classList.remove('printing')")
+    import subprocess; subprocess.run(["pdftoppm", "-png", "-r", "110", "-singlefile", str(OUT / "00f-focus-print.pdf"), str(OUT / "00f-focus-print-landscape")], check=True)
+    pn = b.new_page(viewport={"width": 640, "height": 900}); pn.goto(fq); pn.wait_for_selector(".sq"); pn.wait_for_timeout(300); pn.screenshot(path=str(OUT / "00g-focus-200pct.png"), full_page=True); pn.close()
     pg.goto(URL); pg.wait_for_selector(".tile")
     pg.screenshot(path=str(OUT / "01-dashboard-1440.png"))
     pg.click("[data-filter=overdue]"); pg.screenshot(path=str(OUT / "02-filter-overdue.png")); pg.click("#clearf")

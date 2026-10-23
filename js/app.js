@@ -3,7 +3,7 @@
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
   const R = DASH.rules, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.04.001_261023";
+  const REV = "00.05.000_261023";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -17,7 +17,12 @@
   };
   const LABEL = { overdue: "Overdue", dueToday: "Due Today", thisWeek: "This Week", iOwe: "I Owe", owedToMe: "Owed to Me", goingCold: "Going Cold",
     followUps: "Follow-ups", waitingOn: "Waiting on", accountTouches: "Account touches", travel: "Travel" };
-  const S = { snap: null, today: R.ymd(NOW), filter: null, open: {}, collapsed: {}, entries: [], removedCal: [], history: [], rules: R.DEFAULT_RULES, view: "dashboard", wkOffset: 0, trends: false };
+  // 00.05: Daily Focus is always the home view (Q9); ?view= opens another tab (deep links, tests).
+  const VIEWS = ["focus", "dashboard", "workload", "print", "manager"];
+  const S = { snap: null, today: R.ymd(NOW), filter: null, open: {}, collapsed: {}, entries: [], removedCal: [], history: [], rules: R.DEFAULT_RULES, view: VIEWS.includes(qp.get("view")) ? qp.get("view") : "focus", wkOffset: 0, trends: false,
+    flags: {}, focusExp: new Set(), laterOpen: false, noDateOpen: false, focusAnimated: false };
+  // "now" for Snooze: the ?now= test clock if given, else the real clock.
+  const nowDate = () => qp.get("now") ? new Date(NOW.getTime()) : new Date();
 
   // ---------- loading ----------
   function loadScript(src) {
@@ -133,7 +138,8 @@
     m.entries = m.entries.filter(e => !(e.source === "calendar" && !e.attended && conflicted.has(e.eventId)));
     S.entries = m.entries; S.removedCal = m.removedCal; S.machines = st.machines;
     S.rules = Object.assign({}, R.DEFAULT_RULES, { domainMap: Object.assign({}, R.DEFAULT_RULES.domainMap, m.domainMap) });
-    S.view0 = JSON.parse(JSON.stringify({ entries: m.entries, removedCal: m.removedCal, domainMap: m.domainMap }));
+    S.flags = m.flags || {};
+    S.view0 = JSON.parse(JSON.stringify({ entries: m.entries, removedCal: m.removedCal, domainMap: m.domainMap, flags: S.flags }));
     if (S.snap && !isExample()) track(DB.set("timeEntries", S.entries));   // cache only
   }
   // Automatic entries get a fixed, old timestamp so they can never override a real edit or removal made on the other machine.
@@ -143,7 +149,7 @@
     return null;
   }
   function commit() {
-    const next = { entries: S.entries, removedCal: S.removedCal, domainMap: learned(S.rules) };
+    const next = { entries: S.entries, removedCal: S.removedCal, domainMap: learned(S.rules), flags: S.flags };
     const evs = R2.diff(S.view0, next, S.machine, S.clock, tsFor);
     if (!evs.length) return Promise.resolve();
     S.own.push(...evs); recompute();
@@ -704,6 +710,7 @@
     document.querySelectorAll(".view").forEach(v => v.classList.toggle("hidden", v.id !== "view-" + S.view));
     document.querySelectorAll(".tab").forEach(t => t.setAttribute("aria-selected", String(t.dataset.view === S.view)));
     if (!S.snap) return;
+    if (S.view === "focus") renderFocus();
     if (S.view === "dashboard") renderDashboard();
     if (S.view === "workload") renderWorkload();
     // Both sheets are always rendered so Ctrl+P from any tab prints a real sheet (F11).
@@ -776,7 +783,12 @@
   }
   function fmtMin(m) { return m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? " " + (m % 60) + "m" : ""}` : m + "m"; }
   function pill(w) { return `<span class="chip p-${w.replace(" ", "-")}">${w}</span>`; }
-  function acctTag(name) { if (!name) return ""; const a = S.snap.accounts.find(x => x.name === name); return `<span class="chip">${esc(name)}${a && a.tier === "T1" ? '<span class="t1">★</span>' : ""}</span>`; }
+  function acctTag(name) { if (!name) return ""; const a = S.snap.accounts.find(x => x.name === name); return `<span class="chip">${esc(name)}${a && a.tier === "T1" ? '<span class="t1" title="Top tier (T1)">T1</span>' : ""}</span>${starBtn(name)}`; }
+  // 00.05 key-account star (owner's pick of key accounts), synced as a flag event. Toggle with click, Space or Enter.
+  const isStarred = name => !!(S.flags["star:" + name] && S.flags["star:" + name].on);
+  function starBtn(name) { if (!name) return ""; const on = isStarred(name);
+    return `<button class="star${on ? " on" : ""}" data-star="${esc(name)}" aria-pressed="${on}" aria-label="${on ? "Unstar" : "Star"} ${esc(name)} as a key account" title="${on ? "Key account (click to unstar)" : "Star as a key account"}">${on ? "★" : "☆"}</button>`; }
+  function setFlag(id, data) { S.flags = Object.assign({}, S.flags, { [id]: data }); return commit(); }
   function renderList(items, c) {
     const shown = S.filter ? items.filter(it => R.inTotal(it, S.filter, c)) : items;
     $("#filterbar").innerHTML = S.filter ? `<span class="chip fchip">Showing: ${LABEL[S.filter]} (${shown.length}) · <button id="clearf">Clear</button></span>` : `<span class="faint" style="font-size:11.5px">Click a total to filter the list. Click it again to clear.</span>`;
@@ -846,14 +858,15 @@
       save: v => { delete v.kind; delete v.note; updateEntry(ent, v); saveEntries(); render(); } });
     const u = $("#pop-unattend"); if (u) u.onclick = () => { closePop(); unmarkAttended(ev.id); };
   }
-  function logCall(anchor) {
-    popover(anchor, { title: "Log call", sub: "Unscheduled interaction · counted at once", kind: "Phone", minutes: 15, audience: "Owner/operator", subject: "Account strategy", account: null, ok: "Log call",
+  function logCall(anchor, pre) {
+    pre = pre || {};
+    popover(anchor, { title: pre.title || "Log call", sub: pre.sub || "Unscheduled interaction · counted at once", kind: "Phone", minutes: 15, audience: pre.audience || "Owner/operator", subject: "Account strategy", account: pre.account || null, note: pre.note || "", ok: pre.ok || "Log call",
       save: v => {
         const acc = S.snap.accounts.find(a => a.name === v.account);
         S.entries.push({ id: "i" + Date.now() + Math.random().toString(36).slice(2, 6), taskId: null, eventId: null, date: S.today, minutes: v.minutes, kind: v.kind, note: v.note || "",
           audience: v.audience, subject: v.subject, account: v.account, source: "interaction", origin: "quick-add", confirmed: true, guessed: {}, title: `${v.kind}${v.note ? ": " + v.note : ""}` });
         if (acc && acc.domains.length && v.audience !== R.guessAudience(acc.domains, S.rules).value) teach({ account: v.account }, v.audience);
-        saveEntries(); toast(`Logged ${fmtMin(v.minutes)} ${v.kind}.`); render(); } });
+        saveEntries(); toast(`Logged ${fmtMin(v.minutes)} ${v.kind}${v.account ? " · touch for " + v.account : ""}.`); render(); if (pre.after) pre.after(); } });
   }
   function importLog(name, text, quiet) {
     const r = R.parseNotebookLog(text, S.snap.accounts.map(a => a.name));
@@ -929,9 +942,198 @@
       ${weekEntries.map(e => `<tr><td class="mono">${R.dayLabel(e.date)}</td><td>${esc(e.title || "")}</td><td class="mono">${e.minutes}</td>
         <td>${sel(R.AUDIENCES, e.audience, e.id, "audience")}${e.guessed && e.guessed.audience ? `<span class="guess" title="${esc(e.guessed.audience)}">guessed</span>` : ""}</td>
         <td>${sel(R.SUBJECTS, e.subject, e.id, "subject")}${e.guessed && e.guessed.subject ? `<span class="guess" title="${esc(e.guessed.subject)}">guessed</span>` : ""}</td>
-        <td>${esc(e.account || "—")}</td><td>${e.source === "interaction" ? esc(e.kind) + (e.origin === "notebook-log" ? " · log" : "") : e.source}${e.attended ? " · attended" : ""}</td>
+        <td>${esc(e.account || "—")}${e.account ? starBtn(e.account) : ""}</td><td>${e.source === "interaction" ? esc(e.kind) + (e.origin === "notebook-log" ? " · log" : "") : e.source}${e.attended ? " · attended" : ""}</td>
         <td>${e.source === "calendar" ? `<button class="btn" data-ent="${esc(e.id)}">Adjust</button> ` : ""}<button class="btn" data-del="${esc(e.id)}" aria-label="Remove entry">Remove</button></td></tr>`).join("") || '<tr><td colspan="8" class="faint">No entries this week.</td></tr>'}
       </tbody></table></div>`;
+  }
+
+  // ---------- 00.05 Daily Focus (home) ----------
+  // Sections, counts and the delta come from R.focusSections (pure). Done / Snooze / stars are "flag" events in this machine's
+  // synced (encrypted) time file; To Do stays the source of truth and wins on the next snapshot (R.overlays).
+  const reducedMotion = () => !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const ST = { today: ["Today", "i-today", "today"], overdue: ["Overdue", "i-over", "over"], week: ["This week", "i-week", "week"], later: ["Later", "i-later", "later"],
+    waiting: ["Waiting", "i-wait", "wait"], cold: ["Cooling", "i-cold", "cold"], travel: ["Travel", "i-travel", "travel"] };
+  const SEC = { dueToday: ["Due Today", "today"], overdue: ["Overdue", "over"], owed: ["Owed to outside", "week"], waiting: ["Waiting · past check-back", "wait"], cold: ["Going cold · key", "cold"], travel: ["Travel ≤ 7 days", "travel"] };
+  const EMPTY = { dueToday: "Nothing due today.", overdue: "Nothing overdue.", owed: "Nothing owed to outside.", waiting: "No waiting items past their check-back date.", cold: "No key account going cold.", travel: "No travel in the next 7 days." };
+  const icon = (id, cls) => `<svg class="ic${cls ? " " + cls : ""}" aria-hidden="true" focusable="false"><use href="#${id}"></use></svg>`;
+  function focusModel() {
+    const nowIso = nowDate().toISOString(), ov = R.overlays(S.flags, S.snap, nowIso);
+    const f = R.focusSections(S.snap, { today: S.today, nowIso, timeEntries: S.entries }, ov, { cap: CFG.focusRowCap || 12, expanded: S.focusExp, history: S.history });
+    return Object.assign(f, { ov, nowIso });
+  }
+  const md = d => { const [, m, dd] = d.split("-").map(Number); return `${m}/${dd}`; };
+  const hhmm24 = iso => { const h = R.hourCT(iso), H = Math.floor(h + 1e-9), M = Math.round((h - H) * 60); return `${String(H).padStart(2, "0")}:${String(M).padStart(2, "0")}`; };
+  const noDatePill = '<span class="nodate">⚠ no date</span>';
+  function whenText(r) {
+    const w = r.when || {};
+    if (w.kind === "today") return "Today";
+    if (w.kind === "late") return `${w.days}d late`;
+    if (w.kind === "was") return `was ${md(w.day)}`;
+    if (w.kind === "day") return esc(R.dayLabel(w.day));
+    if (w.kind === "nodate") return `— ${noDatePill}`;
+    if (w.kind === "notouch") return `<span class="muted">no touch set</span>${w.nodate ? " " + noDatePill : ""}`;
+    return "";
+  }
+  function keyChip(name) { if (!name) return ""; const on = isStarred(name);
+    return on ? `<button class="key" data-star="${esc(name)}" aria-pressed="true" aria-label="Key account ${esc(name)}: unstar" title="Key account (click to unstar)">★ Key</button>`
+      : `<button class="star" data-star="${esc(name)}" aria-pressed="false" aria-label="Star ${esc(name)} as a key account" title="Star as a key account">☆</button>`; }
+  function focusRow(r, i, anim) {
+    const st = ST[r.status] || ST.week, task = r.it ? r.it.id : "";
+    let act = esc(r.title);
+    if (r.status === "cold") act += ` — ${r.coldDays === null ? "no touch on record" : r.coldDays + "d since last"}`;
+    if (r.reopened) act += ' <span class="note">reopened in To Do</span>';
+    if (r.it && r.it.withhold) act += ' <span class="wchip" title="Tagged Withhold in To Do: never on the Manager sheet">⊘ Withheld</span>';
+    if (r.snoozedUntil) act += ` <span class="note">snoozed to ${esc(R.dayLabel(R.isoDay(r.snoozedUntil)))} ${hhmm24(r.snoozedUntil)}</span>`;
+    const lbl = esc(r.title), dis = task ? "" : ` disabled title="Not a To Do task"`;
+    return `<div class="frow${anim ? " anim" : ""}" role="listitem" tabindex="0" data-row="${esc(r.id)}" data-task="${esc(task)}" data-acct="${esc(r.account || "")}" data-person="${esc(r.person || "")}"${anim && !reducedMotion() ? ` style="animation-delay:${Math.min(i, 20) * 30}ms"` : ""} aria-label="${esc(st[0])}: ${lbl}${r.account ? ", " + esc(r.account) : ""}">
+      <span class="st c-${st[2]}">${icon(st[1])} ${st[0]}</span>
+      <span class="acct">${r.account ? `<span class="an">${esc(r.account)}</span> ${keyChip(r.account)}` : '<span class="muted">—</span>'}</span>
+      <span class="per">${esc(r.person || "—")}</span>
+      <span class="act">${act}</span>
+      <span class="nx">${whenText(r)}</span>
+      <span class="btns"><button data-fdone="${esc(task)}" aria-label="Done: ${lbl}"${dis}>✓ Done</button><button data-fsnooze="${esc(task)}" aria-haspopup="menu" aria-expanded="false" aria-label="Snooze: ${lbl}"${dis}>Snooze</button><button data-ftouch="${esc(r.id)}" aria-label="Log touch: ${lbl}">Log touch</button></span></div>`;
+  }
+  function renderFocus() {
+    const el = $("#view-focus"); if (!el) return;
+    const f = focusModel(), anim = !S.focusAnimated; S.focusModel = f;
+    const c = f.counts, d = f.delta;
+    const deltaTip = d ? `${Math.abs(d.delta)} ${d.delta >= 0 ? "more" : "fewer"} due today than the previous business day's snapshot (${R.dayLabel(d.basisDay)})${d.delta === 0 ? "" : ""}` : "";
+    const sq = (key, cls, lab, ic, n, extra, aria) => `<div class="tw"><span class="sqlab l-${cls}" id="lab-${key}">${icon(ic)} ${lab}</span>
+      <button class="sq t-${cls}" data-sq="${key}" aria-label="${aria}"><b>${n}</b>${extra || ""}</button></div>`;
+    const doneNote = f.doneDueToday ? `; ${f.doneDueToday} marked done here` : "";
+    const squares = sq("dueToday", "today", "Due Today", "i-today", c.dueToday, d ? `<em class="delta" title="${esc(deltaTip)}">${esc(d.text)}</em>` : "",
+        `Due Today, ${c.dueToday} item${c.dueToday === 1 ? "" : "s"}${doneNote}${d ? ". " + deltaTip : ""}. Go to section`)
+      + sq("overdue", "over", "Overdue", "i-over", c.overdue, "", `Overdue, ${c.overdue} item${c.overdue === 1 ? "" : "s"}. Go to section`)
+      + sq("waiting", "wait", "Waiting past due", "i-wait", c.waiting, "", `Waiting past due, ${c.waiting} item${c.waiting === 1 ? "" : "s"}. Go to section`)
+      + sq("cold", "cold", "Going cold", "i-cold", c.cold, "", `Going cold, ${c.cold} key account${c.cold === 1 ? "" : "s"}. Go to section`);
+    const now = new Date(f.nowIso), evs = R.withConflicts(S.snap.calendar).filter(e => e.day === S.today && new Date(e.end) > now).sort((a, b) => a.start < b.start ? -1 : 1);
+    const meet = evs.slice(0, 4).map(e => `<div class="mt${e.conflict ? " cf" : ""}"><span class="t">${hhmm24(e.start)}</span><span class="ma">${esc(e.account || "—")}</span><small>${esc(e.title)}${e.conflict ? " ⚠" : ""} · <button class="lnk" data-prep="${esc(e.id)}" aria-label="Prep for ${esc(e.title)}">prep ↗</button></small></div>`).join("")
+      || '<div class="mt empty"><small>No more meetings today.</small></div>';
+    const asof = `As of ${R.dayLabel(R.isoDay(S.snap.generatedAt))} · ${hhmm24(S.snap.generatedAt)} CT`;
+    const header = `<header class="fhead"><div class="tiles4" role="group" aria-label="Today at a glance">${squares}</div>
+      <div class="side"><div class="ttl"><h1>Daily Focus</h1><div class="asof${isStale() ? " stale" : ""}" title="${isStale() ? "This snapshot is more than 24 hours old." : "Time the snapshot was made (Central Time)."}">${isStale() ? "⚠ Stale · " : ""}${esc(asof)}${S.snap.example ? ' · <span class="exd">EXAMPLE DATA</span>' : ""}</div></div>
+        ${f.doneHere ? `<div class="donehere" role="status">${f.doneHere} done here, not yet in To Do <span class="muted">· mark ${f.doneHere === 1 ? "it" : "them"} done in To Do</span></div>` : ""}
+        <div class="meet" aria-label="Meetings today">${meet}${evs.length > 4 ? `<button class="lnk mmore" data-meetmore>+${evs.length - 4} more</button>` : ""}</div></div></header>`;
+    let i = 0;
+    const sections = f.sections.map(x => {
+      const [title, cls] = SEC[x.key], hero = x.key === "dueToday";
+      const rows = x.rows.map(r => focusRow(r, i++, anim)).join("");
+      return `<section class="blk b-${cls}${hero ? " hero" : ""}" id="fs-${x.key}" aria-labelledby="fh-${x.key}"><h2 class="sh" id="fh-${x.key}" tabindex="-1">${title} <span class="badge" aria-label="${x.total} item${x.total === 1 ? "" : "s"}">${x.total}</span>${hero && d ? ` <span class="delta" aria-hidden="true">${esc(d.text)}</span>` : ""}</h2>
+        ${x.total ? `<div role="list">${rows}</div>` : `<div class="none">${EMPTY[x.key]}</div>`}
+        ${x.more > 0 ? `<button class="lnk more" data-fmore="${x.key}" aria-label="Show ${x.more} more in ${title}">+${x.more} more</button>` : ""}${S.focusExp.has(x.key) && x.total > 1 ? `<button class="lnk more" data-fless="${x.key}">show fewer</button>` : ""}</section>`;
+    }).join("");
+    const later = `<div class="later"><button class="lnk" data-later aria-expanded="${S.laterOpen}" aria-controls="later-list">${S.laterOpen ? "▾" : "▸"} Later this week · ${f.later.length} item${f.later.length === 1 ? "" : "s"}</button>
+      ${S.laterOpen ? `<div id="later-list" role="list">${f.later.map(r => focusRow(r, 0, false)).join("") || '<div class="none">Nothing else this week.</div>'}</div>` : ""}</div>`;
+    const nd = f.noDate.length ? `<div class="later"><button class="lnk" data-nodate aria-expanded="${S.noDateOpen}">${f.noDate.length} open item${f.noDate.length === 1 ? " has" : "s have"} no date → ${S.noDateOpen ? "hide" : "show"}</button>
+      ${S.noDateOpen ? `<div role="list">${f.noDate.map(it => focusRow({ it, id: it.id, status: it.list === "Waiting on" ? "waiting" : "week", account: it.account, person: it.person, title: it.title, when: { kind: "nodate" } }, 0, false)).join("")}</div>` : ""}</div>` : "";
+    const t1 = S.snap.accounts.filter(a => a.tier === "T1"), offer = !(S.flags["setting:t1offer"] && S.flags["setting:t1offer"].on) && t1.length && !S.snap.accounts.some(a => isStarred(a.name));
+    const offerHtml = offer ? `<div class="t1offer" role="dialog" aria-labelledby="t1o-h" aria-describedby="t1o-p"><h2 id="t1o-h" class="sh">Star your T1 accounts as key accounts?</h2>
+      <p id="t1o-p" class="muted">Key accounts drive <b>Going cold · key</b>. Untick any you don't want; you can change this any time with ☆/★ or File → Key accounts &amp; internal people….</p>
+      <div class="t1list">${t1.map(a => `<label><input type="checkbox" data-t1="${esc(a.name)}" checked> ${esc(a.name)}</label>`).join("")}</div>
+      <div class="vbtns"><button class="btn" id="t1o-no">Not now</button><button class="btn primary" id="t1o-yes">Star selected</button></div></div>` : "";
+    const foc = document.activeElement && document.activeElement.closest && document.activeElement.closest(".frow"), keep = foc ? foc.dataset.row : null;
+    el.innerHTML = header + offerHtml + sections + later + nd + `<div class="ffoot muted">Rows: ${f.sections.reduce((a, x) => a + x.rows.length, 0)} of ${f.sections.reduce((a, x) => a + x.total, 0)} (cap ${f.cap}) · keys: j/k move · d Done · s Snooze · t Log touch · Rev ${REV}</div>`;
+    if (S.snap) S.focusAnimated = true;
+    if (keep) { const r = el.querySelector(`.frow[data-row="${CSS.escape(keep)}"]`); if (r) r.focus(); }
+  }
+  function undoToast(msg, undo) {
+    const t = $("#undo"); t.innerHTML = `<span>${esc(msg)}</span> <button class="btn" id="undo-btn">Undo</button>`; t.classList.remove("hidden");
+    clearTimeout(undoToast.h); undoToast.h = setTimeout(() => t.classList.add("hidden"), 8000);
+    $("#undo-btn").onclick = () => { clearTimeout(undoToast.h); t.classList.add("hidden"); undo(); };
+  }
+  function focusDone(id) {
+    const it = S.snap.items.find(x => x.id === id); if (!it) return;
+    const fid = "done:" + id, prev = S.flags[fid];
+    setFlag(fid, { on: true, at: nowDate().toISOString(), snapAt: S.snap.generatedAt }); render();
+    undoToast(`Marked done here: "${it.title}". Remember to tick it off in To Do.`, () => { setFlag(fid, Object.assign({}, S.flags[fid] || prev || {}, { on: false })); render(); });
+  }
+  function focusSnooze(id, choice, picked) {
+    const it = S.snap.items.find(x => x.id === id); if (!it) return;
+    const until = R.snoozeUntil(choice, nowDate().toISOString(), picked); if (!until) { toast("Pick a valid date."); return; }
+    const fid = "snooze:" + id; setFlag(fid, { on: true, until, due: it.due || null }); render();
+    undoToast(`Snoozed "${it.title}" until ${R.dayLabel(R.isoDay(until))} ${hhmm24(until)} CT.`, () => { setFlag(fid, Object.assign({}, S.flags[fid], { on: false })); render(); });
+  }
+  function closeSnooze(refocus) { const m = $("#snz"); if (!m) return; const b = document.querySelector(`[data-fsnooze="${CSS.escape(m.dataset.task)}"]`); m.remove(); if (b) { b.setAttribute("aria-expanded", "false"); if (refocus) b.focus(); } }
+  function openSnooze(btn) {
+    closeSnooze(); closePop();
+    const id = btn.dataset.fsnooze, m = document.createElement("div"); m.id = "snz"; m.className = "snz"; m.setAttribute("role", "menu"); m.setAttribute("aria-label", "Snooze until"); m.dataset.task = id;
+    m.innerHTML = `<button role="menuitem" data-snz="later">Later today (+3 h)</button><button role="menuitem" data-snz="tomorrow">Tomorrow 8:00</button><button role="menuitem" data-snz="monday">Next Monday 8:00</button><button role="menuitem" data-snz="date">Pick date…</button>
+      <div class="snzdate hidden"><input type="date" id="snz-date" aria-label="Snooze until date" min="${R.addDays(S.today, 1)}"><button class="btn primary" id="snz-ok">Snooze</button></div>`;
+    document.body.appendChild(m); btn.setAttribute("aria-expanded", "true");
+    const rc = btn.getBoundingClientRect(); m.style.left = Math.min(rc.left, innerWidth - 220) + "px"; m.style.top = (rc.bottom + 4 + 170 > innerHeight ? Math.max(8, rc.top - 174) : rc.bottom + 4) + "px";
+    const items = [...m.querySelectorAll("[role=menuitem]")]; items[0].focus();
+    m.addEventListener("keydown", e => {
+      const k = items.indexOf(document.activeElement);
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); items[(k + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus(); }
+      if (e.key === "Home") { e.preventDefault(); items[0].focus(); } if (e.key === "End") { e.preventDefault(); items[items.length - 1].focus(); }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeSnooze(true); }
+      if (e.key === "Tab") closeSnooze();
+    });
+    m.addEventListener("click", e => { e.stopPropagation(); const b = e.target.closest("[data-snz]");
+      if (b && b.dataset.snz === "date") { m.querySelector(".snzdate").classList.remove("hidden"); $("#snz-date").focus(); return; }
+      if (b) { closeSnooze(); focusSnooze(id, b.dataset.snz); return; }
+      if (e.target.id === "snz-ok") { const v = $("#snz-date").value; closeSnooze(); focusSnooze(id, "date", v); } });
+  }
+  function focusTouch(btn) {
+    const row = btn.closest(".frow"), acct = row.dataset.acct || null, person = row.dataset.person || "";
+    const acc = acct && S.snap.accounts.find(a => a.name === acct), aud = acc && acc.domains.length ? R.guessAudience(acc.domains, S.rules).value : "Owner/operator";
+    logCall(btn, { title: "Log touch", sub: `${acct || "No account"}${person ? " · " + person : ""} · counts as a touch for Going cold`, account: acct, note: person, audience: aud, ok: "Log touch" });
+  }
+  function goSection(key) {
+    const h = document.getElementById("fh-" + key); if (!h) return;
+    h.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" }); h.focus({ preventScroll: true });
+  }
+  function focusClick(e) {
+    const t = e.target;
+    if (!t.closest("#snz") && $("#snz") && !t.closest("[data-fsnooze]")) closeSnooze();
+    const st = t.closest("[data-star]"); if (st) { const n = st.dataset.star; setFlag("star:" + n, { on: !isStarred(n) }); render(); toast(`${isStarred(n) ? "★ Key account: " : "Unstarred: "}${n}`); return true; }
+    if (!t.closest("#view-focus")) return false;
+    const sq = t.closest("[data-sq]"); if (sq) { goSection(sq.dataset.sq); return true; }
+    const dn = t.closest("[data-fdone]"); if (dn) { focusDone(dn.dataset.fdone); return true; }
+    const sz = t.closest("[data-fsnooze]"); if (sz) { if ($("#snz") && $("#snz").dataset.task === sz.dataset.fsnooze) closeSnooze(); else openSnooze(sz); return true; }
+    const tc = t.closest("[data-ftouch]"); if (tc) { focusTouch(tc); return true; }
+    const mo = t.closest("[data-fmore]"); if (mo) { S.focusExp.add(mo.dataset.fmore); render(); return true; }
+    const le = t.closest("[data-fless]"); if (le) { S.focusExp.delete(le.dataset.fless); render(); return true; }
+    if (t.closest("[data-later]")) { S.laterOpen = !S.laterOpen; render(); return true; }
+    if (t.closest("[data-nodate]")) { S.noDateOpen = !S.noDateOpen; render(); return true; }
+    if (t.closest("[data-meetmore]")) { setView("workload"); return true; }
+    const pr = t.closest("[data-prep]"); if (pr) { const ent = S.entries.find(x => x.eventId === pr.dataset.prep);
+      if (ent) editCalendarEntry(pr, ent); else { setView("dashboard"); const c = $("#cal"); if (c) c.scrollIntoView({ block: "start" }); } return true; }
+    if (t.id === "t1o-yes" || t.id === "t1o-no") { const pick = t.id === "t1o-yes" ? [...document.querySelectorAll("[data-t1]")].filter(x => x.checked).map(x => x.dataset.t1) : [];
+      const nf = Object.assign({}, S.flags, { "setting:t1offer": { on: true } }); pick.forEach(n => nf["star:" + n] = { on: true }); S.flags = nf; commit(); render();
+      toast(pick.length ? `Starred ${pick.length} key account${pick.length === 1 ? "" : "s"}.` : "No accounts starred. Use ☆ on any account to star it."); return true; }
+    return false;
+  }
+  // Keyboard (Q14): j/k move between rows, d/s/t = Done / Snooze / Log touch on the focused row. Off while typing or in a dialog.
+  function focusKeys(e) {
+    if (S.view !== "focus" || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+    const a = document.activeElement; if (a && (a.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName))) return;
+    if ($("#pop") || $("#snz") || document.querySelector(".overlay.open")) return;
+    const k = e.key; if (!["j", "k", "d", "s", "t"].includes(k)) return;
+    const rows = [...document.querySelectorAll("#view-focus .frow")]; if (!rows.length) return;
+    const cur = a && a.closest ? a.closest(".frow") : null;
+    if (k === "j" || k === "k") { e.preventDefault(); const i = rows.indexOf(cur); const n = cur ? Math.max(0, Math.min(rows.length - 1, i + (k === "j" ? 1 : -1))) : (k === "j" ? 0 : rows.length - 1); rows[n].focus(); rows[n].scrollIntoView({ block: "nearest" }); return; }
+    if (!cur) return; e.preventDefault();
+    const b = cur.querySelector(k === "d" ? "[data-fdone]" : k === "s" ? "[data-fsnooze]" : "[data-ftouch]"); if (b && !b.disabled) b.click();
+    if (k === "d") { const r2 = [...document.querySelectorAll("#view-focus .frow")]; const n = r2[Math.min(rows.indexOf(cur), r2.length - 1)]; if (n) n.focus(); }
+  }
+  function keyAccountsDialog() {
+    if (!S.snap) return;
+    const people = [...new Set(S.snap.items.map(i => i.person).filter(p => p && p.toLowerCase() !== "me"))].sort();
+    const isInt = p => !!(S.flags["internal:" + p.toLowerCase()] && S.flags["internal:" + p.toLowerCase()].on);
+    dialog("keydlg", `<b class="vt">Key accounts &amp; internal people</b>
+      <p class="faint">★ Key accounts feed <b>Going cold · key</b>. People ticked as internal (your colleagues) don't count as <b>Owed to outside</b> unless the task has an account. Both are saved encrypted and synced like your time.</p>
+      <div class="kcols"><fieldset><legend>Key accounts</legend>${S.snap.accounts.map(a => `<label><input type="checkbox" data-ka="${esc(a.name)}"${isStarred(a.name) ? " checked" : ""}> ${esc(a.name)}${a.tier === "T1" ? ' <span class="faint">T1</span>' : ""}</label>`).join("")}</fieldset>
+      <fieldset><legend>Internal people</legend>${people.map(p => `<label><input type="checkbox" data-ip="${esc(p)}"${isInt(p) ? " checked" : ""}> ${esc(p)}</label>`).join("") || '<span class="faint">No people in this snapshot.</span>'}</fieldset></div>
+      <div class="vbtns"><button class="btn" id="ka-cancel">Cancel</button><button class="btn primary" id="ka-ok">Save</button></div>`,
+    (d, done) => {
+      d.querySelector("#ka-cancel").onclick = () => done(null);
+      d.querySelector("#ka-ok").onclick = () => { const nf = Object.assign({}, S.flags);
+        d.querySelectorAll("[data-ka]").forEach(x => { const id = "star:" + x.dataset.ka; if (x.checked !== isStarred(x.dataset.ka)) nf[id] = { on: x.checked }; });
+        d.querySelectorAll("[data-ip]").forEach(x => { const id = "internal:" + x.dataset.ip.toLowerCase(); if (x.checked !== isInt(x.dataset.ip)) nf[id] = { on: x.checked }; });
+        nf["setting:t1offer"] = { on: true }; S.flags = nf; commit(); done(true); render(); toast("Key accounts and internal people saved."); };
+      d.addEventListener("keydown", e => { if (e.key === "Escape") done(null); });
+    });
   }
 
   // ---------- print sheets ----------
@@ -967,6 +1169,7 @@
       </div></div>`;
   }
   function doPrint(which) { S.view = which; render(); document.querySelectorAll(".view").forEach(v => v.classList.toggle("printing", v.id === "view-" + which)); setTimeout(() => window.print(), 50); }
+  const printTarget = () => S.view === "manager" ? "manager" : S.view === "focus" ? "focus" : "print";   // 00.05: Ctrl+P on Daily Focus prints Daily Focus
 
   // ---------- help ----------
   function openHelp(sec) {
@@ -994,9 +1197,9 @@
     saveTimeFile: () => { if (S.vault.kr && !confirm("This saves your time file unencrypted (plain JSON) to Downloads. Continue?")) return;  download(R2.fileName(S.machine), null, R2.serialize(S.machine, S.own, new Date().toISOString())); toast(`Saved ${R2.fileName(S.machine)}. Put it in the Data folder.`); },
     openTimeFiles: () => pickFiles(".json", files => { files.forEach(([n, t]) => { const r = R2.parseTimeFile(t, n); S.fileEvents["picked:" + n] = r.events; if (r.bad) S.problems.push(r.bad); }); recompute(); render(); toast(`Merged ${files.length} time file(s).`); }),
     importLog: () => pickFile(".md,.txt", (n, t) => importLog(n, t)), logCall: () => logCall($("#asof")),
-    print: () => doPrint("print"), printManager: () => doPrint("manager"), reload: () => reloadSafely(),
-    vDash: () => setView("dashboard"), vWork: () => setView("workload"), vPrint: () => setView("print"), vManager: () => setView("manager"),
-    hHelp: () => openHelp("help"), hHow: () => openHelp("howdoi"), hFaq: () => openHelp("faq"), hQuick: () => openHelp("quick"), hRev: () => openHelp("rev"),
+    print: () => doPrint("print"), printManager: () => doPrint("manager"), printFocus: () => doPrint("focus"), reload: () => reloadSafely(),
+    keyAccounts: () => keyAccountsDialog(), vFocus: () => setView("focus"), vDash: () => setView("dashboard"), vWork: () => setView("workload"), vPrint: () => setView("print"), vManager: () => setView("manager"),
+    hHelp: () => openHelp("help"), hHow: () => openHelp("howdoi"), hFaq: () => openHelp("faq"), hQuick: () => openHelp("quick"), hRev: () => openHelp("rev"), hKeys: () => openHelp("keys"),
   };
   function setView(v) { S.view = v; closePop(); render(); }
 
@@ -1006,6 +1209,7 @@
       const a = e.target.closest("[data-act]"); if (a) { closeMenus(); ACTIONS[a.dataset.act](); return; }
       if (!e.target.closest(".mitem")) closeMenus();
       const tab = e.target.closest(".tab"); if (tab) return setView(tab.dataset.view);
+      if (focusClick(e)) return;
       const tl = e.target.closest("[data-filter]"); if (tl) { S.filter = S.filter === tl.dataset.filter ? null : tl.dataset.filter; render(); return; }
       if (e.target.id === "clearf") { S.filter = null; render(); return; }
       if (e.target.id === "trends-toggle") { S.trends = !S.trends; render(); return; }
@@ -1024,9 +1228,10 @@
       if (e.target.id === "help-close" || e.target.id === "help") $("#help").classList.remove("open");
     });
     document.addEventListener("change", e => { const s = e.target.closest("[data-ed]"); if (!s) return; const ent = S.entries.find(x => x.id === s.dataset.ed); updateEntry(ent, { [s.dataset.k]: s.value }); saveEntries(); render(); });
-    document.addEventListener("keydown", e => { if (e.key === "Escape") { closeMenus(); closePop(); const c = $("#cleardlg"); if (c) c.remove(); $("#help").classList.remove("open"); } });
+    document.addEventListener("keydown", focusKeys);
+    document.addEventListener("keydown", e => { if (e.key === "Escape") { closeSnooze(); closeMenus(); closePop(); const c = $("#cleardlg"); if (c) c.remove(); $("#help").classList.remove("open"); } });
     $("#howdoi-input").addEventListener("input", e => { const q = e.target.value.toLowerCase(); document.querySelectorAll("#help-howdoi details").forEach(d => d.classList.toggle("hidden", q && !d.textContent.toLowerCase().includes(q))); });
-    window.addEventListener("beforeprint", () => { const w = S.view === "manager" ? "manager" : "print"; document.querySelectorAll(".view").forEach(v => v.classList.toggle("printing", v.id === "view-" + w)); });
+    window.addEventListener("beforeprint", () => { const w = printTarget(); document.querySelectorAll(".view").forEach(v => v.classList.toggle("printing", v.id === "view-" + w)); });
     window.addEventListener("afterprint", () => document.querySelectorAll(".view").forEach(v => v.classList.remove("printing")));
     $("#rev").textContent = "Rev " + REV;
     const img = $("#avatar"); img.addEventListener("error", () => { img.style.display = "none"; $("#avatar-fb").style.display = "flex"; });
@@ -1034,7 +1239,7 @@
   }
   function closeMenus() { document.querySelectorAll(".mtop").forEach(b => { b.setAttribute("aria-expanded", "false"); b.nextElementSibling.classList.add("hidden"); }); }
 
-  window.DASH.app = { state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget };
+  window.DASH.app = { state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel };
   window.addEventListener("beforeunload", e => { if (pending.size) { e.preventDefault(); e.returnValue = ""; } });
   boot();
 })();
