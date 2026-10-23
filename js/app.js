@@ -1025,12 +1025,14 @@
     const el = $("#view-focus"); if (!el) return;
     const f = focusModel(), anim = !S.focusAnimated; S.focusModel = f;
     const c = f.counts, d = f.delta;
-    const deltaTip = d ? `${Math.abs(d.delta)} ${d.delta >= 0 ? "more" : "fewer"} due today than the previous business day's snapshot (${R.dayLabel(d.basisDay)})${d.delta === 0 ? "" : ""}` : "";
+    // Delta tooltip / accessible name: counted against the last snapshot of the previous business day, using the Totals
+    // definition of Due Today (includes Waiting on items due today; local Done marks don't change it).
+    const deltaTip = d ? `${d.delta === 0 ? "Same number" : `${Math.abs(d.delta)} ${d.delta > 0 ? "more" : "fewer"}`} due today than in the last snapshot of the previous business day (${R.dayLabel(d.basisDay)}). Counted with the Totals definition of Due Today, which includes Waiting items due today.` : "";
     const sq = (key, cls, lab, ic, n, extra, aria) => `<div class="tw"><span class="sqlab l-${cls}" id="lab-${key}">${icon(ic)} ${lab}</span>
       <button class="sq t-${cls}" data-sq="${key}" aria-label="${aria}"><b>${n}</b>${extra || ""}</button></div>`;
     const doneNote = f.doneDueToday ? `; ${f.doneDueToday} marked done here` : "";
-    const squares = sq("dueToday", "today", "Due Today", "i-today", c.dueToday, d ? `<em class="delta" title="${esc(deltaTip)}">${esc(d.text)}</em>` : "",
-        `Due Today, ${c.dueToday} item${c.dueToday === 1 ? "" : "s"}${doneNote}${d ? ". " + deltaTip : ""}. Go to section`)
+    const squares = sq("dueToday", "today", "Due Today", "i-today", c.dueToday, d ? `<em class="delta" role="img" title="${esc(deltaTip)}" aria-label="${esc(d.text.replace("▲", "Up ").replace("▼−", "Down ").replace("=", "No change "))}: ${esc(deltaTip)}">${esc(d.text)}</em>` : "",
+        `Due Today, ${c.dueToday} item${c.dueToday === 1 ? "" : "s"}${doneNote}${d ? ". " + deltaTip.replace(/\.$/, "") : ""}. Go to section`)
       + sq("overdue", "over", "Overdue", "i-over", c.overdue, "", `Overdue, ${c.overdue} item${c.overdue === 1 ? "" : "s"}. Go to section`)
       + sq("waiting", "wait", "Waiting past due", "i-wait", c.waiting, "", `Waiting past due, ${c.waiting} item${c.waiting === 1 ? "" : "s"}. Go to section`)
       + sq("cold", "cold", "Going cold", "i-cold", c.cold, "", `Going cold, ${c.cold} key account${c.cold === 1 ? "" : "s"}. Go to section`);
@@ -1046,7 +1048,7 @@
     const sections = f.sections.map(x => {
       const [title, cls] = SEC[x.key], hero = x.key === "dueToday";
       const rows = x.rows.map(r => focusRow(r, i++, anim)).join("");
-      return `<section class="blk b-${cls}${hero ? " hero" : ""}" id="fs-${x.key}" aria-labelledby="fh-${x.key}"><h2 class="sh" id="fh-${x.key}" tabindex="-1">${title} <span class="badge" aria-label="${x.total} item${x.total === 1 ? "" : "s"}">${x.total}</span>${hero && d ? ` <span class="delta" aria-hidden="true">${esc(d.text)}</span>` : ""}</h2>
+      return `<section class="blk b-${cls}${hero ? " hero" : ""}" id="fs-${x.key}" aria-labelledby="fh-${x.key}"><h2 class="sh" id="fh-${x.key}" tabindex="-1">${title} <span class="badge" aria-label="${x.total} item${x.total === 1 ? "" : "s"}">${x.total}</span>${hero && d ? ` <span class="delta" role="img" title="${esc(deltaTip)}" aria-label="${esc(deltaTip)}">${esc(d.text)}</span>` : ""}</h2>
         ${x.total ? `<div role="list">${rows}</div>` : `<div class="none">${EMPTY[x.key]}</div>`}
         ${x.more > 0 ? `<button class="lnk more" data-fmore="${x.key}" aria-label="Show ${x.more} more in ${title}">+${x.more} more</button>` : ""}${S.focusExp.has(x.key) && x.total > 1 ? `<button class="lnk more" data-fless="${x.key}">show fewer</button>` : ""}</section>`;
     }).join("");

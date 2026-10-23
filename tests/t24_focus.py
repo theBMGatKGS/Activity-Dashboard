@@ -31,6 +31,12 @@ with sync_playwright() as p:
     check(all(x[4] == "10px" for x in sq), "square labels are 10px (Q7)")
     dl = pg.evaluate("(() => { const s = document.querySelector('.sq.t-today').getBoundingClientRect(), d = document.querySelector('.sq.t-today .delta').getBoundingClientRect(); return [d.left >= s.left, d.right <= s.right, d.top >= s.top, d.bottom <= s.bottom, document.querySelector('.sq.t-today .delta').textContent]; })()")
     check(all(dl[:4]) and dl[4] == "▲+1", f"delta chip sits inside the Due Today square ({dl[4]})")
+    dt = pg.evaluate("[...document.querySelectorAll('.sq.t-today .delta, #fh-dueToday .delta')].map(e => [e.getAttribute('title'), e.getAttribute('aria-label'), e.getAttribute('role'), e.getAttribute('aria-hidden')])")
+    want = ("last snapshot of the previous business day", "Totals definition of Due Today", "includes Waiting items due today")
+    check(len(dt) == 2 and all(t and l and all(w in t and w in l for w in want) and r == "img" and h is None for t, l, r, h in dt) and dt[0][1].startswith("Up +1:"),
+          f"delta chip (square and section header): tooltip + aria-label say it's counted against the last snapshot with the Totals Due Today definition incl. Waiting ({dt})")
+    sn = pg.evaluate("document.querySelector('.sq.t-today').getAttribute('aria-label')")
+    check("Totals definition of Due Today" in sn, f"Due Today square's accessible name includes the delta explanation ({sn!r})")
     check(pg.inner_text(".sq.t-today b") == "3" and pg.inner_text(".sq.t-over b") == "2" and pg.inner_text(".sq.t-wait b") == "2", "square counts: 3 due today, 2 overdue, 2 waiting past due")
     order = pg.evaluate("[...document.querySelectorAll('#view-focus section.blk')].map(s => s.id)")
     check(order == ["fs-dueToday", "fs-overdue", "fs-owed", "fs-waiting", "fs-cold", "fs-travel"], f"section order ({order})")
