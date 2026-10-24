@@ -3,7 +3,7 @@
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
   const R = DASH.rules, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.05.003_261024";
+  const REV = "00.06.000_261024";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -65,6 +65,7 @@
     let s;
     try { s = R.readSnapshot(raw); } catch (e) { banner("Snapshot not loaded: " + e.message + " The previous data is kept.", true); if (!S.snap) render(); return false; }
     s.from = from; s.raw_generated_at = raw.generated_at; S.snap = s; S.snapRaw = raw;
+    await calForSnapshot(s);
     const cur = { generated_at: s.generatedAt, totals: R.totals(s.items, ctx()) };
     S.history = R.mergeHistory(R.mergeHistory(S.history, s.history), [cur]);
     if (!s.example) await DB.set("history", S.history);
@@ -266,7 +267,8 @@
   function innerName(n) { if (!/\.enc$/i.test(n)) return n; const b = n.slice(0, -4); return /\.(json|js)$/i.test(b) ? b : b.replace(/\.(json|js)([^.]*)$/i, "$2.$1"); }
   const isSnapName = n => SNAP_NAMES.includes(n) || /^inbox-snapshot(?:[^a-z0-9][^/]*)?\.jso?n?$/i.test(n);
   const isLogName = n => LOG_NAMES.includes(n) || /^notebook-log(?:[^a-z0-9][^/]*)?\.js$/i.test(n);
-  const purposeOf = n => R2.isTimeFile(n) ? "time" : isSnapName(n) ? "snapshot" : isLogName(n) ? "log" : null;
+  const CAL_NAME = "calendar-snapshot.json", TRIPS_NAME = "trips.json";   // 00.06.000: calendar / travel assistants feeds (encrypted only)
+  const purposeOf = n => R2.isTimeFile(n) ? "time" : n === CAL_NAME ? "calendar" : n === TRIPS_NAME ? "trips" : isSnapName(n) ? "snapshot" : isLogName(n) ? "log" : null;
   async function writeText(name, text) {
     const fh = await S.dir.getFileHandle(name, { create: true });
     const w = await fh.createWritable();            // Chromium writes to a temporary swap file; close() swaps it in (atomic)
@@ -418,6 +420,9 @@
           try { R.readSnapshot(raw); } catch (e) { throw new Error("snapshot rejected (" + e.message + "); not encrypted or uploaded, the previous one is kept"); }   // 00.04.001
           body = JSON.stringify(raw);
           try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, "snapshot")); R.readSnapshot(old); if (new Date(old.generated_at) > new Date(raw.generated_at)) body = null; } catch (e) { /* none yet, or the old one is invalid: replace it */ }
+        } else if (purpose === "calendar" || purpose === "trips") {   // 00.06.000: validate, keep the newer copy
+          target = name + ENC; const raw = JSON.parse(text); (purpose === "calendar" ? R.readCalendar : R.readTrips)(raw); body = JSON.stringify(raw);
+          try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, purpose)); if (Date.parse(old.generated_at) > Date.parse(raw.generated_at)) body = null; } catch (e) { /* none yet */ }
         } else { target = "notebook-log.js" + ENC; parseLogJs(text); body = text; }
         if (body != null) {
           const ct = await V.encrypt(S.vault.key, S.vault.kr, purpose, body); await writeText(target, ct);
@@ -509,6 +514,7 @@
     try {
       if (purpose === "time") { const p = R2.parseTimeFile(plain, inner); if (p.bad || !p.machine) return { ok: false, why: p.bad || "not a time log" }; return { ok: true, stamp: p.updated_at }; }
       if (purpose === "log") { parseLogJs(plain); return { ok: true, stamp: null }; }
+      if (purpose === "calendar" || purpose === "trips") { const raw = JSON.parse(plain); (purpose === "calendar" ? R.readCalendar : R.readTrips)(raw); return { ok: true, stamp: raw.generated_at }; }
       const raw = parseSnapshotText(inner, plain); R.readSnapshot(raw); return { ok: true, stamp: raw.generated_at };   // invalid snapshot (e.g. wrong source) = not ok
     } catch (e) { return { ok: false, why: e.message || String(e) }; }
   }
@@ -619,7 +625,7 @@
     S.problems = S.problems.filter(p => p.startsWith("picked"));
     if (!S.dir) { await scriptPoll(); S.lastSync = new Date(); renderSync(); return; }
     if (!window.DASH_TEST_FS && !(await permOK(S.dir))) { S.granted = false; renderSync(); return; }
-    S.granted = true; let changed = false; const names = new Set(); let snapOk = false, snapRaw = null, logObj = null, plain = [], kept = [], keyringSeen = false;
+    S.granted = true; let changed = false; const names = new Set(); let snapOk = false, snapRaw = null, logObj = null, feeds = {}, plain = [], kept = [], keyringSeen = false;
     if (S.vault.kr && !S.vault.key) { S.lastSync = new Date(); renderSync(); return; }   // encrypted and locked: touch nothing
     // 00.05.002: GitHub sync is attached on any sync once the folder is unlocked, not only at start-up (a folder unlocked later,
     // e.g. after "Not now", a folder reconnect or a recovery-key reset, otherwise never synced with the hub). A saved set-up
@@ -642,10 +648,12 @@
         let r; try { const f = await h.getFile(); const sig = f.lastModified + ":" + f.size; if (S.seen[name] === sig && !(purpose === "time" && !S.fileEvents[inner])) continue; r = { text: await f.text(), sig }; }
         catch (e) { S.fileProblems[name] = `${name}: unreadable (${e.message || e})`; continue; }
         S.seen[name] = r.sig; delete S.fileProblems[name];
+        if ((purpose === "calendar" || purpose === "trips") && !isEnc) { S.fileProblems[name] = `${name}: plaintext; the calendar and trips feeds are only read encrypted (File → Encryption…)`; continue; }
         try {
           if (isEnc) r.text = await V.decrypt(S.vault.key, S.vault.kr, r.text, purpose);
           if (purpose === "time") { const p = R2.parseTimeFile(r.text, inner); if (p.bad) S.fileProblems[name] = p.bad; S.fileEvents[inner] = p.events; (S.fileReports = S.fileReports || {})[inner] = p.reports || []; (S.fileUpdated = S.fileUpdated || {})[inner] = p.updated_at; changed = true; }
           else if (purpose === "log") logObj = parseLogJs(r.text);
+          else if (purpose === "calendar" || purpose === "trips") { const raw = JSON.parse(r.text); (purpose === "calendar" ? R.readCalendar : R.readTrips)(raw); feeds[purpose] = raw; }
           else {   // 00.04.001: several snapshot files (e.g. a renamed backup): use the newest one that passes validation
             const cand = parseSnapshotText(inner, r.text); let okc = true; try { R.readSnapshot(cand); } catch (e) { okc = false; }
             const better = !snapRaw || (okc && (!snapOk || Date.parse(cand.generated_at) > Date.parse(snapRaw.generated_at)));
@@ -676,6 +684,7 @@
     if (changed || extra.length || (S.held && S.held.length)) recompute();
     if (snapRaw && S.snap && (S.snap.example || snapRaw.generated_at !== S.snap.raw_generated_at)) await useSnapshot(snapRaw, "Inbox Exporter snapshot");
     if (logObj) importLog("notebook-log.js", logObj.lines.join("\n"), true);
+    useFeeds(feeds);
     S.lastSync = new Date(); render(); renderSync();
     if (manual === true && S.problems.length) toast("Synced with ⚠ " + S.problems.length + " problem(s). Hover the sync chip for details.");
   }
@@ -994,6 +1003,83 @@
   const SEC = { dueToday: ["Due Today", "today"], overdue: ["Overdue", "over"], owed: ["Owed to outside", "week"], waiting: ["Waiting · past check-back", "wait"], cold: ["Going cold · key", "cold"], travel: ["Travel ≤ 7 days", "travel"] };
   const EMPTY = { dueToday: "Nothing due today.", overdue: "Nothing overdue.", owed: "Nothing owed to outside.", waiting: "No waiting items past their check-back date.", cold: "No key account going cold.", travel: "No travel in the next 7 days." };
   const icon = (id, cls) => `<svg class="ic${cls ? " " + cls : ""}" aria-hidden="true" focusable="false"><use href="#${id}"></use></svg>`;
+  // ---------- 00.06.000 calendar feed + trips (calendar / travel assistants), Today strip and prep card ----------
+  // Real feeds come only from the encrypted Data folder / hub (calendar-snapshot.json.enc, trips.json.enc) and are cached in
+  // IndexedDB under SECRET keys (calendarSnap, trips). EXAMPLE DATA uses examples/example-calendar.js and never touches the cache.
+  async function calForSnapshot(s) {
+    if (s.example) {
+      if (!S.calExample) { S.calFeed = null; S.tripsFeed = null; }
+      if (await loadScript(CFG.exampleCalendarPath || "examples/example-calendar.js") && window.DASH_EXAMPLE_CALENDAR) {
+        try { S.calFeed = R.readCalendar(window.DASH_EXAMPLE_CALENDAR.calendar); S.tripsFeed = R.readTrips(window.DASH_EXAMPLE_CALENDAR.trips); S.calExample = true; } catch (e) { S.calFeed = S.tripsFeed = null; }
+      }
+      return;
+    }
+    if (S.calExample) { S.calFeed = null; S.tripsFeed = null; S.calExample = false; }   // never carry example events into real data
+    if (!S.calFeed) { const c = await DB.get("calendarSnap"); try { if (c && c.schema_version) S.calFeed = R.readCalendar(c); } catch (e) { /* ignore a bad cache */ } }
+    if (!S.tripsFeed) { const t = await DB.get("trips"); try { if (t && t.schema_version) S.tripsFeed = R.readTrips(t); } catch (e) { /* ignore */ } }
+  }
+  function useFeeds(feeds) {
+    if (S.snap && S.snap.example) return;
+    if (feeds.calendar && (!S.calFeed || S.calExample || Date.parse(feeds.calendar.generated_at) >= Date.parse(S.calFeed.generatedAt))) { S.calFeed = R.readCalendar(feeds.calendar); S.calExample = false; track(DB.set("calendarSnap", feeds.calendar)); }
+    if (feeds.trips && (!S.tripsFeed || Date.parse(feeds.trips.generated_at) >= Date.parse(S.tripsFeed.generatedAt))) { S.tripsFeed = R.readTrips(feeds.trips); track(DB.set("trips", feeds.trips)); }
+  }
+  function stripModel(f) {
+    const evs = R.mergeEvents(S.calFeed ? S.calFeed.events : [], R.eventsFromSnapshot(S.snap));
+    return R.todayStrip(evs, S.tripsFeed ? S.tripsFeed.trips : [], S.snap.items.filter(it => !f.ov.hidden.has(it.id)), S.today, f.nowIso, { rules: S.rules });
+  }
+  function calChip(f) {
+    if (!S.calFeed) return `<span class="calchip none" role="status" title="No calendar feed yet; meetings come from the Inbox snapshot">📅 No calendar feed · meetings from the snapshot</span>`;
+    const st = R.staleness(S.calFeed.generatedAt, f.nowIso), when = `${R.dayLabel(R.isoDay(S.calFeed.generatedAt))} ${hhmm24(S.calFeed.generatedAt)} ${R.tzLabel(S.calFeed.generatedAt)}`;
+    const word = st.level === "red" ? "⚠ Calendar stale · " : st.level === "amber" ? "Calendar · " : "📅 Calendar ";
+    return `<span class="calchip ${st.level}" role="status" title="Calendar feed, as of ${esc(when)}${st.level !== "ok" ? `; ${Math.floor(st.hours)} h old (the calendar writer's Outlook session may have expired)` : ""}">${word}as of ${esc(when)}</span>`;
+  }
+  const fmtH = h => { const H = Math.floor(h + 1e-9), M = Math.round((h - H) * 60); return `${String(H).padStart(2, "0")}:${String(M).padStart(2, "0")}`; };
+  function stripHtml(f) {
+    const m = stripModel(f); S.stripModel = m;
+    const span = m.to - m.from, X = h => ((Math.min(Math.max(h, m.from), m.to) - m.from) / span * 100).toFixed(3) + "%", W = (a, b) => ((Math.min(b, m.to) - Math.max(a, m.from)) / span * 100).toFixed(3) + "%";
+    const leave = m.leaveBy ? `<span class="calchip trav" title="Leave by time = flight − drive − 90 min airport buffer">✈ Travel today · leave by ${esc(hhmm24(m.leaveBy))}</span>` : "";
+    const hotel = m.hotels.length ? `<span class="calchip">🏨 Tonight: ${esc(m.hotels[0].place || "hotel")}${m.hotels[0].cancelBy ? ` · cancel by ${esc(hhmm24(m.hotels[0].cancelBy))}` : ""}</span>` : "";
+    const head = `<div class="stripbar"><span class="cap" id="strip-h">Today</span>${calChip(f)}${leave}${hotel}${m.allDay.length ? `<span class="calchip">All day: ${m.allDay.map(e => esc(e.title)).join(", ")}</span>` : ""}</div>`;
+    if (!m.events.length && !m.travel.length) return `<section class="strip empty" aria-labelledby="strip-h">${head}<div class="none">No meetings or travel today${S.calFeed ? "" : " in the snapshot. When the calendar feed is set up, today's schedule shows here"}.</div></section>`;
+    const hrs = []; for (let h = Math.ceil(m.from); h <= m.to; h++) hrs.push(`<span style="left:${X(h)}">${String(h).padStart(2, "0")}</span>`);
+    const grid = hrs.map((_, i) => `<i style="left:${X(Math.ceil(m.from) + i)}"></i>`).join("");
+    const evs = m.events.map(e => { const h = 100 / e.cols, lbl = `${fmtH(Math.max(e.s, 0))}–${fmtH(Math.min(e.e, 24))} ${e.title}${e.accountLabel ? ", " + e.accountLabel : ""}${e.kind === "hold" ? ", private hold" : ""}${e.conflict ? ", overlaps another meeting" : ""}`;
+      return `<button class="sev k-${e.kind}${e.conflict ? " cf" : ""}" data-cal="${esc(e.id)}" style="left:${X(e.s)};width:${W(e.s, e.e)};top:${(e.col * h).toFixed(2)}%;height:${h.toFixed(2)}%" aria-label="${esc(lbl)}. Open details" title="${esc(lbl)}"><b>${esc(e.title)}</b><small>${fmtH(e.s)}</small></button>`; }).join("");
+    const trav = m.travel.map(t => { const lbl = t.kind === "flight" ? `✈ ${fmtH(t.s)} ${t.from || ""}→${t.to || ""}${t.airline ? " " + t.airline + (t.number || "") : ""}` : t.kind === "drive" ? `drive ${t.driveMin != null ? t.driveMin + " min" : ""}${t.to ? " → " + t.to : ""}` : t.place || t.kind;
+      return `<span class="stv" style="left:${X(t.s)};width:${W(t.s, t.e)}" title="${esc(t.trip)}: ${esc(lbl)}">${esc(lbl)}</span>`; }).join("");
+    const mk = [];
+    if (m.overdue.length) mk.push(`<span class="smk over" style="left:${X(m.from)}" title="${m.overdue.length} overdue To Do item(s)">▼ ${m.overdue.length}</span>`);
+    if (m.dueToday.length) mk.push(`<span class="smk today" style="left:${X(17)}" title="${m.dueToday.length} To Do item(s) due today (end of day)">▼ ${m.dueToday.length}</span>`);
+    const now = m.now != null && m.now >= m.from && m.now <= m.to ? `<span class="snow" style="left:${X(m.now)}" aria-hidden="true"></span>` : "";
+    const sr = `${m.events.length} meeting${m.events.length === 1 ? "" : "s"} today${m.events.some(e => e.conflict) ? ", with overlaps" : ""}${m.leaveBy ? ", leave by " + hhmm24(m.leaveBy) + " for travel" : ""}${m.overdue.length ? `, ${m.overdue.length} overdue` : ""}${m.dueToday.length ? `, ${m.dueToday.length} due today` : ""}`;
+    return `<section class="strip" aria-labelledby="strip-h" aria-describedby="strip-sr">${head}<p id="strip-sr" class="sr">${esc(sr)}. ${esc(fmtH(m.from))} to ${esc(fmtH(m.to))}.</p>
+      <div class="stl"><div class="shrs" aria-hidden="true">${hrs.join("")}</div><div class="sgrid" aria-hidden="true">${grid}</div>${now}${mk.join("")}
+      <div class="sevs" role="list" aria-label="Meetings today">${evs.replace(/<button /g, '<button role="listitem" ')}</div><div class="strav" aria-label="Travel today">${trav}</div></div>
+      <div class="slegend" aria-hidden="true"><span class="lg k-client">client</span><span class="lg k-internal">internal</span><span class="lg k-hold">private hold</span><span class="lg cf">overlap</span><span class="lg tv">travel</span><span>▼ red overdue · ▼ green due today</span></div></section>`;
+  }
+  function openPrep(id, from) {
+    closePrep(); const m = S.stripModel, e = m && m.events.concat(m.allDay).find(x => x.id === id); if (!e) return;
+    const todos = e.linkedTodoIds.map(t => S.snap.items.find(it => it.id === t)).filter(Boolean);
+    const loops = e.accountLabel ? S.snap.items.filter(it => R.isOpen(it) && it.account === e.accountLabel && !e.linkedTodoIds.includes(it.id)).slice(0, 4) : [];
+    const doms = e.attendeeDomains.length ? `${e.attendeeCount} · ${e.attendeeDomains.map(esc).join(", ")}` : (e.attendeeCount ? String(e.attendeeCount) : "just you");
+    const itin = (m.travel || []).concat(m.hotels || []).sort((a, b) => a.start < b.start ? -1 : 1).map(t => `<li><span class="mono">${esc(hhmm24(t.start))}</span> <b>${esc(t.kind.toUpperCase())}</b> ${esc(t.kind === "flight" ? `${t.from || ""} → ${t.to || ""}${t.airline ? " · " + t.airline + (t.number || "") : ""} · lands ${hhmm24(t.end)}${t.leaveBy ? " · leave by " + hhmm24(t.leaveBy) : ""}` : t.kind === "drive" ? `${t.from || ""} → ${t.to || ""}${t.driveMin != null ? " · " + t.driveMin + " min" : ""}` : t.kind === "hotel" ? `${t.place || "hotel"}${t.cancelBy ? " · cancel by " + hhmm24(t.cancelBy) : ""}` : t.place || "")}${t.mapUrl ? ` <a href="${esc(t.mapUrl)}" target="_blank" rel="noopener noreferrer">map ↗</a>` : ""}</li>`).join("");
+    const row = it => `<li>${esc(it.title)}${it.due ? ` <span class="${it.due < S.today ? "c-over" : "muted"}">(${it.due < S.today ? R.diffDays(S.today, it.due) + "d late" : esc(R.dayLabel(it.due))})</span>` : ""}</li>`;
+    const d = document.createElement("div"); d.id = "prep"; d.className = "prep";
+    d.innerHTML = `<div class="prepcard" role="dialog" aria-modal="false" aria-labelledby="prep-h" tabindex="-1">
+      <div class="cap k-${e.kind}">${e.kind === "client" ? "Client meeting" : e.kind === "hold" ? "Private hold" : "Internal"} · ${e.allDay ? "all day" : `${fmtH(e.s)}–${fmtH(e.e)} ${esc(R.tzLabel(e.start))}`}${e.conflict ? ' · <span class="c-over">overlaps</span>' : ""}</div>
+      <h2 id="prep-h">${esc(e.title)}</h2>
+      <dl class="kv"><dt>Where</dt><dd>${esc(e.location || "—")}</dd>${e.teamsUrl ? `<dt>Join</dt><dd><a href="${esc(e.teamsUrl)}" target="_blank" rel="noopener noreferrer">Teams link ↗</a></dd>` : ""}
+      <dt>Attendees</dt><dd class="mono">${doms}</dd>${e.organizerDomain ? `<dt>Organizer</dt><dd class="mono">${esc(e.organizerDomain)}</dd>` : ""}
+      <dt>Account</dt><dd>${esc(e.accountLabel || "—")}</dd>${e.bodyExcerpt ? `<dt>Notes</dt><dd>${esc(e.bodyExcerpt)}</dd>` : ""}
+      ${todos.length ? `<dt>Linked To Do</dt><dd><ul>${todos.map(row).join("")}</ul></dd>` : ""}${loops.length ? `<dt>Open loops</dt><dd><ul>${loops.map(row).join("")}</ul></dd>` : ""}</dl>
+      ${itin ? `<div class="cap">Itinerary today</div><ul class="itin">${itin}</ul>` : ""}
+      <div class="vbtns"><button class="btn" id="prep-x">Close</button></div></div>`;
+    document.body.appendChild(d); S.prepFrom = from || null;
+    const card = d.querySelector(".prepcard"); card.focus();
+    d.querySelector("#prep-x").onclick = closePrep;
+    d.addEventListener("keydown", ev => { if (ev.key === "Escape") { ev.stopPropagation(); closePrep(); } });
+  }
+  function closePrep() { const d = $("#prep"); if (!d) return; d.remove(); const id = S.prepFrom; S.prepFrom = null; if (id) { const b = document.querySelector(`[data-cal="${CSS.escape(id)}"]`); if (b) b.focus(); } }
   function focusModel() {
     const nowIso = nowDate().toISOString(), ov = R.overlays(S.flags, S.snap, nowIso);
     const f = R.focusSections(S.snap, { today: S.today, nowIso, timeEntries: S.entries }, ov, { cap: CFG.focusRowCap || 12, expanded: S.focusExp, history: S.history });
@@ -1090,7 +1176,7 @@
       <div class="t1list">${t1.map(a => `<label><input type="checkbox" data-t1="${esc(a.name)}" checked> ${esc(a.name)}</label>`).join("")}</div>
       <div class="vbtns"><button class="btn" id="t1o-no">Not now</button><button class="btn primary" id="t1o-yes">Star selected</button></div></div>` : "";
     const foc = document.activeElement && document.activeElement.closest && document.activeElement.closest(".frow"), keep = foc ? foc.dataset.row : null;
-    el.innerHTML = header + offerHtml + sections + later + nd + `<div class="ffoot muted">Rows: ${f.sections.reduce((a, x) => a + x.rows.length, 0)} of ${f.sections.reduce((a, x) => a + x.total, 0)} (cap ${f.cap}) · keys: j/k move · d Done · s Snooze · t Log touch · Rev ${REV}</div>`;
+    el.innerHTML = header + stripHtml(f) + offerHtml + sections + later + nd + `<div class="ffoot muted">Rows: ${f.sections.reduce((a, x) => a + x.rows.length, 0)} of ${f.sections.reduce((a, x) => a + x.total, 0)} (cap ${f.cap}) · keys: j/k move · d Done · s Snooze · t Log touch · Rev ${REV}</div>`;
     if (S.snap) S.focusAnimated = true;
     if (keep) { const r = el.querySelector(`.frow[data-row="${CSS.escape(keep)}"]`); if (r) r.focus(); }
   }
@@ -1155,6 +1241,7 @@
     if (t.closest("[data-later]")) { S.laterOpen = !S.laterOpen; render(); return true; }
     if (t.closest("[data-nodate]")) { S.noDateOpen = !S.noDateOpen; render(); return true; }
     if (t.closest("[data-meetmore]")) { setView("workload"); return true; }
+    const cv = t.closest("[data-cal]"); if (cv) { openPrep(cv.dataset.cal, cv.dataset.cal); return true; }
     const pr = t.closest("[data-prep]"); if (pr) { const ent = S.entries.find(x => x.eventId === pr.dataset.prep);
       if (ent) editCalendarEntry(pr, ent); else { setView("dashboard"); const c = $("#cal"); if (c) c.scrollIntoView({ block: "start" }); } return true; }
     if (t.id === "t1o-yes" || t.id === "t1o-no") { const pick = t.id === "t1o-yes" ? [...document.querySelectorAll("[data-t1]")].filter(x => x.checked).map(x => x.dataset.t1) : [];

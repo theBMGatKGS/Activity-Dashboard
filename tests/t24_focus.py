@@ -90,9 +90,10 @@ with sync_playwright() as p:
     pg.keyboard.type("j"); check(pg.query_selector("#pop") is not None, "shortcuts are off while typing / in a dialog"); pg.keyboard.press("Escape")
     # Tab order: squares → meetings → sections
     pg.evaluate("document.querySelector('.tab[data-view=focus]').focus()"); seq = []
-    for _ in range(14):
-        pg.keyboard.press("Tab"); seq.append(pg.evaluate("(a => a.dataset.sq ? 'sq' : a.dataset.prep ? 'meet' : a.closest('section.blk') ? 'sec' : a.closest('.fhead') ? 'head' : 'other')(document.activeElement)"))
-    f = [x for x in seq if x in ("sq", "meet", "sec")]; check(f[:4] == ["sq"] * 4 and "meet" in f and f.index("sec") > max(i for i, x in enumerate(f) if x == "meet"), f"Tab order squares → meetings → sections ({f[:9]})")
+    for _ in range(26):   # 00.06.000: the Today strip's meetings come between the header and the sections
+        pg.keyboard.press("Tab"); seq.append(pg.evaluate("(a => a.dataset.sq ? 'sq' : a.dataset.prep ? 'meet' : a.dataset.cal ? 'strip' : a.closest('section.blk') ? 'sec' : a.closest('.fhead') ? 'head' : 'other')(document.activeElement)"))
+    f = [x for x in seq if x in ("sq", "meet", "strip", "sec")]; last = lambda k: max(i for i, x in enumerate(f) if x == k)
+    check(f[:4] == ["sq"] * 4 and "meet" in f and "strip" in f and "sec" in f and f.index("strip") > last("meet") and f.index("sec") > last("strip"), f"Tab order squares → meetings → Today strip → sections ({f[:12]})")
     # accessibility tree (Playwright aria snapshot)
     snap = pg.locator("#view-focus").aria_snapshot()
     check('heading "Daily Focus" [level=1]' in snap and all(f'heading "{h}' in snap for h in ["Due Today", "Overdue", "Owed to outside", "Waiting · past check-back", "Going cold · key", "Travel ≤ 7 days"]), "aria: h1 + one h2 per section")

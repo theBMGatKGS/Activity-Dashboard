@@ -490,6 +490,106 @@
     return { total, done, snoozed, overdueOpen, open: total - done - snoozed, added, pct, ticks, ids: scope.map(it => it.id), text: parts.join(", ") };
   }
 
+  // ---------- 00.06.000 calendar feed + trips (Travel); docs: /docs/calendar-feed-schema.md ----------
+  const ISO_OFF = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?([+-]\d{2}:\d{2}|Z)$/, DOM = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+  const TEAMS_OK = u => typeof u === "string" && /^https:\/\/teams\.microsoft\.com\/[^\s"'<>]*$/.test(u);
+  const MAP_OK = u => typeof u === "string" && /^https:\/\/(maps\.apple\.com)[\/?][^\s"'<>]*$/.test(u);
+  const SEG_KINDS = ["flight", "hotel", "event", "drive"], NO_FIELDS = /confirm|pnr|record_?loc|loyalty|seat|ticket|passport/i;
+  const str = (v, n) => typeof v === "string" ? v.slice(0, n) : null;
+  function readCalendar(raw) {
+    if (!raw || typeof raw !== "object" || raw.schema_version !== 1) throw new Error("calendar-snapshot: schema_version must be 1");
+    if (!ISO_OFF.test(raw.generated_at || "")) throw new Error("calendar-snapshot: generated_at must be ISO with offset");
+    if (!Array.isArray(raw.events)) throw new Error("calendar-snapshot: events must be an array");
+    const rejects = [], events = [];
+    raw.events.forEach((e, i) => {
+      const bad = m => rejects.push(`event ${i + 1}: ${m}`);
+      if (!e || typeof e.id !== "string" || !e.id) return bad("id missing");
+      if (typeof e.title !== "string") return bad("title missing");
+      if (!ISO_OFF.test(e.start || "") || !ISO_OFF.test(e.end || "") || !(Date.parse(e.end) > Date.parse(e.start))) return bad("start/end must be ISO with offset, end after start");
+      const doms = Array.isArray(e.attendeeDomains) ? e.attendeeDomains : [];
+      if (doms.some(d => typeof d !== "string" || d.includes("@") || !DOM.test(d))) return bad("attendeeDomains must be lower-case domains only (no names or emails)");
+      if (e.attendees !== undefined || e.organizer !== undefined) return bad("names/emails are not accepted (use attendeeDomains, attendeeCount, organizerDomain)");
+      if (e.organizerDomain != null && (typeof e.organizerDomain !== "string" || !DOM.test(e.organizerDomain))) return bad("organizerDomain must be a domain");
+      events.push({ id: e.id, title: e.title.slice(0, 200), start: e.start, end: e.end, allDay: e.allDay === true, location: str(e.location, 200),
+        organizerDomain: e.organizerDomain || null, attendeeDomains: [...new Set(doms)], attendeeCount: Number.isInteger(e.attendeeCount) && e.attendeeCount >= 0 ? e.attendeeCount : doms.length,
+        teamsUrl: TEAMS_OK(e.teamsUrl) ? e.teamsUrl : null, bodyExcerpt: str(e.bodyExcerpt, 280), isPrivateHold: e.isPrivateHold === true,
+        accountLabel: str(e.accountLabel, 120), linkedTodoIds: Array.isArray(e.linkedTodoIds) ? e.linkedTodoIds.filter(x => typeof x === "string") : [], calendar: e.calendar === "travel" ? "travel" : "main" });
+    });
+    return { generatedAt: raw.generated_at, source: str(raw.source, 40) || "outlook-web", events, rejects };
+  }
+  function readTrips(raw) {
+    if (!raw || typeof raw !== "object" || raw.schema_version !== 1) throw new Error("trips: schema_version must be 1");
+    if (!ISO_OFF.test(raw.generated_at || "")) throw new Error("trips: generated_at must be ISO with offset");
+    if (!Array.isArray(raw.trips)) throw new Error("trips: trips must be an array");
+    const rejects = [], trips = [];
+    raw.trips.forEach((t, i) => {
+      if (!t || typeof t.id !== "string" || !Array.isArray(t.segments)) { rejects.push(`trip ${i + 1}: id/segments missing`); return; }
+      const segs = [];
+      t.segments.forEach((g, j) => {
+        const bad = m => rejects.push(`trip ${i + 1} segment ${j + 1}: ${m}`);
+        if (!g || !SEG_KINDS.includes(g.kind)) return bad("kind must be flight, hotel, event or drive");
+        if (Object.keys(g).some(k => NO_FIELDS.test(k))) return bad("confirmation / booking numbers are not accepted");
+        if (!ISO_OFF.test(g.start || "") || !ISO_OFF.test(g.end || "") || !(Date.parse(g.end) >= Date.parse(g.start))) return bad("start/end must be ISO with offset");
+        segs.push({ kind: g.kind, start: g.start, end: g.end, tz: str(g.tz, 64), from: str(g.from, 60), to: str(g.to, 60), airline: str(g.airline, 40), number: str(g.number, 12),
+          place: str(g.place, 120), mapUrl: MAP_OK(g.mapUrl) ? g.mapUrl : null, cancelBy: ISO_OFF.test(g.cancelBy || "") ? g.cancelBy : null, driveMin: Number.isInteger(g.driveMin) && g.driveMin >= 0 ? g.driveMin : null });
+      });
+      trips.push({ id: t.id, name: str(t.name, 120) || "Trip", homeTz: str(t.homeTz, 64), segments: segs.sort((a, b) => Date.parse(a.start) - Date.parse(b.start)), openLoops: Array.isArray(t.openLoops) ? t.openLoops.filter(x => typeof x === "string") : [] });
+    });
+    return { generatedAt: raw.generated_at, trips, rejects };
+  }
+  // The inbox snapshot's calendar[] (7 days, domains only) as feed events: the fallback until the calendar feed is there.
+  function eventsFromSnapshot(s) {
+    return (s && s.calendar || []).map(e => ({ id: e.id, title: e.title, start: e.start, end: e.end, allDay: false, location: e.location || null, organizerDomain: null,
+      attendeeDomains: e.attendee_domains || [], attendeeCount: (e.attendee_domains || []).length, teamsUrl: null, bodyExcerpt: null, isPrivateHold: !(e.attendee_domains || []).length,
+      accountLabel: e.account || null, linkedTodoIds: [], calendar: "main" }));
+  }
+  function mergeEvents(feed, snapEvents) { const m = new Map(); (snapEvents || []).forEach(e => m.set(e.id, e)); (feed || []).forEach(e => m.set(e.id, e)); return [...m.values()]; }
+  function staleness(generatedAt, nowIso) { const h = (Date.parse(nowIso) - Date.parse(generatedAt)) / 3600000; return { hours: h, level: h > 24 ? "red" : h > 6 ? "amber" : "ok" }; }
+  // Overlapping events sit side by side: clusters of overlapping events share the width, each event gets the first free column.
+  function layoutLanes(evs) {
+    const out = evs.slice().sort((a, b) => a.s - b.s || b.e - a.e || a.id.localeCompare(b.id)); let cluster = [], end = -1;
+    const close = () => { const n = Math.max(1, ...cluster.map(x => x.col + 1)); cluster.forEach(x => x.cols = n); cluster = []; };
+    out.forEach(ev => {
+      if (ev.s >= end && cluster.length) close();
+      const used = new Set(cluster.filter(x => x.e > ev.s).map(x => x.col)); let c = 0; while (used.has(c)) c++;
+      ev.col = c; cluster.push(ev); end = Math.max(end, ev.e);
+    });
+    if (cluster.length) close();
+    return out;
+  }
+  // Today strip model. Hours = 07–19 in this computer's zone, widened to the first start / last end of today's events and travel.
+  function todayStrip(events, trips, items, today, nowIso, opts) {
+    opts = opts || {}; const r = opts.rules || DEFAULT_RULES, bufferMin = opts.flightBufferMin == null ? 90 : opts.flightBufferMin;
+    const dayOf = iso => isoDay(iso), H = iso => { const d = dayOf(iso); return d < today ? 0 : d > today ? 24 : hourCT(iso); };
+    const allDay = [], timed = [];
+    (events || []).forEach(e => {
+      if (!(dayOf(e.start) <= today && dayOf(e.end) >= today)) return;
+      const s = H(e.start), en = dayOf(e.end) > today ? 24 : hourCT(e.end); if (en <= s && !e.allDay) return;
+      const ext = (e.attendeeDomains || []).filter(d => !isInternal(d, r)), kind = e.isPrivateHold || (!(e.attendeeDomains || []).length && !e.accountLabel) ? "hold" : e.accountLabel || ext.length ? "client" : "internal";
+      const ev = Object.assign({}, e, { s, e: en, kind });
+      (e.allDay ? allDay : timed).push(ev);
+    });
+    const lanes = layoutLanes(timed);
+    lanes.forEach(a => { a.conflict = a.kind !== "hold" && lanes.some(b => b !== a && b.kind !== "hold" && b.s < a.e && a.s < b.e); });
+    const travel = [], hotels = [];
+    (trips || []).forEach(t => t.segments.forEach((g, i) => {
+      if (!(dayOf(g.start) <= today && dayOf(g.end) >= today)) return;
+      if (g.kind === "hotel") { hotels.push(Object.assign({ trip: t.name, tripId: t.id }, g)); return; }   // a hotel is a chip, not a band (it spans the night)
+      const s = H(g.start), en = dayOf(g.end) > today ? 24 : Math.max(hourCT(g.end), s + 0.25);
+      const seg = Object.assign({ trip: t.name, tripId: t.id }, g, { s, e: en });
+      if (g.kind === "flight" && dayOf(g.start) === today) {
+        const prev = t.segments[i - 1], drive = prev && prev.kind === "drive" ? (prev.driveMin != null ? prev.driveMin : Math.round((Date.parse(prev.end) - Date.parse(prev.start)) / 60000)) : 0;
+        seg.leaveBy = new Date(Date.parse(g.start) - (bufferMin + drive) * 60000).toISOString(); seg.driveBefore = drive;
+      }
+      travel.push(seg);
+    }));
+    const band = timed.concat(travel), lo = Math.min(7, ...band.map(x => x.s > 0 ? Math.floor(x.s) : Math.max(0, Math.ceil(x.e) - 1))), hi = Math.max(19, ...band.map(x => x.e < 24 ? Math.ceil(x.e) : Math.min(24, Math.floor(x.s) + 1)));   // started yesterday / ends tomorrow: show its last / first hour
+    const open = (items || []).filter(it => isOpen(it) && it.list !== "Waiting on" && it.due && it.due <= today);
+    const leave = travel.filter(x => x.leaveBy).sort((a, b) => a.leaveBy < b.leaveBy ? -1 : 1)[0] || null;
+    return { from: Math.max(0, lo), to: Math.min(24, hi), events: lanes, allDay, travel, hotels, leaveBy: leave ? leave.leaveBy : null,
+      dueToday: open.filter(it => it.due === today).map(it => it.id), overdue: open.filter(it => it.due < today).map(it => it.id), now: dayOf(nowIso) === today ? hourCT(nowIso) : null };
+  }
+
   g.DASH = g.DASH || {};
   g.DASH.rules = { LISTS, STATUSES, AUDIENCES, SUBJECTS, TOTAL_KEYS, LIST_KEY, GROUPS, COLD_DAYS, DEFAULT_RULES,
     DEFAULT_TZ, validTimeZone, detectTimeZone, setTimeZone, getTimeZone, tzLabel, zoneOffsetMs,
@@ -497,5 +597,5 @@
     lastActivity, isCold, inTotal, totals, mergeHistory, weeklySeries, wow, wowTone, sparkPoints, withConflicts, minutesBetween,
     guessAudience, guessSubject, learnAudience, lineHead, formatLine, managerItems, workload, parseCSV, snapshotFromCSV,
     KINDS, logFingerprint, migrateLogEntries, mergeLog, SOURCES, TOUCH_DIR, TOUCH_KIND, realDay, csvCell, calendarFills, conflictPartners, parseMinutes, parseNotebookLog, timeEntriesCSV, CSV_COLS, coldList,
-    ctIso, snoozeUntil, prevBusinessDay, isOutside, lastTouch, keyCold, overlays, focusSections, focusDelta, FOCUS_SECTIONS, todaysClear };
+    ctIso, snoozeUntil, prevBusinessDay, isOutside, lastTouch, keyCold, overlays, focusSections, focusDelta, FOCUS_SECTIONS, todaysClear, readCalendar, readTrips, eventsFromSnapshot, mergeEvents, staleness, layoutLanes, todayStrip };
 })(typeof window !== "undefined" ? window : globalThis);

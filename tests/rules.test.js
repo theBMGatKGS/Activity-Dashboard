@@ -323,4 +323,52 @@ t("C5 percent floors: 199 of 200 is 99%, 100% only when all are cleared", () => 
   const sn3 = mk([{ id: "A", next_date: "2026-10-19" }, { id: "B", next_date: "2026-10-19" }, { id: "C", next_date: "2026-10-19", status: "done", completed_at: "2026-10-19T07:00:00-05:00" }]); assert.strictEqual(R.todaysClear(sn3, "2026-10-19", R.overlays({}, sn3, NOWI), null).pct, 33);
 });
 t("C4 empty scope", () => { const sn = mk([{ id: "A", next_date: "2026-10-25" }]); const c = R.todaysClear(sn, "2026-10-19", R.overlays({}, sn, NOWI), null); assert.deepStrictEqual([c.total, c.pct, c.ticks.length], [0, 0, 0]); });
+// ---------- 00.06.000 calendar feed, trips, Today strip (K-series) ----------
+const CALX = (() => { const w = {}; new Function("window", require("fs").readFileSync(require("path").join(__dirname, "../examples/example-calendar.js"), "utf8"))(w); return w.DASH_EXAMPLE_CALENDAR; })();
+t("K1 readCalendar: example feed passes; names/emails, bad times, non-Teams links are refused or dropped", () => {
+  const c = R.readCalendar(CALX.calendar); assert.strictEqual(c.rejects.length, 0); assert.strictEqual(c.events.length, 6);
+  const bad = JSON.parse(JSON.stringify(CALX.calendar));
+  bad.events[0].attendeeDomains = ["someone@account-a.example"]; bad.events[1].attendees = ["A Person"]; bad.events[2].end = bad.events[2].start; bad.events[3].teamsUrl = "https://evil.example/x"; bad.events[4].start = "2026-10-19 14:00";
+  const r = R.readCalendar(bad); assert.strictEqual(r.rejects.length, 4, r.rejects.join("; ")); assert.strictEqual(r.events.length, 2);
+  assert.strictEqual(r.events.find(e => e.id === "CAL-3").teamsUrl, null, "non-Teams link dropped");
+  assert.throws(() => R.readCalendar({ schema_version: 2, generated_at: "2026-10-19T06:30:00-05:00", events: [] }));
+  const long = R.readCalendar(Object.assign({}, CALX.calendar, { events: [Object.assign({}, CALX.calendar.events[0], { bodyExcerpt: "x".repeat(500) })] })); assert.strictEqual(long.events[0].bodyExcerpt.length, 280);
+});
+t("K2 readTrips: confirmation / booking fields refused; map links allow-listed; segments sorted", () => {
+  const ok = R.readTrips(CALX.trips); assert.strictEqual(ok.rejects.length, 0); assert.deepStrictEqual(ok.trips[0].segments.map(x => x.kind), ["drive", "flight", "hotel"]);
+  const bad = JSON.parse(JSON.stringify(CALX.trips)); bad.trips[0].segments[1].confirmationNumber = "ABC123"; bad.trips[0].segments[2].mapUrl = "javascript:alert(1)"; bad.trips[0].segments[0].kind = "boat";
+  const r = R.readTrips(bad); assert.strictEqual(r.rejects.length, 2); assert.strictEqual(r.trips[0].segments.length, 1); assert.strictEqual(r.trips[0].segments[0].mapUrl, null);
+});
+t("K3 lanes: overlapping meetings sit side by side (own lanes), non-overlapping reuse lane 0", () => {
+  const L = R.layoutLanes([{ id: "a", s: 10, e: 11 }, { id: "b", s: 10.5, e: 11.5 }, { id: "c", s: 10.75, e: 11.25 }, { id: "d", s: 12, e: 13 }]);
+  const by = Object.fromEntries(L.map(x => [x.id, [x.col, x.cols]]));
+  assert.deepStrictEqual(by, { a: [0, 3], b: [1, 3], c: [2, 3], d: [0, 1] });
+  const L2 = Object.fromEntries(R.layoutLanes([{ id: "a", s: 9, e: 12 }, { id: "b", s: 9.5, e: 10 }, { id: "c", s: 10.5, e: 11 }]).map(x => [x.id, [x.col, x.cols]]));
+  assert.deepStrictEqual(L2, { a: [0, 2], b: [1, 2], c: [1, 2] }, "a freed lane is reused inside the cluster");
+});
+t("K4 todayStrip on the example (Central): 07–20 (widened by the flight), conflict, holds, leave-by, hotel chip, markers", () => {
+  const c = R.readCalendar(CALX.calendar), tr = R.readTrips(CALX.trips), m = R.todayStrip(c.events, tr.trips, s.items, "2026-10-19", "2026-10-19T14:20:00Z");
+  assert.deepStrictEqual([m.from, m.to], [7, 20]); assert.strictEqual(m.events.length, 5, "the 10/21 meeting is not today");
+  const k = Object.fromEntries(m.events.map(e => [e.id, [e.kind, e.conflict, e.col, e.cols]]));
+  assert.deepStrictEqual(k["CAL-2"], ["client", true, 0, 2]); assert.deepStrictEqual(k["CAL-3"], ["client", true, 1, 2]); assert.deepStrictEqual(k["CAL-6"], ["hold", false, 0, 1]); assert.deepStrictEqual(k["CAL-1"], ["internal", false, 0, 1]);
+  assert.strictEqual(m.leaveBy, "2026-10-19T20:15:00.000Z", "17:30 flight − 45 min drive − 90 min = 15:15 CDT");
+  assert.strictEqual(m.travel.length, 2); assert.strictEqual(m.hotels.length, 1); assert.ok(Math.abs(m.now - 9.333) < 0.01);
+  assert.ok(m.overdue.length > 0 && m.dueToday.length > 0);
+  const early = R.todayStrip([{ id: "x", title: "early", start: "2026-10-19T05:30:00-05:00", end: "2026-10-19T06:00:00-05:00", attendeeDomains: [], linkedTodoIds: [] }], [], [], "2026-10-19", "2026-10-19T12:00:00Z");
+  assert.deepStrictEqual([early.from, early.to], [5, 19], "widens down to 05:00");
+  const night = R.todayStrip([], [{ id: "t", name: "n", segments: [{ kind: "flight", start: "2026-10-18T22:00:00-05:00", end: "2026-10-19T06:00:00-05:00" }] }], [], "2026-10-19", "2026-10-19T12:00:00Z");
+  assert.deepStrictEqual([night.from, night.to], [5, 19], "an overnight flight landing 06:00 shows its last hour (from 05:00), not the whole night");
+});
+t("K5 todayStrip follows the computer zone (Eastern shows the same meeting an hour later)", () => withTz("America/New_York", () => {
+  const c = R.readCalendar(CALX.calendar), m = R.todayStrip(c.events, [], [], "2026-10-19", "2026-10-19T14:00:00Z"); assert.strictEqual(m.events.find(e => e.id === "CAL-1").s, 9);
+}));
+t("K6 staleness: ok ≤ 6 h, amber > 6 h, red > 24 h", () => {
+  assert.strictEqual(R.staleness("2026-10-19T06:30:00-05:00", "2026-10-19T12:30:00-05:00").level, "ok");
+  assert.strictEqual(R.staleness("2026-10-19T06:30:00-05:00", "2026-10-19T12:31:00-05:00").level, "amber");
+  assert.strictEqual(R.staleness("2026-10-19T06:30:00-05:00", "2026-10-20T06:31:00-05:00").level, "red");
+});
+t("K7 merge: the feed replaces the snapshot's event with the same id; snapshot-only events stay", () => {
+  const m = R.mergeEvents([{ id: "CAL-1", title: "feed" }], R.eventsFromSnapshot(s)); assert.strictEqual(m.find(e => e.id === "CAL-1").title, "feed"); assert.ok(m.some(e => e.id === "CAL-4"));
+  assert.ok(R.eventsFromSnapshot(s).every(e => e.attendeeDomains.every(d => !d.includes("@"))));
+});
 console.log(`\n${n - fail}/${n} passed`); process.exit(fail ? 1 : 0);

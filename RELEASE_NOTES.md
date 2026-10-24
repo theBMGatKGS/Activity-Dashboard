@@ -1,5 +1,15 @@
 # Release notes — Activity Dashboard
 
+## 00.06.000_261024 (Oct 24 2026)
+**Today strip** on Daily Focus, under the squares.
+- Today's meetings on a timeline from 07:00 to 19:00, wider when something starts earlier or ends later, in your computer's time zone. Client meetings are gold, internal blue, private holds grey. Meetings at the same time sit side by side in their own lanes and are hatched.
+- Travel that affects today shows as an amber band (drive, flight), with a **leave by** time (flight − drive − 90 minutes) and tonight's hotel with its cancel-by time.
+- To Do markers: ▼ red for overdue, ▼ green for due today. A green line marks now.
+- Click a meeting (or press Enter on it) for its details: time, place, Teams link, attendee domains and count, the account, linked To Do items, open loops and today's itinerary. Esc closes it.
+- "Calendar as of …" shows how fresh the calendar is: amber after 6 hours, red after 24.
+- The calendar and trips come from new **encrypted** feeds written by the calendar and travel assistants. Until those are set up, meetings come from the Inbox snapshot as before and the chip says "No calendar feed".
+- Prints in the print colors (outlined meetings, navy travel).
+
 ## 00.05.003_261024 (Oct 24 2026)
 - **Today's Clear:** a thin progress bar under the four squares on Daily Focus shows how much of today's load you've cleared, for example "5 of 11 · 45%".
 - It counts what's due today plus what's overdue (not Waiting on), starting from the first snapshot you see today. Ticking a task off in To Do or with ✓ Done here fills it; Undo empties it again.

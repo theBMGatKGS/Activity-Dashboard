@@ -295,11 +295,41 @@ table.tbl select{background:var(--surface2);border:1px solid var(--line);border-
 .tclear .pnote{color:var(--hl-muted);font-size:11px;margin-top:6px;font-family:var(--hl-mono)}
 .tclear.all .pct{color:var(--hl-green)}
 @media screen and (max-width:1100px){.tclear{width:218px}}
+/* 00.06.000 Today strip (Daily Focus) + prep card */
+.sr{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.strip{margin:0 0 12px;padding:8px 10px 6px;background:var(--hl-panel);border:1px solid var(--hl-line);border-radius:8px}
+.stripbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.calchip{font:10.5px var(--hl-mono);border:1px solid var(--hl-line);border-radius:4px;padding:1px 6px;color:var(--hl-muted)}
+.calchip.amber,.calchip.trav{border-color:var(--hl-amber);color:var(--hl-amber)} .calchip.red{border-color:var(--hl-red);color:var(--hl-red)}
+.strip.empty .none{color:var(--hl-muted);font-size:12px;padding:4px 0}
+.stl{position:relative;height:104px}
+.shrs{position:absolute;left:0;right:0;top:0;height:14px;font:10px var(--hl-mono);color:var(--hl-muted)} .shrs span{position:absolute;transform:translateX(-50%)}
+.sgrid i{position:absolute;top:15px;bottom:0;width:1px;background:#1b2320}
+.sevs{position:absolute;left:0;right:0;top:20px;height:56px}
+.sev{position:absolute;box-sizing:border-box;border:0;border-left:3px solid var(--hl-blue);background:#16324a;color:var(--hl-ink);border-radius:5px;padding:1px 6px;text-align:left;overflow:hidden;white-space:nowrap;cursor:pointer;font-size:11px;line-height:1.2;transition:filter .15s}
+.sev b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis} .sev small{font:10px var(--hl-mono);color:#9fb6c9}
+.sev:hover{filter:brightness(1.25)} .sev:focus-visible{outline:2px solid var(--hl-ink);outline-offset:1px;z-index:2}
+.sev.k-client{border-left-color:var(--hl-gold);background:#2a2412} .sev.k-hold{border-left-color:#5a6660;background:#1b2320;color:var(--hl-muted)}
+.sev.cf{background-image:repeating-linear-gradient(135deg,rgba(229,72,77,.35) 0 3px,transparent 3px 7px)}
+.strav{position:absolute;left:0;right:0;top:80px;height:16px}
+.stv{position:absolute;box-sizing:border-box;height:16px;border:1px solid var(--hl-amber);background:#3a2a10;color:var(--hl-amber);border-radius:3px;font:10px/14px var(--hl-mono);padding:0 5px;overflow:hidden;white-space:nowrap}
+.snow{position:absolute;top:13px;bottom:0;width:2px;background:var(--hl-green);transform:translateX(-1px)}
+.smk{position:absolute;top:12px;font:9.5px var(--hl-mono);transform:translateX(-4px)} .smk.over{color:var(--hl-red)} .smk.today{color:var(--hl-green)}
+.slegend{display:flex;gap:14px;font-size:10.5px;color:var(--hl-muted);margin-top:2px}
+.lg::before{content:"";display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:-1px;background:#16324a;border-left:3px solid var(--hl-blue)}
+.lg.k-client::before{background:#2a2412;border-left-color:var(--hl-gold)} .lg.k-hold::before{background:#1b2320;border-left-color:#5a6660}
+.lg.cf::before{border-left:0;background:repeating-linear-gradient(135deg,rgba(229,72,77,.6) 0 2px,transparent 2px 4px)} .lg.tv::before{border:1px solid var(--hl-amber);background:#3a2a10}
+.prep{position:fixed;top:48px;right:16px;z-index:90}
+.prepcard{width:420px;max-height:calc(100vh - 70px);overflow:auto;background:#0f1412;border:1px solid var(--hl-gold);border-radius:8px;padding:14px 16px;box-shadow:0 10px 30px #000;color:var(--hl-ink)}
+.prepcard h2{margin:2px 0 8px;font-size:15px} .prepcard .cap.k-client{color:var(--hl-gold)}
+.prepcard .kv{display:grid;grid-template-columns:96px 1fr;gap:3px 10px;font-size:12px;margin:0 0 10px} .prepcard dt{color:var(--hl-muted)} .prepcard dd{margin:0}
+.prepcard ul{margin:0;padding-left:16px} .prepcard .itin{list-style:none;padding:0;font-size:11.5px} .prepcard .itin li{border-top:1px solid var(--hl-line);padding:3px 0}
+@media screen and (max-width:1100px){.prep{left:8px;right:8px}.prepcard{width:auto}}
 /* Reduced motion (app-wide): no animations, transitions or smooth scrolling */
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 /* Print Daily Focus: one landscape page in the print palette — white, outlined squares, no fills/shadows/glow/animation */
 @media print{
-  #undo,.snz{display:none!important}
+  #undo,.snz,#prep{display:none!important}
   #view-focus.printing{display:block!important;background:#fff!important;color:#1a1a1a!important;margin:0;padding:.3in .35in;min-height:0;font:9pt/1.3 var(--sans)}
   #view-focus.printing *{box-shadow:none!important;animation:none!important;text-shadow:none!important;transform:none!important}
   #view-focus.printing .btns,#view-focus.printing .t1offer,#view-focus.printing .star,#view-focus.printing .lnk,#view-focus.printing .ffoot{display:none!important}
@@ -327,6 +357,15 @@ table.tbl select{background:var(--surface2);border:1px solid var(--line);border-
   #view-focus.printing .nx{display:flex;flex-wrap:wrap;align-items:center;gap:1px 4px;overflow-wrap:anywhere}   /* U2: the no-date pill wraps inside its cell, never past the row border */
   #view-focus.printing .nx .nodate{font-size:7pt;padding:0 3px;max-width:100%;box-sizing:border-box}
   #view-focus.printing .note,#view-focus.printing .wchip{color:#474747;border-color:#9e9e9e}
+  #view-focus.printing .strip{background:#fff!important;border:1px solid #9e9e9e;padding:4px 6px}
+  #view-focus.printing .stl{height:84px} #view-focus.printing .sevs{height:42px}
+  #view-focus.printing .sev{background:#fff!important;color:#1a1a1a!important;border:1px solid #102645;border-left:3px solid #102645;background-image:none!important}
+  #view-focus.printing .sev.k-client{border-left-color:#0C77BC} #view-focus.printing .sev.k-hold{border-color:#9e9e9e;color:#474747!important}
+  #view-focus.printing .sev.cf{border-style:dashed;border-left-style:solid} #view-focus.printing .sev small{color:#474747}
+  #view-focus.printing .strav{top:66px} #view-focus.printing .stv{background:#fff!important;color:#102645!important;border-color:#102645}
+  #view-focus.printing .shrs,#view-focus.printing .calchip,#view-focus.printing .slegend{color:#474747!important;border-color:#9e9e9e}
+  #view-focus.printing .sgrid i{background:#E2E2E2} #view-focus.printing .snow{display:none}
+  #view-focus.printing .smk.over{color:#AC242A!important} #view-focus.printing .smk.today{color:#102645!important}
   #view-focus.printing .tclear{width:444px;margin-left:0}
   #view-focus.printing .tclear .track{background:#fff!important;border:1px solid #0C77BC;border-radius:0;height:9px;gap:0}
   #view-focus.printing .tclear .seg.done{background:#102645!important} #view-focus.printing .tclear .seg.snzd,#view-focus.printing .tclear .seg.left{background:#fff!important}

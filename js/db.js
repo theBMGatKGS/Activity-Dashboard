@@ -23,7 +23,7 @@
   // 00.03.001: cached data (SECRET keys) is encrypted with the Data folder's key once the folder is encrypted. cipher = {enc, dec}
   // (text <-> envelope text, AES-256-GCM via DASH.vault) is set by the app while unlocked. "cacheEncrypted" (plain flag) is set as
   // soon as a keyring is seen: from then on a SECRET key is never written in the clear, and while locked it isn't written at all.
-  const SECRET = new Set(["ownEvents", "timeEntries", "calTombstones", "history", "audienceRules", "openedSnapshot", "clearBase"]);
+  const SECRET = new Set(["ownEvents", "timeEntries", "calTombstones", "history", "audienceRules", "openedSnapshot", "clearBase", "calendarSnap", "trips"]);
   let cipher = null, mustEncrypt = false;
   const isEnv = v => !!(v && typeof v === "object" && v.dashCache === 1 && typeof v.env === "string");
   function getRaw(k) {
@@ -62,7 +62,8 @@
   // Never clears the machine name, folder grant or time events: deleting time is done by the app as "remove" events,
   // so it reaches the other machine too (Clear → Also delete, typed DELETE).
   const KEEP = ["ownEvents", "migratedV2", "timeEntries", "calTombstones", "audienceRules"];
-  async function clearAll() { for (const k of KEYS) if (!KEEP.includes(k)) await set(k, undefined); }
+  const CACHE_ONLY = ["clearBase", "calendarSnap", "trips"];   // 00.06.000: caches that Clear wipes but Export never writes out
+  async function clearAll() { for (const k of KEYS.concat(CACHE_ONLY)) if (!KEEP.includes(k)) await set(k, undefined); }
   // 00.03: one-time copy of an older build's browser cache (same "kv" store, different database name, set in config.local.js
   // legacyDbNames). Runs only on a browser that has never used this build (no machine name yet). The old database is left as is.
   function readAll(name) {

@@ -1,5 +1,5 @@
 # Activity Dashboard
-Revision **00.05.003_261024** · Today's Clear progress bar on Daily Focus (00.05.003) · time zone follows the computer (00.05.001) · Daily Focus home screen (00.05) · local-first app · encrypted Data folder (optional, in-browser AES-256-GCM) · optional encrypted sync through a private GitHub repo (00.04) · installable (PWA) over https · no server of its own.
+Revision **00.06.000_261024** · Today strip + meeting details from the encrypted calendar and trips feeds (00.06.000, see docs/calendar-feed-schema.md) · Today's Clear progress bar on Daily Focus (00.05.003) · time zone follows the computer (00.05.001) · Daily Focus home screen (00.05) · local-first app · encrypted Data folder (optional, in-browser AES-256-GCM) · optional encrypted sync through a private GitHub repo (00.04) · installable (PWA) over https · no server of its own.
 
 ## Use
 1. The app lives in **`<synced folder>/Dashboard/`** on the user's Mac. It is **not** in the notebook repo. To update, copy the new app files over the old ones; the deploy folder never contains `Data/`.
