@@ -316,5 +316,11 @@ t("C3 baseline: items not in the first snapshot today count as added and grow th
   const c = R.todaysClear(sn, "2026-10-19", R.overlays({}, sn, NOWI), ["A"]);
   assert.deepStrictEqual([c.total, c.added], [2, 1]); assert.ok(c.text.endsWith("1 added today"));
 });
+t("C5 percent floors: 199 of 200 is 99%, 100% only when all are cleared", () => {
+  const tasks = []; for (let i = 0; i < 200; i++) tasks.push({ id: "P" + i, next_date: "2026-10-19", status: i ? "done" : "not_started", completed_at: i ? "2026-10-19T07:00:00-05:00" : undefined });
+  const sn = mk(tasks); assert.strictEqual(R.todaysClear(sn, "2026-10-19", R.overlays({}, sn, NOWI), null).pct, 99);
+  const sn2 = mk([{ id: "Q", next_date: "2026-10-19", status: "done", completed_at: "2026-10-19T07:00:00-05:00" }]); assert.strictEqual(R.todaysClear(sn2, "2026-10-19", R.overlays({}, sn2, NOWI), null).pct, 100);
+  const sn3 = mk([{ id: "A", next_date: "2026-10-19" }, { id: "B", next_date: "2026-10-19" }, { id: "C", next_date: "2026-10-19", status: "done", completed_at: "2026-10-19T07:00:00-05:00" }]); assert.strictEqual(R.todaysClear(sn3, "2026-10-19", R.overlays({}, sn3, NOWI), null).pct, 33);
+});
 t("C4 empty scope", () => { const sn = mk([{ id: "A", next_date: "2026-10-25" }]); const c = R.todaysClear(sn, "2026-10-19", R.overlays({}, sn, NOWI), null); assert.deepStrictEqual([c.total, c.pct, c.ticks.length], [0, 0, 0]); });
 console.log(`\n${n - fail}/${n} passed`); process.exit(fail ? 1 : 0);

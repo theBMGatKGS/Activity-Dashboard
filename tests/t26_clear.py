@@ -1,7 +1,7 @@
 """T26 (00.05.003): Today's Clear bar on Daily Focus, in Chromium. Fictional example data only.
 Bar under the squares (same width), role=progressbar with aria values/text, Done fills it (Undo empties it), Snooze is hatched and
 never counts, reduced motion has no transition, print = flat navy fill on white with the count as text. Optional argv[1]: shots dir."""
-import pathlib, re, sys
+import json, pathlib, re, sys
 from playwright.sync_api import sync_playwright
 SRC = pathlib.Path(__file__).resolve().parents[1]; ok = True; errors = []
 SHOTS = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else None
@@ -47,6 +47,23 @@ with sync_playwright() as p:
     w = p3.evaluate("[Math.round(document.querySelector('.tiles4').getBoundingClientRect().width), Math.round(document.querySelector('.tclear .track').getBoundingClientRect().width)]")
     check(w[1] <= w[0] + 1, f"narrow / 200% zoom: bar matches the 2×2 squares ({w})")
     if SHOTS: p3.locator(".fhead").screenshot(path=str(SHOTS / "05003-5-narrow.png"))
+    # B1: a baseline is never taken from EXAMPLE DATA; real data shown after it starts with 0 added
+    raw = json.loads((SRC / "examples/example-snapshot.json").read_text())
+    c4 = b.new_context(viewport={"width": 1440, "height": 900}); p4 = c4.new_page(); p4.on("pageerror", lambda e: errors.append(str(e)))
+    p4.goto((SRC / "index.html").as_uri() + Q); p4.wait_for_selector(".tclear .track")
+    check(p4.evaluate("DASH.app.state.clearBase") is None, "example data shown: no Today's Clear baseline is taken (in memory or stored)")
+    real = dict(raw, example=False, tasks=[dict(t, id="R-" + t["id"]) for t in raw["tasks"]])
+    p4.evaluate("r => DASH.app.useSnapshot(r, 'test')", real); p4.wait_for_timeout(100)
+    m = p4.evaluate("[DASH.app.state.clearModel.added, DASH.app.state.clearBase && DASH.app.state.clearBase.ids.length, DASH.app.state.clearModel.total]")
+    check(m[0] == 0 and m[1] == m[2] and "added" not in (p4.inner_text(".tclear") or ""), f"example → real data: 0 added, baseline = the real scope ({m})")
+    check(p4.evaluate("DASH.db.SECRET.has('clearBase')"), "E1: clearBase is a SECRET key (encrypted with the Data folder, never written while locked)")
+    # T1: tick strip shown up to 40 items in scope, hidden at 41
+    for n, want in ((40, True), (41, False)):
+        many = dict(real, tasks=[{"id": f"M-{i}", "list": "Follow-ups", "title": f"example task {i}", "account": None, "person": None, "next_date": "2026-10-16", "status": "not_started", "last_modified": "2026-10-18T09:00:00-05:00", "withhold": False} for i in range(n)])
+        p4.evaluate("r => DASH.app.useSnapshot(r, 'test')", many); p4.wait_for_timeout(100)
+        t = p4.evaluate("[document.querySelectorAll('.tclear .tk').length, +document.querySelector('.tclear [role=progressbar]').getAttribute('aria-valuemax')]")
+        check(t == ([n, n] if want else [0, n]), f"{n} items: tick strip {'shown' if want else 'hidden'} ({t}); count stays in the note: {'overdue open' in p4.inner_text('.tclear .pnote')}")
+    c4.close()
     b.close()
 check(not errors, "no page errors" + (f": {errors[:3]}" if errors else ""))
 print("T26", "PASS" if ok else "FAIL"); sys.exit(0 if ok else 1)

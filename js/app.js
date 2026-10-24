@@ -40,7 +40,7 @@
     await hubBoot();                                              // 00.04: GitHub data hub (the store on iPad, a mirror next to a folder)
     await offerLegacyDelete();
     S.history = (await DB.get("history")) || [];
-    S.clearBase = (await DB.get("clearBase")) || null;   // 00.05.003: Today's Clear baseline {day, ids} (this computer only)
+    { const cb = await DB.get("clearBase"); S.clearBase = cb && typeof cb.day === "string" && Array.isArray(cb.ids) ? cb : null; }   // 00.05.003: Today's Clear baseline {day, ids} (this computer only)
     S.own = (await DB.get("ownEvents")) || [];
     recompute();
     let raw = null, from = "";
@@ -1035,7 +1035,8 @@
   function clearModel(f) {
     const base = S.clearBase && S.clearBase.day === S.today ? S.clearBase.ids : null;
     const c = R.todaysClear(S.snap, S.today, f.ov, base);
-    if (!base) { S.clearBase = { day: S.today, ids: c.ids }; if (!isExample()) track(DB.set("clearBase", S.clearBase)); }
+    // Never take the baseline from EXAMPLE DATA (B1): it would make every real item "added" after unlock.
+    if (!base && !(S.snap && S.snap.example)) { S.clearBase = { day: S.today, ids: c.ids }; track(DB.set("clearBase", S.clearBase)); }
     return c;
   }
   function clearBar(f) {

@@ -485,7 +485,7 @@
     });
     const order = { done: 0, snoozed: 1, open: 2, over: 3 };
     ticks.sort((a, b) => order[a.state] - order[b.state] || a.id.localeCompare(b.id));
-    const total = scope.length, pct = total ? Math.round(done / total * 100) : 0;
+    const total = scope.length, pct = total ? (done === total ? 100 : Math.min(99, Math.floor(done / total * 100))) : 0;
     const parts = [`${done} of ${total} cleared`]; if (snoozed) parts.push(`${snoozed} snoozed`); if (overdueOpen) parts.push(`${overdueOpen} overdue still open`); if (added) parts.push(`${added} added today`);
     return { total, done, snoozed, overdueOpen, open: total - done - snoozed, added, pct, ticks, ids: scope.map(it => it.id), text: parts.join(", ") };
   }
