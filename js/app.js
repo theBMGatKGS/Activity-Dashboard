@@ -3,7 +3,7 @@
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
   const R = DASH.rules, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.05.002_261023";
+  const REV = "00.05.003_261024";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -40,6 +40,7 @@
     await hubBoot();                                              // 00.04: GitHub data hub (the store on iPad, a mirror next to a folder)
     await offerLegacyDelete();
     S.history = (await DB.get("history")) || [];
+    S.clearBase = (await DB.get("clearBase")) || null;   // 00.05.003: Today's Clear baseline {day, ids} (this computer only)
     S.own = (await DB.get("ownEvents")) || [];
     recompute();
     let raw = null, from = "";
@@ -1030,6 +1031,23 @@
       <span class="nx">${whenText(r)}</span>
       <span class="btns"><button data-fdone="${esc(task)}" aria-label="Done: ${lbl}"${dis}>✓ Done</button><button data-fsnooze="${esc(task)}" aria-haspopup="menu" aria-expanded="false" aria-label="Snooze: ${lbl}"${dis}>Snooze</button><button data-ftouch="${esc(r.id)}" aria-label="Log touch: ${lbl}">Log touch</button></span></div>`;
   }
+  // 00.05.003 Today's Clear bar (Option A). Baseline = scope of the first snapshot seen today on this computer.
+  function clearModel(f) {
+    const base = S.clearBase && S.clearBase.day === S.today ? S.clearBase.ids : null;
+    const c = R.todaysClear(S.snap, S.today, f.ov, base);
+    if (!base) { S.clearBase = { day: S.today, ids: c.ids }; if (!isExample()) track(DB.set("clearBase", S.clearBase)); }
+    return c;
+  }
+  function clearBar(f) {
+    const c = clearModel(f); S.clearModel = c;
+    if (!c.total) return `<div class="tclear empty" role="status"><span class="cap">Today's clear</span> <span class="muted">Nothing due today or overdue.</span></div>`;
+    const seg = (cls, n) => n ? `<i class="seg ${cls}" style="flex:${n}"></i>` : "";
+    const ticks = c.ticks.length <= 40 ? `<div class="ticks" aria-hidden="true">${c.ticks.map(t => `<i class="tk ${t.state}"></i>`).join("")}</div>` : "";
+    const note = [c.snoozed ? `${c.snoozed} snoozed (not counted)` : "", c.added ? `+${c.added} added today` : "", c.overdueOpen ? `${c.overdueOpen} overdue open` : ""].filter(Boolean).join(" · ");
+    return `<div class="tclear${c.done === c.total ? " all" : ""}"><div class="pbh"><span class="cap" id="tclear-l">Today's clear</span><b class="mono pct">${c.done} of ${c.total} · ${c.pct}%</b></div>
+      <div class="track" role="progressbar" aria-labelledby="tclear-l" aria-valuemin="0" aria-valuemax="${c.total}" aria-valuenow="${c.done}" aria-valuetext="${esc(c.text)}" title="${esc(c.text)}. Counts what's due today and overdue (not Waiting on) since the first snapshot today; Done in To Do or here fills it, Snooze never does.">${seg("done", c.done)}${seg("snzd", c.snoozed)}${seg("left", c.total - c.done - c.snoozed)}</div>
+      ${ticks}${note ? `<div class="pnote mono">${esc(note)}</div>` : ""}</div>`;
+  }
   function renderFocus() {
     const el = $("#view-focus"); if (!el) return;
     const f = focusModel(), anim = !S.focusAnimated; S.focusModel = f;
@@ -1049,7 +1067,7 @@
     const meet = evs.slice(0, 4).map(e => `<div class="mt${e.conflict ? " cf" : ""}"><span class="t">${hhmm24(e.start)}</span><span class="ma">${esc(e.account || "—")}</span><small>${esc(e.title)}${e.conflict ? " ⚠" : ""} · <button class="lnk" data-prep="${esc(e.id)}" aria-label="Prep for ${esc(e.title)}">prep ↗</button></small></div>`).join("")
       || '<div class="mt empty"><small>No more meetings today.</small></div>';
     const asof = `As of ${R.dayLabel(R.isoDay(S.snap.generatedAt))} · ${hhmm24(S.snap.generatedAt)} ${esc(R.tzLabel(S.snap.generatedAt))}`;
-    const header = `<header class="fhead"><div class="tiles4" role="group" aria-label="Today at a glance">${squares}</div>
+    const header = `<header class="fhead"><div class="fleft"><div class="tiles4" role="group" aria-label="Today at a glance">${squares}</div>${clearBar(f)}</div>
       <div class="side"><div class="ttl"><h1>Daily Focus</h1><div class="asof${isStale() ? " stale" : ""}" title="${isStale() ? "This snapshot is more than 24 hours old." : "Time the snapshot was made (Central Time)."}">${isStale() ? "⚠ Stale · " : ""}${esc(asof)}${S.snap.example ? ' · <span class="exd">EXAMPLE DATA</span>' : ""}</div></div>
         ${f.doneHere ? `<div class="donehere" role="status">${f.doneHere} done here, not yet in To Do <span class="muted">· mark ${f.doneHere === 1 ? "it" : "them"} done in To Do</span></div>` : ""}
         <div class="meet" aria-label="Meetings today">${meet}${evs.length > 4 ? `<button class="lnk mmore" data-meetmore>+${evs.length - 4} more</button>` : ""}</div></div></header>`;

@@ -1,5 +1,11 @@
 # Changelog — Activity Dashboard
 
+## 00.05.003_261024 (Oct 24 2026)
+- New: Today's Clear bar (design Option A, approved 10/24). `rules.js` `todaysClear(s, today, ov, baseIds)` (pure): scope = items due ≤ today, list ≠ Waiting on, open or completed today; cleared = done in To Do today or Done overlay (`ov.hidden`); snoozed (`ov.snoozed`) is its own state and never counts; reopened-after-Done counts as open; `added` = scope ids not in the day's baseline.
+- `app.js`: baseline `{day, ids}` = scope at the first Focus render of the day, kept in IndexedDB key `clearBase` (this computer only, task ids only, not synced; not written for example data). `clearBar()` renders `.tclear` under `.tiles4` (wrapped in `.fleft`): `role=progressbar`, `aria-labelledby`, `aria-valuemin/max/now`, `aria-valuetext`, tooltip with the definition; segments done / hatched snoozed / remaining; aria-hidden tick strip (≤ 40 items); note line. REV 00.05.003_261024; `sw.js` cache bumped.
+- `app.css`: `.tclear` styles (456 px = four squares; 218 px in the 2×2 narrow layout), 250 ms fill transition (off under reduced motion via the app-wide rule), print: navy #102645 fill on white with a #0C77BC outline, no hatch or ticks, counts as text.
+- Tests: `rules.test.js` C1–C4; new `t26_clear.py` (in `run_all.sh`; optional shots dir); T13 revision.
+
 ## 00.05.002_261023 (Oct 23 2026)
 - Fix: GitHub sync attached only at start-up (`hubBoot`), and only if the Data folder was already allowed and unlocked then. A computer unlocked later (unlock postponed with "Not now", "Reconnect Data folder" after a browser restart, a recovery-key passphrase reset) never attached the hub: the chip said "🔐 Synced" without ☁, the snapshot and other machines' files were never pulled (EXAMPLE DATA), and its keyring and time file were never pushed. Now every sync (and an unlock from File → Encryption…) attaches GitHub sync as soon as the folder is unlocked, and mirrors at once.
 - A saved GitHub set-up that can't attach (set up for a different keyring, or a token that can't be opened) shows "⚠ GitHub not connected · … · 1 problem" with the reason in the tooltip, instead of "Synced"; clicking it opens File → GitHub sync…. Nothing is sent to the hub in that state.

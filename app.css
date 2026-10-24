@@ -281,6 +281,20 @@ table.tbl select{background:var(--surface2);border:1px solid var(--line);border-
   .frow .st{grid-area:st} .frow .act{grid-area:act;white-space:normal} .frow .nx{grid-area:nx} .frow .acct{grid-area:acct;grid-column:1 / 2} .frow .per{grid-area:per} .frow .btns{grid-area:btns}
   .meet{grid-template-columns:1fr}
 }
+/* 00.05.003 Today's Clear bar under the squares (width of the four squares) */
+.fleft{display:flex;flex-direction:column;gap:14px}
+.tclear{width:456px;margin-left:5px}
+.tclear .pbh{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.tclear .pct{font-family:var(--hl-mono);font-size:14px;color:var(--hl-ink)}
+.tclear .track{height:10px;background:#1b2320;border-radius:5px;display:flex;overflow:hidden;gap:2px}
+.tclear .seg{display:block;height:100%;transition:flex-grow .25s ease-out}
+.tclear .seg.done{background:var(--hl-green)} .tclear .seg.left{background:transparent}
+.tclear .seg.snzd{background:repeating-linear-gradient(135deg,#5a6660 0 3px,#1b2320 3px 6px)}
+.tclear .ticks{display:flex;gap:2px;margin-top:5px} .tclear .tk{flex:1;height:3px;border-radius:2px;background:#2b3631}
+.tclear .tk.done{background:var(--hl-green)} .tclear .tk.over{background:var(--hl-red)} .tclear .tk.snoozed{background:#5a6660}
+.tclear .pnote{color:var(--hl-muted);font-size:11px;margin-top:6px;font-family:var(--hl-mono)}
+.tclear.all .pct{color:var(--hl-green)}
+@media screen and (max-width:1100px){.tclear{width:218px}}
 /* Reduced motion (app-wide): no animations, transitions or smooth scrolling */
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 /* Print Daily Focus: one landscape page in the print palette — white, outlined squares, no fills/shadows/glow/animation */
@@ -313,4 +327,10 @@ table.tbl select{background:var(--surface2);border:1px solid var(--line);border-
   #view-focus.printing .nx{display:flex;flex-wrap:wrap;align-items:center;gap:1px 4px;overflow-wrap:anywhere}   /* U2: the no-date pill wraps inside its cell, never past the row border */
   #view-focus.printing .nx .nodate{font-size:7pt;padding:0 3px;max-width:100%;box-sizing:border-box}
   #view-focus.printing .note,#view-focus.printing .wchip{color:#474747;border-color:#9e9e9e}
+  #view-focus.printing .tclear{width:444px;margin-left:0}
+  #view-focus.printing .tclear .track{background:#fff!important;border:1px solid #0C77BC;border-radius:0;height:9px;gap:0}
+  #view-focus.printing .tclear .seg.done{background:#102645!important} #view-focus.printing .tclear .seg.snzd,#view-focus.printing .tclear .seg.left{background:#fff!important}
+  #view-focus.printing .tclear .ticks{display:none!important}
+  #view-focus.printing .tclear .pct,#view-focus.printing .tclear .cap{color:#102645!important}
+  #view-focus.printing .tclear .pnote{color:#1a1a1a!important}
 }

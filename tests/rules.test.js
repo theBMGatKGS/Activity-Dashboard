@@ -290,4 +290,31 @@ t("Z5 Due Today / Overdue follow the zone: one instant, Chicago vs Pacific vs Ea
   assert.deepStrictEqual(due("America/Chicago"), ["2026-10-22", 1, 0]); assert.deepStrictEqual(due("America/Los_Angeles"), ["2026-10-22", 1, 0]);
   assert.deepStrictEqual(due("America/New_York"), ["2026-10-23", 1, 1], "already Oct 23 in Eastern: Z2 is overdue");
 });
+// ---------- 00.05.003 Today's Clear (C-series) ----------
+t("C1 scope: due today + overdue, not Waiting on, not future; done today in To Do counts as cleared", () => {
+  const sn = mk([{ id: "A", next_date: "2026-10-19" }, { id: "B", next_date: "2026-10-16" }, { id: "C", next_date: "2026-10-19", list: "Waiting on" },
+    { id: "D", next_date: "2026-10-20" }, { id: "E", next_date: "2026-10-19", status: "done", completed_at: "2026-10-19T07:00:00-05:00" },
+    { id: "F", next_date: "2026-10-15", status: "done", completed_at: "2026-10-18T07:00:00-05:00" }, { id: "G" }]);
+  const c = R.todaysClear(sn, "2026-10-19", R.overlays({}, sn, NOWI), null);
+  assert.deepStrictEqual([c.total, c.done, c.snoozed, c.overdueOpen, c.added, c.pct], [3, 1, 0, 1, 0, 33]);
+  assert.deepStrictEqual(c.ticks.map(x => x.state), ["done", "open", "over"]);
+  assert.strictEqual(c.text, "1 of 3 cleared, 1 overdue still open");
+});
+t("C2 Done here clears; Snooze is hatched and never counts; reopened in To Do un-clears", () => {
+  const sn = mk([{ id: "A", next_date: "2026-10-19" }, { id: "B", next_date: "2026-10-16" }]);
+  const fl = { "done:A": { on: true, at: "2026-10-19T12:00:00Z" }, "snooze:B": { on: true, until: "2026-10-20T13:00:00Z", due: "2026-10-16" } };
+  const c = R.todaysClear(sn, "2026-10-19", R.overlays(fl, sn, NOWI), null);
+  assert.deepStrictEqual([c.total, c.done, c.snoozed, c.open, c.overdueOpen, c.pct], [2, 1, 1, 0, 0, 50]);
+  assert.deepStrictEqual(c.ticks.map(x => x.state), ["done", "snoozed"]); assert.strictEqual(c.text, "1 of 2 cleared, 1 snoozed");
+  const sn2 = mk([{ id: "A", next_date: "2026-10-19", last_modified: "2026-10-19T08:30:00-05:00" }, { id: "B", next_date: "2026-10-16" }], { generated_at: "2026-10-19T09:00:00-05:00" });
+  const fl2 = { "done:A": { on: true, at: "2026-10-19T12:00:00Z", snapAt: "2026-10-19T07:30:00-05:00" } };
+  const c2 = R.todaysClear(sn2, "2026-10-19", R.overlays(fl2, sn2, NOWI), null);
+  assert.strictEqual(c2.done, 0, "reopened in To Do after the Done: not cleared");
+});
+t("C3 baseline: items not in the first snapshot today count as added and grow the total", () => {
+  const sn = mk([{ id: "A", next_date: "2026-10-19" }, { id: "N", next_date: "2026-10-19" }]);
+  const c = R.todaysClear(sn, "2026-10-19", R.overlays({}, sn, NOWI), ["A"]);
+  assert.deepStrictEqual([c.total, c.added], [2, 1]); assert.ok(c.text.endsWith("1 added today"));
+});
+t("C4 empty scope", () => { const sn = mk([{ id: "A", next_date: "2026-10-25" }]); const c = R.todaysClear(sn, "2026-10-19", R.overlays({}, sn, NOWI), null); assert.deepStrictEqual([c.total, c.pct, c.ticks.length], [0, 0, 0]); });
 console.log(`\n${n - fail}/${n} passed`); process.exit(fail ? 1 : 0);

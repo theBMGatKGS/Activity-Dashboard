@@ -1,5 +1,12 @@
 # Release notes — Activity Dashboard
 
+## 00.05.003_261024 (Oct 24 2026)
+- **Today's Clear:** a thin progress bar under the four squares on Daily Focus shows how much of today's load you've cleared, for example "5 of 11 · 45%".
+- It counts what's due today plus what's overdue (not Waiting on), starting from the first snapshot you see today. Ticking a task off in To Do or with ✓ Done here fills it; Undo empties it again.
+- A snoozed item shows as a grey hatched piece and never counts as cleared. Overdue items still open show as red ticks under the bar. New items that turn up during the day add to the total ("+1 added today").
+- Printed Daily Focus shows the bar as a flat navy fill with the counts written out.
+- Screen readers announce it as a progress bar ("5 of 11 cleared, 1 snoozed, 2 overdue still open"). Reduced-motion settings turn off the fill animation.
+
 ## 00.05.002_261023 (Oct 23 2026)
 - Fixed: if a computer was unlocked after the dashboard had started (for example after "Not now", reconnecting the Data folder, or resetting the passphrase with the recovery key), GitHub sync didn't start. It showed "Synced" but no ☁, kept showing EXAMPLE DATA and sent nothing. It now connects as soon as you unlock.
 - If GitHub sync is set up but can't start (for example it was set up with a different passphrase setup), the top bar now says "⚠ GitHub not connected"; click it to set it up again.

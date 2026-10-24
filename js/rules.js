@@ -467,6 +467,29 @@
     return { delta: d, text: d > 0 ? `▲+${d}` : d < 0 ? `▼−${-d}` : "=0", basisDay: isoDay(best.generated_at) };
   }
 
+  // 00.05.003 Today's Clear: progress through what's due today + overdue (not Waiting on), counted against the first snapshot
+  // seen today (baseIds, kept per day on this computer). Cleared = done in To Do today or ✓ Done here; snoozed never counts.
+  function todaysClear(s, today, ov, baseIds) {
+    const inScope = it => it.due && it.due <= today && it.list !== "Waiting on";
+    const scope = s.items.filter(it => inScope(it) && (isOpen(it) || it.completedOn === today));
+    const base = baseIds ? new Set(baseIds) : null, ticks = [];
+    let done = 0, snoozed = 0, overdueOpen = 0, added = 0;
+    scope.forEach(it => {
+      let st;
+      if (!isOpen(it) || ov.hidden.has(it.id)) { st = "done"; done++; }
+      else if (ov.snoozed.has(it.id)) { st = "snoozed"; snoozed++; }
+      else if (it.due < today) { st = "over"; overdueOpen++; }
+      else st = "open";
+      if (base && !base.has(it.id)) added++;
+      ticks.push({ id: it.id, state: st });
+    });
+    const order = { done: 0, snoozed: 1, open: 2, over: 3 };
+    ticks.sort((a, b) => order[a.state] - order[b.state] || a.id.localeCompare(b.id));
+    const total = scope.length, pct = total ? Math.round(done / total * 100) : 0;
+    const parts = [`${done} of ${total} cleared`]; if (snoozed) parts.push(`${snoozed} snoozed`); if (overdueOpen) parts.push(`${overdueOpen} overdue still open`); if (added) parts.push(`${added} added today`);
+    return { total, done, snoozed, overdueOpen, open: total - done - snoozed, added, pct, ticks, ids: scope.map(it => it.id), text: parts.join(", ") };
+  }
+
   g.DASH = g.DASH || {};
   g.DASH.rules = { LISTS, STATUSES, AUDIENCES, SUBJECTS, TOTAL_KEYS, LIST_KEY, GROUPS, COLD_DAYS, DEFAULT_RULES,
     DEFAULT_TZ, validTimeZone, detectTimeZone, setTimeZone, getTimeZone, tzLabel, zoneOffsetMs,
@@ -474,5 +497,5 @@
     lastActivity, isCold, inTotal, totals, mergeHistory, weeklySeries, wow, wowTone, sparkPoints, withConflicts, minutesBetween,
     guessAudience, guessSubject, learnAudience, lineHead, formatLine, managerItems, workload, parseCSV, snapshotFromCSV,
     KINDS, logFingerprint, migrateLogEntries, mergeLog, SOURCES, TOUCH_DIR, TOUCH_KIND, realDay, csvCell, calendarFills, conflictPartners, parseMinutes, parseNotebookLog, timeEntriesCSV, CSV_COLS, coldList,
-    ctIso, snoozeUntil, prevBusinessDay, isOutside, lastTouch, keyCold, overlays, focusSections, focusDelta, FOCUS_SECTIONS };
+    ctIso, snoozeUntil, prevBusinessDay, isOutside, lastTouch, keyCold, overlays, focusSections, focusDelta, FOCUS_SECTIONS, todaysClear };
 })(typeof window !== "undefined" ? window : globalThis);
