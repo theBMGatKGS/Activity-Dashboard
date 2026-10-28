@@ -1,0 +1,24 @@
+{
+ "_about": "EXAMPLE DATA - fictional project file for File > Import project JSON (00.08.000). Placeholder names only.",
+ "schema_version": 1,
+ "updated_at": "2026-10-19T06:45:00-05:00",
+ "plans": [
+  {
+   "id": "PLAN-PIN",
+   "name": "Pinned Example Rollout",
+   "pinned": true,
+   "buckets": [
+    { "id": "PB1", "name": "Partner deliverables" },
+    { "id": "PB2", "name": "Our deliverables" },
+    { "id": "PB3", "name": "Focus blocks" }
+   ],
+   "tasks": [
+    { "id": "PIN-1", "title": "Example airflow test plan", "bucketId": "PB1", "assignees": ["Priya M."], "status": "notStarted", "due": "2026-10-23", "priority": "urgent", "labels": ["Front and center"], "notes": "Source: example inbox task" },
+    { "id": "PIN-2", "title": "Example sample layout", "bucketId": "PB1", "assignees": [], "status": "inProgress", "due": "2026-10-14", "priority": "urgent", "checklist": [ { "title": "Draft layout", "done": true }, { "title": "Review with partner", "done": false } ] },
+    { "id": "PIN-3", "title": "Example comparison sheet", "bucketId": "PB2", "assignees": ["Sam K."], "status": "notStarted", "priority": "important", "checklist": ["Collect data", "Write summary"] },
+    { "id": "PIN-4", "title": "Example comparison focus blocks", "bucketId": "PB3", "status": "inProgress", "start": "2026-10-19", "due": "2026-10-19", "checklist": ["Block 1 (6:00-9:30 AM)", "Block 2 (10:00-11:00 AM)"], "notes": "From two calendar focus blocks" },
+    { "id": "PIN-5", "title": "Example pallet counts", "bucketId": "PB2", "assignees": ["Chris T."], "status": "completed", "due": "2026-10-12", "completedOn": "2026-10-12" }
+   ]
+  }
+ ]
+}

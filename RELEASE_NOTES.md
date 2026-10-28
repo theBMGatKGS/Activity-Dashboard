@@ -1,5 +1,10 @@
 # Release notes — Activity Dashboard
 
+## 00.08.000_261028 (Oct 28 2026)
+**Front and center**: pin a plan and keep its open tasks in view.
+- On the Projects tab, pick a plan and press **📌 Pin to Front and center**. Its open tasks show at the top of Daily Focus and Projects, overdue first, until every task is completed. Unpin any time.
+- **File → Import project JSON…** brings in a whole plan: buckets, tasks, notes and named checklist items, and whether it is pinned. The usual rules apply (no pricing or dollar figures, no email addresses); if anything fails, nothing is imported and the problems are listed. Import needs an encrypted, unlocked Data folder. Delete the file you picked afterwards: it is not encrypted.
+
 ## 00.07.000_261027 (Oct 27 2026)
 **Projects tab**: plan your projects in the dashboard and hand them to Planner as files.
 - Make plans, buckets and tasks, with checklists, owners (pick from the list or type a name), status, progress, priority, start and due dates, labels and notes.

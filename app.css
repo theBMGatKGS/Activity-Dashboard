@@ -424,3 +424,25 @@ table.tbl select{background:var(--surface2);border:1px solid var(--line);border-
 .projdlg input,.projdlg select,.projdlg textarea{background:var(--surface2);border:1px solid var(--line);border-radius:6px;padding:4px 7px;color:var(--ink)}
 .pdrow{display:flex;gap:10px} .pdrow label{flex:1} .pdck{list-style:none;padding:0;margin:4px 0} .pdbtns{display:flex;gap:8px}
 @media print{#view-projects.printing .projacts,#view-projects.printing .pgroup h3 .linkbtn{display:none!important} #view-projects.printing .tlink{color:#1a1a1a}}
+
+/* 00.08.000 Front and center strip (pinned plans): dark on screen, print palette when printed */
+.fcstrip{background:var(--surface);border:2px solid var(--accent);padding:4px 12px 6px;margin:0 0 8px}
+.fch{font-size:12px;letter-spacing:.12em;margin:2px 0 4px;color:var(--info);text-transform:uppercase;font-weight:700;display:flex;align-items:center;gap:8px}
+.fch .badge{background:var(--accent);color:#fff;border-radius:9px;padding:0 7px;font-size:11px;letter-spacing:0}
+.fcnote{font-size:10.5px;letter-spacing:0;text-transform:none;font-weight:400}
+.fcplan+.fcplan{margin-top:4px}
+.fcpn{font-weight:700;font-size:12px;margin:2px 0}
+.fcover{color:var(--fail)}
+.fcrow{display:grid;grid-template-columns:150px minmax(0,1fr) 220px 130px;gap:8px;align-items:center;border-top:1px solid var(--line2);padding:2px 0;font-size:12.5px}
+.fcrow .tlink{text-align:left;background:none;border:0;padding:0;cursor:pointer;color:var(--ink)} .fcrow .tlink:hover{text-decoration:underline}
+.fcb{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:760px){.fcrow{grid-template-columns:1fr}}
+@media print{
+  .view.printing .fcstrip{background:#fff!important;border:2px solid #102645;color:#1a1a1a;padding:3px 8px}
+  .view.printing .fch{color:#102645;border-bottom:1.5px solid #0C77BC}
+  .view.printing .fch .badge{background:#F2F2F2;color:#1a1a1a}
+  .view.printing .fcrow{border-top:1px solid #E2E2E2;font-size:8.5pt;padding:1px 0;grid-template-columns:130px minmax(0,1fr) 160px 140px}
+  .view.printing .fcrow .tlink,.view.printing .fcpn,.view.printing .fcb,.view.printing .faint{color:#1a1a1a!important}
+  .view.printing .fcstrip .pdue.over,.view.printing .fcover{color:#AC242A!important}
+  .view.printing .fcstrip .pdue{color:#1a1a1a}
+}

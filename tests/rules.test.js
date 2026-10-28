@@ -465,4 +465,42 @@ t("S6 xlsx: valid stored zip (CRC, central directory), one sheet per plan, inlin
 t("S7 optional import: Planner export feed into the store; existing ids kept; no duplicates", () => {
   const f = R.readProjects(clone(PJX)), empty = R.storeFromFeed(f, null, "2026-10-20T08:00:00Z"); assert.strictEqual(empty.added, 10); assert.deepStrictEqual(R.readStore(empty.store).rejects, []);
   const s = ST(); s.plans[0].tasks[0].title = "Mine"; const again = R.storeFromFeed(f, s, "2026-10-20T08:00:00Z"); assert.strictEqual(again.added, 0); assert.strictEqual(again.store.plans[0].tasks[0].title, "Mine"); });
-console.log(`\n${n - fail}/${n} passed`); process.exit(fail ? 1 : 0);
+// ---------- 00.08.000 pinned Front and center strip + Import project JSON ----------
+const PIF = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures/example-project-import.json"), "utf8"));
+const imp = (raw, st) => R.importProjectFile(clone(raw), st || null, "2026-10-19T13:00:00Z");
+t("P8a import round-trip: plans, pinned, buckets, notes and checklist item names survive import, store read and re-import", () => {
+  const r = imp(PIF); assert.deepStrictEqual(r.rejects, []); assert.strictEqual(r.added, 5); assert.deepStrictEqual(r.planIds, ["PLAN-PIN"]);
+  const s = R.readStore(JSON.parse(JSON.stringify({ schema_version: 1, updated_at: r.store.updated_at, plans: r.store.plans }))); assert.deepStrictEqual(s.rejects, []);
+  const p = s.plans.find(x => x.id === "PLAN-PIN"); assert.strictEqual(p.pinned, true); assert.deepStrictEqual(p.buckets.map(b => b.name), ["Partner deliverables", "Our deliverables", "Focus blocks"]);
+  const T = id => p.tasks.find(t => t.id === id);
+  assert.deepStrictEqual(T("PIN-2").checklist.map(c => [c.title, c.done]), [["Draft layout", true], ["Review with partner", false]]);
+  assert.deepStrictEqual(T("PIN-4").checklist.map(c => c.title), ["Block 1 (6:00-9:30 AM)", "Block 2 (10:00-11:00 AM)"]); assert.strictEqual(T("PIN-4").notes, "From two calendar focus blocks");
+  assert.strictEqual(T("PIN-1").notes, "Source: example inbox task"); assert.strictEqual(T("PIN-5").percent, 100); assert.strictEqual(T("PIN-3").priority, "important");
+  assert.ok(p.tasks.every(t => t.checklist.every(c => /^[A-Za-z0-9_-]{1,64}$/.test(c.id))), "checklist ids generated");
+  const again = imp(PIF, s); assert.strictEqual(again.added, 0); assert.strictEqual(again.skipped, 5);
+  const off = clone(PIF); off.plans[0].pinned = false; assert.strictEqual(imp(off, s).store.plans.find(x => x.id === "PLAN-PIN").pinned, false, "pinned field updates an existing plan");
+  const nf = clone(PIF); delete nf.plans[0].pinned; assert.strictEqual(imp(nf, s).store.plans.find(x => x.id === "PLAN-PIN").pinned, true, "no pinned field leaves it as it is");
+  const g = R.plannerGraph(s, "PLAN-PIN"); assert.deepStrictEqual(Object.values(g.plans[0].plannerTaskDetails.find(d => d.x_taskRef === "PIN-3").checklist).map(c => c.title), ["Collect data", "Write summary"], "checklist names reach the Graph export"); });
+t("P8b import guards: pricing, email, bad pinned, bad bucket, schema; all or nothing", () => {
+  const cases = [[GF.money[0], "pricing"], [GF.email[0], "email"]];
+  for (const [txt, word] of cases) for (const where of ["title", "notes", "checklist", "label"]) {
+    const x = clone(PIF), t0 = x.plans[0].tasks[0];
+    if (where === "checklist") t0.checklist = ["ok item", txt]; else if (where === "label") t0.labels = [txt]; else t0[where] = txt;
+    const r = imp(x); assert.strictEqual(r.store, null, where); assert.strictEqual(r.added, 0); assert.ok(r.rejects.length === 1 && r.rejects[0].includes(word) && r.rejects[0].startsWith("plan 1 task 1"), `${where}: ${r.rejects}`); }
+  const ow = clone(PIF); ow.plans[0].tasks[1].assignees = [GF.email[0]]; assert.ok(imp(ow).rejects[0].includes("owners"));
+  const pn = clone(PIF); pn.plans[0].name = GF.money[0]; assert.ok(imp(pn).rejects[0].includes("pricing"));
+  const bp = clone(PIF); bp.plans[0].pinned = "yes"; assert.ok(imp(bp).rejects[0].includes("pinned"));
+  const bb = clone(PIF); bb.plans[0].tasks[0].bucketId = "NOPE"; assert.ok(imp(bb).rejects[0].includes("unknown bucket"));
+  const rep = clone(PIF); rep.plans[0].tasks[1].id = "PIN-1"; assert.ok(imp(rep).rejects[0].includes("repeated"));
+  assert.throws(() => imp({ schema_version: 2, plans: [] }), /schema_version/); assert.throws(() => imp({ schema_version: 1 }), /plans/);
+  const ok1bad1 = clone(PIF); ok1bad1.plans.push({ id: "PLAN-2", name: "Second", buckets: [], tasks: [{ id: "Z1", title: GF.money[1] }] });
+  const r2 = imp(ok1bad1, ST()); assert.strictEqual(r2.store, null, "one bad task: nothing imported"); assert.strictEqual(r2.rejects.length, 1); });
+t("P8c pinned strip: open tasks only, overdue first then due date, no date last; clears once every task is completed", () => {
+  const s = R.readStore(imp(PIF).store); let st = R.pinnedStrip(s, "2026-10-19");
+  assert.strictEqual(st.length, 1); assert.strictEqual(st[0].open, 4); assert.strictEqual(st[0].total, 5); assert.strictEqual(st[0].overdue, 1);
+  assert.deepStrictEqual(st[0].tasks.map(t => [t.id, t.dueWord]), [["PIN-2", "Overdue"], ["PIN-4", "Today"], ["PIN-1", "This week"], ["PIN-3", "No date"]]);
+  assert.deepStrictEqual(R.pinnedStrip(ST(), "2026-10-19"), [], "plans that are not pinned never show");
+  s.plans[0].tasks.forEach(t => { if (t.id !== "PIN-3") t.status = "completed"; }); st = R.pinnedStrip(s, "2026-10-19"); assert.deepStrictEqual(st[0].tasks.map(t => t.id), ["PIN-3"]);
+  s.plans[0].tasks[2].status = "completed"; assert.deepStrictEqual(R.pinnedStrip(s, "2026-10-19"), [], "strip clears when every task is completed");
+  assert.deepStrictEqual(R.pinnedStrip(null, "2026-10-19"), []); });
+console.log(`\n${n - fail}/${n} passed (with 00.08.000)`); process.exit(fail ? 1 : 0);

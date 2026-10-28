@@ -724,7 +724,7 @@
       const buckets = p.buckets.filter(b => b && ID_RE.test(b.id || "") && !namedProblem(b.name, "bucket")).map(b => ({ id: b.id, name: b.name }));
       const bIds = new Set(buckets.map(b => b.id)), seen = new Set(), tasks = [];
       p.tasks.forEach((t, j) => { const e = taskProblem(t, bIds) || (seen.has(t.id) ? "id repeated" : null); if (e) { rejects.push(`plan ${i + 1} task ${j + 1}: ${e}`); return; } seen.add(t.id); tasks.push(normTask(t)); });
-      plans.push({ id: p.id, name: p.name, buckets, tasks });
+      plans.push({ id: p.id, name: p.name, buckets, tasks, pinned: p.pinned === true });   // 00.08.000: pinned = Front and center
     });
     return { schema_version: 1, updated_at: raw.updated_at, plans, rejects };
   }
@@ -745,8 +745,69 @@
     });
     out.updated_at = nowIso; return { store: out, added };
   }
+
+  // ---------- 00.08.000 Pinned "Front and center" strip + File → Import project JSON… ----------
+  // A pinned plan shows its open tasks (overdue first, then by due date, no date last) at the top of Daily Focus and Projects;
+  // the plan drops out of the strip once every task is completed.
+  function pinnedStrip(store, today) {
+    const out = [];
+    (store ? store.plans : []).forEach(p => { if (!p.pinned) return;
+      const open = p.tasks.filter(t => t.status !== "completed"); if (!open.length) return;
+      const bName = id => (p.buckets.find(b => b.id === id) || {}).name || "No bucket";
+      const tasks = open.map(t => Object.assign({}, t, { planId: p.id, bucket: bName(t.bucketId), dueWord: projectDueWord(t, today) }))
+        .sort((a, b) => (b.dueWord === "Overdue") - (a.dueWord === "Overdue") || (a.due || "9999").localeCompare(b.due || "9999") || a.id.localeCompare(b.id));
+      out.push({ planId: p.id, name: p.name, tasks, open: open.length, total: p.tasks.length, overdue: tasks.filter(t => t.dueWord === "Overdue").length });
+    });
+    return out;
+  }
+  // Import project JSON (the full store format): plans with pinned, buckets, tasks with notes and named checklist items
+  // ([{title, done}] or plain strings). Every task runs taskProblem (pricing and email guards included); all or nothing:
+  // if anything is rejected nothing is imported. Tasks whose id is already in the plan are kept as they are (skipped).
+  const IMPORT_MAX = 2000000;
+  function importProjectFile(raw, store, nowIso) {
+    if (!raw || typeof raw !== "object" || raw.schema_version !== 1 || !Array.isArray(raw.plans)) throw new Error("project JSON: schema_version 1 and a plans array are required");
+    const out = store ? JSON.parse(JSON.stringify({ schema_version: 1, updated_at: store.updated_at, plans: store.plans })) : { schema_version: 1, updated_at: nowIso, plans: [] };
+    const rejects = [], adds = [], planIds = []; let skipped = 0;
+    raw.plans.forEach((p, i) => {
+      const at = `plan ${i + 1}`;
+      if (!p || typeof p !== "object" || !ID_RE.test(p.id || "")) { rejects.push(`${at}: id missing or invalid`); return; }
+      const pe = namedProblem(p.name, "plan"); if (pe) { rejects.push(`${at}: ${pe}`); return; }
+      if (p.pinned !== undefined && typeof p.pinned !== "boolean") { rejects.push(`${at}: pinned must be true or false`); return; }
+      if (!Array.isArray(p.tasks)) { rejects.push(`${at}: tasks must be an array`); return; }
+      const buckets = [];
+      (Array.isArray(p.buckets) ? p.buckets : []).forEach((b, k) => { const be = !b || !ID_RE.test(b.id || "") ? "id missing or invalid" : namedProblem(b.name, "bucket");
+        if (be) rejects.push(`${at} bucket ${k + 1}: ${be}`); else buckets.push({ id: b.id, name: b.name.trim() }); });
+      let plan = out.plans.find(x => x.id === p.id);
+      const bIds = new Set(buckets.map(b => b.id).concat(plan ? plan.buckets.map(b => b.id) : [])), seen = new Set(), tasks = [];
+      p.tasks.forEach((t0, j) => {
+        const bad = m => rejects.push(`${at} task ${j + 1}: ${m}`);
+        if (!t0 || typeof t0 !== "object") return bad("not an object");
+        const ck = Array.isArray(t0.checklist) ? t0.checklist : t0.checklist == null ? [] : null; if (!ck) return bad("checklist must be a list of items");
+        const tid = String(t0.id || "");
+        const t = { id: tid, title: t0.title, bucketId: t0.bucketId == null ? null : t0.bucketId, assignees: t0.assignees == null ? [] : t0.assignees, status: t0.status || "notStarted",
+          percent: t0.percent == null ? (t0.status === "completed" ? 100 : t0.status === "inProgress" ? 50 : 0) : t0.percent, start: t0.start || null, due: t0.due || null,
+          priority: t0.priority || "medium", labels: Array.isArray(t0.labels) ? t0.labels : [], notes: t0.notes == null ? "" : t0.notes, account: t0.account || null,
+          checklist: ck.map((c, k) => typeof c === "string" ? { id: (tid.slice(0, 56) || "T") + "-C" + (k + 1), title: c, done: false } : c && typeof c === "object" ? { id: ID_RE.test(c.id || "") ? c.id : (tid.slice(0, 56) || "T") + "-C" + (k + 1), title: c.title, done: c.done === true } : { id: "", title: "", done: false }),
+          completedOn: t0.completedOn || null };
+        if (t.status === "completed" && !t.completedOn) t.completedOn = null;
+        const e = taskProblem(t, bIds) || (seen.has(t.id) ? "id repeated" : null); if (e) return bad(e);
+        seen.add(t.id); tasks.push(normTask(t));
+      });
+      adds.push({ p, plan, buckets, tasks });
+    });
+    if (rejects.length) return { store: null, added: 0, skipped: 0, rejects, planIds };
+    let added = 0;
+    adds.forEach(({ p, plan, buckets, tasks }) => {
+      if (!plan) { plan = { id: p.id, name: p.name.trim(), buckets: [], tasks: [], pinned: p.pinned === true }; out.plans.push(plan); }
+      else if (p.pinned !== undefined) plan.pinned = p.pinned;
+      buckets.forEach(b => { if (!plan.buckets.some(x => x.id === b.id)) plan.buckets.push(b); });
+      tasks.forEach(t => { if (plan.tasks.some(x => x.id === t.id)) { skipped++; return; } plan.tasks.push(t); added++; });
+      planIds.push(plan.id);
+    });
+    out.updated_at = nowIso; return { store: out, added, skipped, rejects: [], planIds };
+  }
   // Store → the row shape used by the Projects table (checklist as counts).
-  function storeAsFeed(store) { return store ? { generatedAt: store.updated_at, plans: store.plans.map(p => ({ id: p.id, name: p.name, buckets: p.buckets, tasks: p.tasks.map(t => Object.assign({}, t, { checklist: t.checklist.length ? { done: t.checklist.filter(c => c.done).length, total: t.checklist.length } : null })) })), rejects: store.rejects || [] } : null; }
+  function storeAsFeed(store) { return store ? { generatedAt: store.updated_at, plans: store.plans.map(p => ({ id: p.id, name: p.name, pinned: !!p.pinned, buckets: p.buckets, tasks: p.tasks.map(t => Object.assign({}, t, { checklist: t.checklist.length ? { done: t.checklist.filter(c => c.done).length, total: t.checklist.length } : null })) })), rejects: store.rejects || [] } : null; }
   // --- exports (files only; nothing is sent anywhere) ---
   const PLANNER_COLS = ["Task ID", "Task Name", "Bucket Name", "Progress", "Priority", "Assigned To", "Start date", "Due date", "Late", "Completed Date", "Description", "Completed Checklist Items", "Checklist Items", "Labels"];
   const PRI_WORD = { urgent: "Urgent", important: "Important", medium: "Medium", low: "Low" }, PRI_GRAPH = { urgent: 1, important: 3, medium: 5, low: 9 };
@@ -817,7 +878,7 @@
   }
 
   g.DASH = g.DASH || {};
-  g.DASH.rules = { LISTS, STATUSES, AUDIENCES, SUBJECTS, TOTAL_KEYS, LIST_KEY, GROUPS, COLD_DAYS, DEFAULT_RULES,
+  g.DASH.rules = { pinnedStrip, importProjectFile, IMPORT_MAX, LISTS, STATUSES, AUDIENCES, SUBJECTS, TOTAL_KEYS, LIST_KEY, GROUPS, COLD_DAYS, DEFAULT_RULES,
     DEFAULT_TZ, validTimeZone, detectTimeZone, setTimeZone, getTimeZone, tzLabel, zoneOffsetMs,
     ymd, hm, hourCT, addDays, diffDays, sundayOf, mondayOf, dayLabel, isoDay, readSnapshot, isOpen, dateWord, statusWord, group, sortItems,
     lastActivity, isCold, inTotal, totals, mergeHistory, weeklySeries, wow, wowTone, sparkPoints, withConflicts, minutesBetween,

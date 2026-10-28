@@ -3,7 +3,7 @@
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
   const R = DASH.rules, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.07.000_261027";
+  const REV = "00.08.000_261028";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -1071,6 +1071,7 @@
       if (t.status === "completed") { t.percent = 100; t.completedOn = t.completedOn || S.today; } else { t.completedOn = null; if (t.status === "notStarted" && t.percent === 100) t.percent = 0; }
       const e = R.taskProblem(t, new Set(p.buckets.map(b => b.id))); if (e) return e;
       const n = R.normTask(t), i = p.tasks.findIndex(x => x.id === t.id); if (i >= 0) p.tasks[i] = n; else p.tasks.push(n); saveStore(); return null; },
+    setPinned(id, on) { const p = S.projStore.plans.find(x => x.id === id); if (!p) return "no such plan"; p.pinned = !!on; saveStore(); return null; },
     deleteTask(id) { const f = findTask(id); if (!f) return "no such task"; f.p.tasks = f.p.tasks.filter(x => x.id !== id); saveStore(); return null; },
   };
   function setOwner(id, name) {
@@ -1084,7 +1085,7 @@
     const el = $("#view-projects"); if (!el) return;
     const st0 = S.projStore;
     const imp = S.projFeed ? `<button class="btn" data-act="importPlanner">Import Planner export</button>` : "";
-    if (!st0 || !st0.plans.length) { el.innerHTML = `<div class="projempty"><h2>Projects</h2><p>No projects yet. Projects you make here are the source of truth and export as Planner-ready CSV, Excel (xlsx) and Graph JSON. Nothing is sent to Planner.</p><button class="btn" data-pact="addPlan">+ New plan</button> ${imp}</div>`; return; }
+    if (!st0 || !st0.plans.length) { el.innerHTML = `<div class="projempty"><h2>Projects</h2><p>No projects yet. Projects you make here are the source of truth and export as Planner-ready CSV, Excel (xlsx) and Graph JSON. Nothing is sent to Planner.</p><button class="btn" data-pact="addPlan">+ New plan</button> <button class="btn" data-act="importProjectJson">Import project JSON…</button> ${imp}</div>`; return; }
     const m = projectsModel(), plan = curPlan();
     const when = `${R.dayLabel(R.isoDay(st0.updated_at))} ${R.hm(st0.updated_at)} ${R.tzLabel(st0.updated_at)}`;
     const where = S.projExample ? "EXAMPLE DATA · changes are kept until reload" : S.vault && S.vault.kr && !S.vault.key ? "🔒 locked · changes are kept in memory only (browser only, not saved) until you unlock: File → Encryption…" : canSaveToFolder() ? "saved encrypted in the Data folder" : "saved in this browser only · encrypt the Data folder (File → Encryption…) to keep projects there";
@@ -1100,13 +1101,13 @@
       <td>${r.checklist ? `<span class="mono">${r.checklist.done}/${r.checklist.total}</span>` : ""}</td>
       <td class="pdue ${DUECLS[r.dueWord]}">${r.due ? `<span class="mono">${esc(R.dayLabel(r.due))}</span> ` : ""}<span class="dw">${esc(r.dueWord)}</span></td>
       <td>${r.priority === "urgent" ? '<span class="ppri urgent">Urgent</span>' : r.priority === "important" ? '<span class="ppri">Important</span>' : ""}</td></tr>`;
-    el.innerHTML = `<div class="projhead"><div><h2>Projects <span class="faint" style="font-size:12px;font-weight:400">· source of truth · exports Planner-ready CSV, xlsx and Graph JSON</span></h2>
+    el.innerHTML = pinnedHtml("projects") + `<div class="projhead"><div><h2>Projects <span class="faint" style="font-size:12px;font-weight:400">· source of truth · exports Planner-ready CSV, xlsx and Graph JSON</span></h2>
         <div class="projasof" role="status">Updated ${esc(when)} · ${esc(where)}</div></div>
       <div class="projtools"><label>Plan <select id="proj-plan">${planOpts}</select></label>
         <label>Owner <input id="proj-owner" list="proj-owners" value="${esc(S.projOwner)}" placeholder="anyone (or (unassigned))" aria-label="Filter by owner (pick or type)"></label>
         <label><input type="checkbox" id="proj-done"${S.projDone ? " checked" : ""}> Show completed</label></div></div>
-      <div class="projtools projacts"><button class="btn" data-pact="addPlan">+ Plan</button>${plan ? `<button class="btn" data-pact="renamePlan">Rename plan</button><button class="btn" data-pact="deletePlan">Delete plan</button><button class="btn" data-pact="addBucket">+ Bucket</button><button class="btn" data-pact="addTask">+ Task</button>` : '<span class="faint">Pick a plan to add buckets and tasks.</span>'}
-        <span class="sep"></span><button class="btn" data-act="exportProjects">Export CSV</button><button class="btn" data-act="exportProjectsXlsx">Export xlsx</button><button class="btn" data-act="exportProjectsGraph">Export Graph JSON</button><button class="btn" data-act="printProjects">Print</button>${imp}</div>
+      <div class="projtools projacts"><button class="btn" data-pact="addPlan">+ Plan</button>${plan ? `<button class="btn" data-pact="renamePlan">Rename plan</button><button class="btn" data-pact="deletePlan">Delete plan</button><button class="btn" data-pact="addBucket">+ Bucket</button><button class="btn" data-pact="addTask">+ Task</button><button class="btn" data-pact="togglePin" aria-pressed="${!!plan.pinned}">${plan.pinned ? "📌 Unpin from Front and center" : "📌 Pin to Front and center"}</button>` : '<span class="faint">Pick a plan to add buckets and tasks.</span>'}
+        <span class="sep"></span><button class="btn" data-act="exportProjects">Export CSV</button><button class="btn" data-act="exportProjectsXlsx">Export xlsx</button><button class="btn" data-act="exportProjectsGraph">Export Graph JSON</button><button class="btn" data-act="printProjects">Print</button><button class="btn" data-act="importProjectJson">Import project JSON…</button>${imp}</div>
       ${dl}
       <div class="projsum" role="list">${[["Open", m.sum.total - m.sum.completed], ["Overdue", m.sum.overdue], ["Due today", m.sum.today], ["In progress", m.sum.inProgress], ["Unassigned", m.sum.unassigned]].map(([k, v]) => `<div class="psq" role="listitem"><b>${v}</b><span>${k}</span></div>`).join("")}</div>
       ${st0.rejects && st0.rejects.length ? `<details class="faint projrej"><summary>⚠ ${st0.rejects.length} item(s) skipped</summary>${st0.rejects.map(x => `<div>${esc(x)}</div>`).join("")}</details>` : ""}
@@ -1166,6 +1167,7 @@
     else if (a === "addBucket" && plan) { const n = prompt("New bucket name"); if (n != null) say(projOps.addBucket(plan.id, n)); }
     else if (a === "renameBucket") { const bk = plan.buckets.find(x => x.id === b.dataset.bucket), n = prompt("Rename bucket", bk.name); if (n != null) say(projOps.renameBucket(plan.id, bk.id, n)); }
     else if (a === "deleteBucket") { if (confirm("Delete this bucket?")) say(projOps.deleteBucket(plan.id, b.dataset.bucket)); }
+    else if (a === "togglePin" && plan) say(projOps.setPinned(plan.id, !plan.pinned));
     else if (a === "addTask" && plan) { taskEditor(plan.id, null); if (b.dataset.bucket) { $("#pd-bucket").value = b.dataset.bucket; } }
     return true;
   }
@@ -1185,6 +1187,26 @@
     if (!S.projFeed) { toast("No Planner export (projects.json.enc) found."); return; }
     if (S.projExample) { toast("Load your real data first."); return; }
     const r = R.storeFromFeed(S.projFeed, S.projStore, new Date().toISOString()); S.projStore = R.readStore(r.store); S.projPlan = ""; saveStore(); toast(`Imported ${r.added} task(s) from the Planner export.`);
+  }
+  // ---- 00.08.000 Front and center strip (pinned plans) and File → Import project JSON… ----
+  function pinnedHtml(where) {
+    const st = R.pinnedStrip(S.projStore, S.today); if (!st.length) return "";
+    const n = st.reduce((a, x) => a + x.open, 0);
+    const row = t => `<div class="fcrow" role="listitem"><span class="pdue ${DUECLS[t.dueWord] || ""}"><span class="dw">${esc(t.dueWord)}</span>${t.due ? ` · ${esc(R.dayLabel(t.due))}` : ""}</span>
+      <button class="tlink" data-pinedit="${esc(t.id)}" aria-label="Edit ${esc(t.title)}">${esc(t.title)}</button><span class="fcb faint">${esc(t.bucket)}${t.assignees.length ? " · " + esc(t.assignees.join(", ")) : ""}</span>
+      <span class="mono faint">${esc(R.PROJ_STATUS_WORD[t.status])}${t.checklist.length ? ` · ${t.checklist.filter(c => c.done).length}/${t.checklist.length}` : ""}</span></div>`;
+    return `<section class="fcstrip" id="fc-${where}" aria-labelledby="fch-${where}"><h2 class="fch" id="fch-${where}">📌 Front and center <span class="badge" aria-label="${n} open task${n === 1 ? "" : "s"}">${n}</span><span class="faint fcnote">pinned until every task is completed</span></h2>
+      ${st.map(p => `<div class="fcplan"><div class="fcpn">${esc(p.name)} <span class="faint">· ${p.open} open of ${p.total}${p.overdue ? ` · <span class="fcover">${p.overdue} overdue</span>` : ""}</span></div><div role="list">${p.tasks.map(row).join("")}</div></div>`).join("")}</section>`;
+  }
+  function importProjectJson(name, text) {
+    if (!S.projExample && !canSaveToFolder()) { toast("⚠ Import project JSON needs an encrypted, unlocked Data folder (File → Encryption…), so the projects are never kept unencrypted. Nothing was imported."); return; }
+    if (text.length > R.IMPORT_MAX) { toast(`⚠ ${name} is too large to be a project file. Nothing was imported.`); return; }
+    let raw; try { raw = JSON.parse(text); } catch (e) { toast(`⚠ ${name} is not valid JSON. Nothing was imported.`); return; }
+    let r; try { r = R.importProjectFile(raw, S.projStore, new Date().toISOString()); } catch (e) { toast(`⚠ ${name}: ${e.message}. Nothing was imported.`); return; }
+    S.importRejects = r.rejects;
+    if (r.rejects.length) { toast(`⚠ ${name}: nothing imported, ${r.rejects.length} problem(s): ${r.rejects.slice(0, 3).join("; ")}${r.rejects.length > 3 ? "; …" : ""}`); return; }
+    S.projStore = R.readStore(r.store); S.projPlan = r.planIds.length === 1 ? r.planIds[0] : ""; saveStore();
+    toast(`Imported ${r.added} task(s) from ${name}${r.skipped ? `; ${r.skipped} already here, kept as they are` : ""}.${S.projExample ? " EXAMPLE DATA: kept until reload." : ` Saved encrypted. ${name} itself is not encrypted: delete it now.`}`);
   }
   function useFeeds(feeds) {
     if (S.projDirty && canSaveToFolder() && S.projStore && !S.projExample) { S.projDirty = false; saveStore(); }   // edits made while locked are saved once unlocked
@@ -1347,7 +1369,7 @@
       <div class="t1list">${t1.map(a => `<label><input type="checkbox" data-t1="${esc(a.name)}" checked> ${esc(a.name)}</label>`).join("")}</div>
       <div class="vbtns"><button class="btn" id="t1o-no">Not now</button><button class="btn primary" id="t1o-yes">Star selected</button></div></div>` : "";
     const foc = document.activeElement && document.activeElement.closest && document.activeElement.closest(".frow"), keep = foc ? foc.dataset.row : null;
-    el.innerHTML = header + stripHtml(f) + offerHtml + sections + later + nd + `<div class="ffoot muted">Rows: ${f.sections.reduce((a, x) => a + x.rows.length, 0)} of ${f.sections.reduce((a, x) => a + x.total, 0)} (cap ${f.cap}) · keys: j/k move · d Done · s Snooze · t Log touch · Rev ${REV}</div>`;
+    el.innerHTML = header + pinnedHtml("focus") + stripHtml(f) + offerHtml + sections + later + nd + `<div class="ffoot muted">Rows: ${f.sections.reduce((a, x) => a + x.rows.length, 0)} of ${f.sections.reduce((a, x) => a + x.total, 0)} (cap ${f.cap}) · keys: j/k move · d Done · s Snooze · t Log touch · Rev ${REV}</div>`;
     if (S.snap) S.focusAnimated = true;
     if (keep) { const r = el.querySelector(`.frow[data-row="${CSS.escape(keep)}"]`); if (r) r.focus(); }
   }
@@ -1515,7 +1537,7 @@
     importLog: () => pickFile(".md,.txt", (n, t) => importLog(n, t)), logCall: () => logCall($("#asof")),
     print: () => doPrint("print"), printManager: () => doPrint("manager"), printFocus: () => doPrint("focus"), reload: () => reloadSafely(),
     keyAccounts: () => keyAccountsDialog(), vFocus: () => setView("focus"), vDash: () => setView("dashboard"), vWork: () => setView("workload"), vPrint: () => setView("print"), vManager: () => setView("manager"), vProjects: () => setView("projects"),
-    printProjects: () => doPrint("projects"), exportProjects: () => exportProjects("csv"), exportProjectsXlsx: () => exportProjects("xlsx"), exportProjectsGraph: () => exportProjects("graph"), importPlanner: () => importPlanner(),
+    printProjects: () => doPrint("projects"), exportProjects: () => exportProjects("csv"), exportProjectsXlsx: () => exportProjects("xlsx"), exportProjectsGraph: () => exportProjects("graph"), importPlanner: () => importPlanner(), importProjectJson: () => pickFile(".json,application/json", (n, t) => importProjectJson(n, t)),
     hHelp: () => openHelp("help"), hHow: () => openHelp("howdoi"), hFaq: () => openHelp("faq"), hQuick: () => openHelp("quick"), hRev: () => openHelp("rev"), hKeys: () => openHelp("keys"),
   };
   function setView(v) { S.view = v; closePop(); render(); }
@@ -1526,6 +1548,7 @@
       const a = e.target.closest("[data-act]"); if (a) { closeMenus(); ACTIONS[a.dataset.act](); return; }
       if (!e.target.closest(".mitem")) closeMenus();
       const tab = e.target.closest(".tab"); if (tab) return setView(tab.dataset.view);
+      const pe = e.target.closest && e.target.closest("[data-pinedit]"); if (pe) { const f = findTask(pe.dataset.pinedit); if (f) taskEditor(f.p.id, f.t); return; }
       if (focusClick(e)) return;
       if (projectsClick(e)) return;
       const tl = e.target.closest("[data-filter]"); if (tl) { S.filter = S.filter === tl.dataset.filter ? null : tl.dataset.filter; render(); return; }
