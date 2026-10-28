@@ -37,7 +37,7 @@ for f in sorted(ROOT.rglob("*")):
     for m in EMAIL.finditer(t):
         if not m.group(1).lower().endswith(".example"): bad.append(f"{rel}: email {m.group(0)}")
     noisy = f.suffix == ".woff2"   # compressed font bytes: money/phone patterns match random bytes, so only denylist, email and domain checks apply
-    if rel == "tests/fixtures/guard-fixtures.json": noisy = True   # 00.07.000: explicit money/email guard fixtures (fictional); domain, denylist and email checks still apply
+    if rel == "tests/fixtures/example-guard-fixtures.json": noisy = True   # 00.07.000: explicit money/email guard fixtures (fictional); domain, denylist and email checks still apply
     for m in ([] if noisy else PHONE.finditer(t)): bad.append(f"{rel}: phone-like {m.group(0)}")
     for m in ([] if noisy else MONEY.finditer(t)):
         if not re.fullmatch(r"\$\d", m.group(0)): bad.append(f"{rel}: money {m.group(0)}")

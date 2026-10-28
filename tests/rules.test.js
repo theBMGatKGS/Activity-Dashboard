@@ -418,7 +418,7 @@ t("S2 store schema enforced; bad tasks skipped with reasons", () => {
   assert.throws(() => R.readStore({ ...clone(PJS), schema_version: 2 }), /schema_version/); assert.throws(() => R.readStore({ ...clone(PJS), updated_at: "yesterday" }), /updated_at/);
   const b = clone(PJS); b.plans[0].tasks[0].assignees = ["x@contoso.example"]; b.plans[0].tasks[1].bucketId = "NOPE"; b.plans[0].tasks[2].checklist = [{ id: "c", title: "", done: false }];
   const r = R.readStore(b); assert.strictEqual(r.rejects.length, 3, r.rejects.join(" | ")); });
-const GF = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures/guard-fixtures.json"), "utf8"));
+const GF = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures/example-guard-fixtures.json"), "utf8"));
 t("S3 pricing guard: every money fixture caught in title, notes, labels, checklist; plan/bucket names", () => {
   const t0 = clone(ST().plans[0].tasks[0]), ids = new Set(["B1"]);
   GF.money.forEach(m => { assert.ok(R.hasMoney(m), "missed: " + m);

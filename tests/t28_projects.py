@@ -14,7 +14,7 @@ def check(c, m):
     global ok; print(("PASS " if c else "FAIL ") + m); ok = ok and c
 Q = lambda now="2026-10-19T09:20:00-05:00", view="projects": f"?now={now}&machine=test&view={view}"
 IDS = "e => e.map(x => x.dataset.ptask)"
-GF = json.loads((SRC / "tests/fixtures/guard-fixtures.json").read_text())   # money / email fixtures (exempted file)
+GF = json.loads((SRC / "tests/fixtures/example-guard-fixtures.json").read_text())   # money / email fixtures (exempted file)
 MONEY = {m.split(" ")[0]: m for m in GF["money"] if m.startswith(("Bid ", "Quote is "))}
 def dl(pg, sel):
     with pg.expect_download() as d: pg.click(sel)

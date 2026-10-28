@@ -593,11 +593,10 @@
 
   // ---------- 00.07.000 Projects: a read-only mirror of Microsoft Planner (export only, nothing is written back) ----------
   // projects.json (schema_version 1) is read only when encrypted (purpose "projects"). Owners are names, never emails.
-  const hasEmailEarly = v => /@|%40|[\[({<]\s*at\s*[\])}>]|\s+at\s+[\w-]+\s*(?:\s|[\[({<])\s*dot\b/i.test(String(v).normalize("NFKC"));
   const PROJ_STATUS = ["notStarted", "inProgress", "completed"], PROJ_PRI = ["urgent", "important", "medium", "low"];
   const PROJ_STATUS_WORD = { notStarted: "Not started", inProgress: "In progress", completed: "Completed" };
   const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
-  const ownerOk = v => typeof v === "string" && !!v.trim() && v.length <= 80 && !hasEmailEarly(v);
+  const ownerOk = v => typeof v === "string" && !!v.trim() && v.length <= 80 && !hasEmail(v);
   function readProjects(raw) {
     if (!raw || typeof raw !== "object" || raw.schema_version !== 1) throw new Error("projects: schema_version must be 1");
     if (!ISO_OFF.test(raw.generated_at || "")) throw new Error("projects: generated_at must be ISO with offset");
@@ -672,12 +671,28 @@
     new RegExp(`${NUM}${MULT}\\s?(?:${CUR_CODE}|dollars?|bucks|euros?|pounds? sterling|cents?)\\b`, "i"),   // number then code or word
     new RegExp(`\\b(?:${SPELLED})\\b(?:[\\s-]+[a-z]+){0,4}?[\\s-]+(?:dollars?|bucks|euros?|grand)\\b`, "i"), // spelled-out amounts
     new RegExp(`\\b(?:prices?|priced|pricing|costs?|costing|quoted?|quotes|budget(?:ed)?|fees?|msrp|list price|discount(?:ed)?|invoice[sd]?|po value|total cost)\\b\\s*(?:is|was|of|at|to|=|:|~|about|around|approx\\.?)?\\s*~?\\s*\\d`, "i"), // a price word then a number
-    new RegExp(`\\b\\d{1,3}(?:,\\d{3})+\\.\\d{2}\\b|\\b\\d+\\.00\\b`),                       // bare decimal money
+    new RegExp(`\\b\\d{1,3}(?:,\\d{3})+\\.\\d{2}\\b`),                                      // 1,234.00
+    new RegExp(`\\b\\d{1,3}(?:\\.\\d{3})+,\\d{2}\\b`),                                      // 1.234,00 (European)
+    new RegExp(`\\b\\d[\\d,.]*\\s+grand\\b`, "i"),                                          // 9 grand
+    new RegExp(`\\b(?:dollars?|bucks|euros?|${CUR_CODE})\\s*[:=]?\\s*\\d`, "i"),                  // dollars 500
   ];
-  const hasMoney = v => { if (typeof v !== "string") return false; const t = v.normalize("NFKC"); return MONEY_RES.some(r => r.test(t)); };
+  // Bare two-decimal numbers (P1b/P1c): "12.50" or "75.00" alone reads as money, but versions, steps, floors, times and
+  // measurements don't. Rule: integer part of 2+ digits, not after a version/step/floor-type word, not before a unit or AM/PM.
+  // So 1.00, 2.00 and other single-digit values are never flagged on their own (a price that small still needs $, USD, "price"…).
+  const BARE_DEC = /(?<![\d.,])(\d{2,})\.(\d{2})(?![\d.,]|\s*(?:ft|feet|foot|in|inch|inches|mm|cm|m|km|mi|am|pm|a\.m|p\.m|%|l|ml|kg|g|lb|lbs|s|sec|min|h|hr|hrs|hz|khz|mhz|v|ma|a|w|kw|°|deg|psi|pa|bar|cfm|db)\b)/i;
+  const BARE_DEC_WORDS = /\b(?:version|ver|v|rev|revision|release|step|floor|level|zone|node|loop|item|section|sec|no|number|page|pg|sheet|figure|fig|table|chapter|clause|para|room|rm|bay|grid|row|col|line|pin|port|slot)\.?\s*#?\s*$/i;
+  function bareDecimalMoney(t) { const re = new RegExp(BARE_DEC.source, "gi"); let m; while ((m = re.exec(t))) { if (!BARE_DEC_WORDS.test(t.slice(0, m.index))) return true; } return false; }
+  const ZW = /[\u200B-\u200D\u2060\uFEFF\u00AD\u180E]/g;
+  const clean = v => v.normalize("NFKC").replace(ZW, "");
+  const hasMoney = v => { if (typeof v !== "string") return false; const t = clean(v); return MONEY_RES.some(r => r.test(t)) || bareDecimalMoney(t); };
   // Email guard (P2): @ (any width), [at] (at) {at}, "x AT y DOT z", %40.
-  const EMAIL_RES = [/@/, /[\[({<]\s*at\s*[\])}>]/i, /%40/i, /\b[\w.+-]+\s+at\s+[\w-]+\s*(?:\s|[\[({<])\s*dot\s*[\])}>]?\s*[a-z]{2,}\b/i, /\b[\w.+-]+\s*[\[({<]\s*at\s*[\])}>]\s*[\w-]+/i];
-  const hasEmail = v => typeof v === "string" && EMAIL_RES.some(r => r.test(v.normalize("NFKC")));
+  // Email guard (P2/P2b): @ (any width), &#64; / &commat;, %40, [at] (at) {at} <at>, "name at host.tld" (a real dot between
+  // host parts, spaces allowed: "jane.doe at contoso . com"), and the upper-case "JANE AT CONTOSO DOT EXAMPLE" form. A lower-case
+  // "at … dot" sentence ("Walk at noon dot plan") is not an address.
+  const EMAIL_RES = [/@/, /&#0*64;|&#x0*40;|&commat;/i, /%40/i, /[\[({<]\s*at\s*[\])}>]/i,
+    /\b[\w.+-]+\s+at\s+[a-z][\w-]*(?:\s*\.\s*[a-z][\w-]*)*\s*\.\s*[a-z]{2,24}\b/i,
+    /\b[\w.+-]+\s+AT\s+[A-Za-z][\w-]*\s+DOT\s+[A-Za-z]{2,24}\b/];
+  const hasEmail = v => typeof v === "string" && EMAIL_RES.some(r => r.test(clean(v)));
   const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
   // Validates one task; returns an error string or null. Used on every save and when reading the store.
   function taskProblem(t, bucketIds) {
