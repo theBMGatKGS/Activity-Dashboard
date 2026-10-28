@@ -386,7 +386,9 @@ table.tbl select{background:var(--surface2);border:1px solid var(--line);border-
 .psq b{font-size:20px} .psq span{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
 .pgroup{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 12px}
 .pgroup h3{margin:0 0 6px;font-size:13px}
-.ptable{width:100%;border-collapse:collapse;font-size:12.5px}
+.ptable{width:100%;border-collapse:collapse;font-size:12.5px;table-layout:fixed}
+.ptable th:nth-child(1){width:34%} .ptable th:nth-child(2){width:20%} .ptable th:nth-child(3){width:10%} .ptable th:nth-child(4){width:12%} .ptable th:nth-child(5){width:7%} .ptable th:nth-child(6){width:11%} .ptable th:nth-child(7){width:6%}
+.ptitle{overflow-wrap:anywhere}
 .ptable th{text-align:left;font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--line);padding:3px 6px}
 .ptable td{border-bottom:1px solid var(--line2);padding:4px 6px;vertical-align:middle}
 .ptable tr.pdone td{color:var(--faint)} .ptable tr.pdone .ptitle{text-decoration:line-through}
@@ -394,7 +396,7 @@ table.tbl select{background:var(--surface2);border:1px solid var(--line);border-
 .ownin{width:150px} .ownset{font-size:10px;color:var(--info)} .linkbtn{font-size:10.5px;padding:0 4px}
 .pbar{display:inline-block;width:60px;height:6px;background:var(--panel3);border-radius:3px;vertical-align:middle;overflow:hidden}
 .pbar i{display:block;height:100%;background:var(--accent)}
-.pdue.over{color:var(--fail)} .pdue.over .dw::before{content:"▲ "} .pdue.today{color:var(--pass)} .pdue.today .dw::before{content:"● "} .pdue.week{color:var(--ink)} .pdue.nodate{color:var(--inctx)}
+.pdue.over{color:var(--fail)} .pdue.over .dw::before{content:"▲ "} .pdue.today{color:var(--pass)} .pdue.today .dw::before{content:"● "} .pdue.week{color:var(--ink)} .pdue.pnd{color:var(--inctx)}
 .ppri{font-size:10.5px;color:var(--inctx)} .ppri.urgent{color:var(--fail);font-weight:700}
 .projfoot{font-size:11px} .projempty{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 18px}
 @media print{
@@ -412,4 +414,5 @@ table.tbl select{background:var(--surface2);border:1px solid var(--line);border-
   #view-projects.printing .pdue.over{color:#ac242a!important;font-weight:700} #view-projects.printing .pdue.today{color:#102645!important}
   #view-projects.printing .pacct,#view-projects.printing .plabel{color:#474747;border-color:#9e9e9e}
   #view-projects.printing .ownset{color:#0C77BC}
+  #view-projects.printing .ppri{color:#102645!important} #view-projects.printing .ppri.urgent{color:#ac242a!important}
 }

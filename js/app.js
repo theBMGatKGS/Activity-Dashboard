@@ -1037,7 +1037,7 @@
     const rows = R.projectRows(S.projFeed, { today: S.today, owners: S.projOwners, planId: S.projPlan || null, owner: S.projOwner, showCompleted: S.projDone });
     return { rows, sum: R.projectSummary(rows), choices: R.projectOwnerChoices(S.projFeed, CFG.projectOwners, S.projOwners) };
   }
-  const DUECLS = { Overdue: "over", Today: "today", "This week": "week", Later: "later", "No date": "nodate", Done: "done" };
+  const DUECLS = { Overdue: "over", Today: "today", "This week": "week", Later: "later", "No date": "pnd", Done: "done" };
   function renderProjects() {
     const el = $("#view-projects"); if (!el) return;
     if (!S.projFeed) { el.innerHTML = `<div class="projempty"><h2>Projects</h2><p>No Planner export yet. When <code>projects.json</code> (encrypted) is in the Data folder or GitHub hub, your Planner plans show here, read-only. See Help → Projects.</p></div>`; return; }
