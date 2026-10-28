@@ -13,6 +13,7 @@ window.DASH_CONFIG = {
   focusRowCap: 12, // 00.05: about this many rows on Daily Focus (each non-empty section keeps ≥1, Due Today and Overdue ≥3; "+n more" shows the rest)
   pollSeconds: 60, // 00.02: how often the connected Data folder is checked for new time files, snapshot and notebook log
   // 00.03: names an older build used, for the one-time migration. Keep real values in config.local.js (git-ignored), never here.
+  projectOwners: [],      // 00.07.000: owner picklist for Projects (free text is allowed too). Real names go in config.local.js only.
   legacyDbNames: [],      // older IndexedDB database names to copy the browser cache from
   legacyTimeKinds: [],    // older "kind" values accepted in time-*.json
   snapshotNames: [],      // extra snapshot file names read from the Data folder (plaintext; encrypted on the next sync)

@@ -146,7 +146,7 @@ function memDir(init) { const m = new Map(Object.entries(init || {})), mt = new 
     const d13 = memDir({ "keyring.json": KR, [S]: goodNew, "inbox-snapshot.json.bad-copy.enc": badOld, "inbox-snapshot.json.prev.enc": validOld, "time-mac.json-PC.enc": env, "backup-old.enc": env, "time-mac.json.enc": env });
     q = await H.mirror(d13, c13, O); const upn = q.up.slice().sort().join();
     check(upn === "inbox-snapshot.json.enc,keyring.json,time-mac.json.enc" && g13.files.size === 3, "R11 only known data files are uploaded: .bad-copy.enc, .prev.enc, conflict copies and other *.enc stay local (" + upn + ")");
-    check(H.dataName("time-workpc.json.enc") && H.dataName("notebook-log.js.enc") && !H.dataName("inbox-snapshot.json.bad-copy.enc") && !H.dataName("time-pc.json.prev.enc") && !H.dataName("x.enc") && H.dataName("calendar-snapshot.json.enc") && H.dataName("trips.json.enc") && !H.dataName("calendar-snapshot.json") && !H.dataName("trips.json.prev.enc"), "R12 data file name allowlist (00.06.000: calendar-snapshot, trips; encrypted only)");
+    check(H.dataName("time-workpc.json.enc") && H.dataName("notebook-log.js.enc") && !H.dataName("inbox-snapshot.json.bad-copy.enc") && !H.dataName("time-pc.json.prev.enc") && !H.dataName("x.enc") && H.dataName("calendar-snapshot.json.enc") && H.dataName("trips.json.enc") && !H.dataName("calendar-snapshot.json") && !H.dataName("trips.json.prev.enc") && H.dataName("projects.json.enc") && !H.dataName("projects.json"), "R12 data file name allowlist (00.06.000: calendar-snapshot, trips; 00.07.000: projects; encrypted only)");
   }
   console.log(`\n${pass}/${pass + fail} passed`); process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

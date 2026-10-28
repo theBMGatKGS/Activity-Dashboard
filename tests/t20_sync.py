@@ -127,7 +127,9 @@ with sync_playwright() as p:
     check(r["dropped"] == 1 and "i-mac1" in ents5 and "i-imported" in ents5, f"D6 Import local data keeps only this machine's events (dropped {r['dropped']})")
     # a fresh snapshot dropped into Data shows up on the next poll
     s2 = dict(snap); s2["generated_at"] = "2026-10-19T09:30:00-05:00"; (dirs["mac"] / "inbox-snapshot.json").write_text(json.dumps(s2))
-    mac.evaluate("DASH.app.syncNow()"); check("9:30" in mac.inner_text("#asof"), "poll picks up a new snapshot: " + mac.inner_text("#asof"))
+    mac.evaluate("DASH.app.syncNow()"); ga = mac.evaluate("DASH.app.state.snap.generatedAt"); asof = mac.inner_text("#asof")
+    check(ga is not None and abs(__import__("datetime").datetime.fromisoformat(ga).timestamp() - __import__("datetime").datetime.fromisoformat("2026-10-19T09:30:00-05:00").timestamp()) < 1 and any(x in asof for x in ("9:30 AM CT", "10:30 AM ET", "8:30 AM MT", "7:30 AM PT")),
+          f"poll picks up a new snapshot (instant 14:30Z, shown in the computer's zone): {ga} / {asof}")   # 00.07.000 Z1: zone-independent
     # persistence: reload mac from files
     mac.evaluate("DASH.app.syncNow()"); mac.evaluate("DASH.app.flush()"); pre = json.loads(mac.evaluate(TOT))["entries"]
     mac.reload(); mac.wait_for_selector(".tile"); mac.evaluate("DASH.app.syncNow()")

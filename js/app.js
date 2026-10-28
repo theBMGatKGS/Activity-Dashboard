@@ -3,7 +3,7 @@
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
   const R = DASH.rules, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.06.000_261024";
+  const REV = "00.07.000_261027";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -20,7 +20,7 @@
   const LABEL = { overdue: "Overdue", dueToday: "Due Today", thisWeek: "This Week", iOwe: "I Owe", owedToMe: "Owed to Me", goingCold: "Going Cold",
     followUps: "Follow-ups", waitingOn: "Waiting on", accountTouches: "Account touches", travel: "Travel" };
   // 00.05: Daily Focus is always the home view (Q9); ?view= opens another tab (deep links, tests).
-  const VIEWS = ["focus", "dashboard", "workload", "print", "manager"];
+  const VIEWS = ["focus", "dashboard", "workload", "projects", "print", "manager"];
   const S = { snap: null, today: R.ymd(NOW), filter: null, open: {}, collapsed: {}, entries: [], removedCal: [], history: [], rules: R.DEFAULT_RULES, view: VIEWS.includes(qp.get("view")) ? qp.get("view") : "focus", wkOffset: 0, trends: false,
     flags: {}, focusExp: new Set(), laterOpen: false, noDateOpen: false, focusAnimated: false };
   // "now" for Snooze: the ?now= test clock if given, else the real clock.
@@ -267,8 +267,10 @@
   function innerName(n) { if (!/\.enc$/i.test(n)) return n; const b = n.slice(0, -4); return /\.(json|js)$/i.test(b) ? b : b.replace(/\.(json|js)([^.]*)$/i, "$2.$1"); }
   const isSnapName = n => SNAP_NAMES.includes(n) || /^inbox-snapshot(?:[^a-z0-9][^/]*)?\.jso?n?$/i.test(n);
   const isLogName = n => LOG_NAMES.includes(n) || /^notebook-log(?:[^a-z0-9][^/]*)?\.js$/i.test(n);
-  const CAL_NAME = "calendar-snapshot.json", TRIPS_NAME = "trips.json";   // 00.06.000: calendar / travel assistants feeds (encrypted only)
-  const purposeOf = n => R2.isTimeFile(n) ? "time" : n === CAL_NAME ? "calendar" : n === TRIPS_NAME ? "trips" : isSnapName(n) ? "snapshot" : isLogName(n) ? "log" : null;
+  const CAL_NAME = "calendar-snapshot.json", TRIPS_NAME = "trips.json", PROJ_NAME = "projects.json";   // 00.07.000: Planner export for Projects (encrypted only)
+  const FEED_READ = { calendar: raw => R.readCalendar(raw), trips: raw => R.readTrips(raw), projects: raw => R.readProjects(raw) };
+    // 00.06.000: calendar / travel assistants feeds (encrypted only)
+  const purposeOf = n => R2.isTimeFile(n) ? "time" : n === CAL_NAME ? "calendar" : n === TRIPS_NAME ? "trips" : n === PROJ_NAME ? "projects" : isSnapName(n) ? "snapshot" : isLogName(n) ? "log" : null;
   async function writeText(name, text) {
     const fh = await S.dir.getFileHandle(name, { create: true });
     const w = await fh.createWritable();            // Chromium writes to a temporary swap file; close() swaps it in (atomic)
@@ -420,8 +422,8 @@
           try { R.readSnapshot(raw); } catch (e) { throw new Error("snapshot rejected (" + e.message + "); not encrypted or uploaded, the previous one is kept"); }   // 00.04.001
           body = JSON.stringify(raw);
           try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, "snapshot")); R.readSnapshot(old); if (new Date(old.generated_at) > new Date(raw.generated_at)) body = null; } catch (e) { /* none yet, or the old one is invalid: replace it */ }
-        } else if (purpose === "calendar" || purpose === "trips") {   // 00.06.000: validate, keep the newer copy
-          target = name + ENC; const raw = JSON.parse(text); (purpose === "calendar" ? R.readCalendar : R.readTrips)(raw); body = JSON.stringify(raw);
+        } else if (FEED_READ[purpose]) {   // 00.06.000 (00.07.000: + projects): validate, keep the newer copy
+          target = name + ENC; const raw = JSON.parse(text); FEED_READ[purpose](raw); body = JSON.stringify(raw);
           try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, purpose)); if (Date.parse(old.generated_at) > Date.parse(raw.generated_at)) body = null; } catch (e) { /* none yet */ }
         } else { target = "notebook-log.js" + ENC; parseLogJs(text); body = text; }
         if (body != null) {
@@ -514,7 +516,7 @@
     try {
       if (purpose === "time") { const p = R2.parseTimeFile(plain, inner); if (p.bad || !p.machine) return { ok: false, why: p.bad || "not a time log" }; return { ok: true, stamp: p.updated_at }; }
       if (purpose === "log") { parseLogJs(plain); return { ok: true, stamp: null }; }
-      if (purpose === "calendar" || purpose === "trips") { const raw = JSON.parse(plain); (purpose === "calendar" ? R.readCalendar : R.readTrips)(raw); return { ok: true, stamp: raw.generated_at }; }
+      if (FEED_READ[purpose]) { const raw = JSON.parse(plain); FEED_READ[purpose](raw); return { ok: true, stamp: raw.generated_at }; }
       const raw = parseSnapshotText(inner, plain); R.readSnapshot(raw); return { ok: true, stamp: raw.generated_at };   // invalid snapshot (e.g. wrong source) = not ok
     } catch (e) { return { ok: false, why: e.message || String(e) }; }
   }
@@ -648,12 +650,12 @@
         let r; try { const f = await h.getFile(); const sig = f.lastModified + ":" + f.size; if (S.seen[name] === sig && !(purpose === "time" && !S.fileEvents[inner])) continue; r = { text: await f.text(), sig }; }
         catch (e) { S.fileProblems[name] = `${name}: unreadable (${e.message || e})`; continue; }
         S.seen[name] = r.sig; delete S.fileProblems[name];
-        if ((purpose === "calendar" || purpose === "trips") && !isEnc) { S.fileProblems[name] = `${name}: plaintext; the calendar and trips feeds are only read encrypted (File → Encryption…)`; continue; }
+        if (FEED_READ[purpose] && !isEnc) { S.fileProblems[name] = `${name}: plaintext; the calendar, trips and projects feeds are only read encrypted (File → Encryption…)`; continue; }
         try {
           if (isEnc) r.text = await V.decrypt(S.vault.key, S.vault.kr, r.text, purpose);
           if (purpose === "time") { const p = R2.parseTimeFile(r.text, inner); if (p.bad) S.fileProblems[name] = p.bad; S.fileEvents[inner] = p.events; (S.fileReports = S.fileReports || {})[inner] = p.reports || []; (S.fileUpdated = S.fileUpdated || {})[inner] = p.updated_at; changed = true; }
           else if (purpose === "log") logObj = parseLogJs(r.text);
-          else if (purpose === "calendar" || purpose === "trips") { const raw = JSON.parse(r.text); (purpose === "calendar" ? R.readCalendar : R.readTrips)(raw); feeds[purpose] = raw; }
+          else if (FEED_READ[purpose]) { const raw = JSON.parse(r.text); FEED_READ[purpose](raw); feeds[purpose] = raw; }
           else {   // 00.04.001: several snapshot files (e.g. a renamed backup): use the newest one that passes validation
             const cand = parseSnapshotText(inner, r.text); let okc = true; try { R.readSnapshot(cand); } catch (e) { okc = false; }
             const better = !snapRaw || (okc && (!snapOk || Date.parse(cand.generated_at) > Date.parse(snapRaw.generated_at)));
@@ -760,6 +762,7 @@
     if (S.view === "focus") renderFocus();
     if (S.view === "dashboard") renderDashboard();
     if (S.view === "workload") renderWorkload();
+    if (S.view === "projects") renderProjects();
     // Both sheets are always rendered so Ctrl+P from any tab prints a real sheet (F11).
     $("#sheet-print").innerHTML = sheet(false); $("#sheet-manager").innerHTML = sheet(true);
   }
@@ -1012,15 +1015,89 @@
       if (await loadScript(CFG.exampleCalendarPath || "examples/example-calendar.js") && window.DASH_EXAMPLE_CALENDAR) {
         try { S.calFeed = R.readCalendar(window.DASH_EXAMPLE_CALENDAR.calendar); S.tripsFeed = R.readTrips(window.DASH_EXAMPLE_CALENDAR.trips); S.calExample = true; } catch (e) { S.calFeed = S.tripsFeed = null; }
       }
+      S.projFeed = null; S.projOwners = {}; S.projOwnersLoaded = false;   // 00.07.000: example projects; owner choices made here are kept only until reload
+      if (await loadScript(CFG.exampleProjectsPath || "examples/example-projects.js") && window.DASH_EXAMPLE_PROJECTS) { try { S.projFeed = R.readProjects(window.DASH_EXAMPLE_PROJECTS); } catch (e) { S.projFeed = null; } }
+      S.projExample = !!S.projFeed;
       return;
     }
+    if (S.projExample) { S.projFeed = null; S.projOwners = {}; S.projExample = false; }   // never carry example projects into real data
+    if (!S.projFeed) { const pj = await DB.get("projectsFeed"); try { if (pj && pj.schema_version) S.projFeed = R.readProjects(pj); } catch (e) { /* ignore a bad cache */ } }
+    if (!S.projOwnersLoaded) { const ow = await DB.get("projectOwners"); S.projOwners = ow && typeof ow === "object" && !Array.isArray(ow) ? ow : {}; S.projOwnersLoaded = true; }
     if (S.calExample) { S.calFeed = null; S.tripsFeed = null; S.calExample = false; }   // never carry example events into real data
     if (!S.calFeed) { const c = await DB.get("calendarSnap"); try { if (c && c.schema_version) S.calFeed = R.readCalendar(c); } catch (e) { /* ignore a bad cache */ } }
     if (!S.tripsFeed) { const t = await DB.get("trips"); try { if (t && t.schema_version) S.tripsFeed = R.readTrips(t); } catch (e) { /* ignore */ } }
   }
+
+  // ---------- 00.07.000 Projects: Planner mirror, export only ----------
+  // Planner stays the source of truth: nothing is written back. Owners chosen here (picklist + free text) are a local layer, kept
+  // in IndexedDB under the SECRET key projectOwners (encrypted with the Data folder key) and shown as "set here" in the table and CSV.
+  // The picklist = config projectOwners (real names only in config.local.js) + Planner assignees + owners already typed here.
+  Object.assign(S, { projFeed: null, projOwners: {}, projPlan: "", projOwner: "", projDone: false, projExample: false });
+  function projectsModel() {
+    const rows = R.projectRows(S.projFeed, { today: S.today, owners: S.projOwners, planId: S.projPlan || null, owner: S.projOwner, showCompleted: S.projDone });
+    return { rows, sum: R.projectSummary(rows), choices: R.projectOwnerChoices(S.projFeed, CFG.projectOwners, S.projOwners) };
+  }
+  const DUECLS = { Overdue: "over", Today: "today", "This week": "week", Later: "later", "No date": "nodate", Done: "done" };
+  function renderProjects() {
+    const el = $("#view-projects"); if (!el) return;
+    if (!S.projFeed) { el.innerHTML = `<div class="projempty"><h2>Projects</h2><p>No Planner export yet. When <code>projects.json</code> (encrypted) is in the Data folder or GitHub hub, your Planner plans show here, read-only. See Help → Projects.</p></div>`; return; }
+    const m = projectsModel(), f = S.projFeed, st = R.staleness(f.generatedAt, (qp.get("now") || new Date().toISOString()));
+    const when = `${R.dayLabel(R.isoDay(f.generatedAt))} ${R.hm(f.generatedAt)} ${R.tzLabel(f.generatedAt)}`;
+    const planOpts = `<option value="">All plans</option>` + f.plans.map(p => `<option value="${esc(p.id)}"${p.id === S.projPlan ? " selected" : ""}>${esc(p.name)}</option>`).join("");
+    const dl = `<datalist id="proj-owners">${m.choices.map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist>`;
+    const groups = []; m.rows.forEach(r => { const k = r.plan + " · " + r.bucket; let g = groups.find(x => x.k === k); if (!g) groups.push(g = { k, plan: r.plan, bucket: r.bucket, rows: [] }); g.rows.push(r); });
+    const row = r => `<tr data-ptask="${esc(r.id)}" class="${r.status === "completed" ? "pdone" : ""}">
+      <td class="ptitle">${esc(r.title)}${r.account ? ` <span class="pacct">${esc(r.account)}</span>` : ""}${r.labels.filter(l => l !== r.account).map(l => ` <span class="plabel">${esc(l)}</span>`).join("")}</td>
+      <td class="pown"><input class="ownin" list="proj-owners" data-owner="${esc(r.id)}" value="${esc(r.owner)}" placeholder="unassigned" aria-label="Owner of ${esc(r.title)} (pick or type)" maxlength="80">${r.ownerLocal ? ` <span class="ownset" title="Set in this dashboard; Planner still shows: ${esc(r.assignees.join(", ") || "nobody")}">set here</span> <button class="btn linkbtn" data-ownreset="${esc(r.id)}" aria-label="Use Planner's owner for ${esc(r.title)}">↺ Planner</button>` : ""}</td>
+      <td>${esc(R.PROJ_STATUS_WORD[r.status])}</td>
+      <td class="ppct"><span class="pbar" aria-hidden="true"><i style="width:${r.percent}%"></i></span> <span class="mono">${r.percent}%</span></td>
+      <td>${r.checklist ? `<span class="mono">${r.checklist.done}/${r.checklist.total}</span>` : ""}</td>
+      <td class="pdue ${DUECLS[r.dueWord]}">${r.due ? `<span class="mono">${esc(R.dayLabel(r.due))}</span> ` : ""}<span class="dw">${esc(r.dueWord)}</span></td>
+      <td>${r.priority === "urgent" ? '<span class="ppri urgent">Urgent</span>' : r.priority === "important" ? '<span class="ppri">Important</span>' : ""}</td></tr>`;
+    el.innerHTML = `<div class="projhead"><div><h2>Projects <span class="faint" style="font-size:12px;font-weight:400">· mirrored from Planner · read-only, export only</span></h2>
+        <div class="projasof ${st.level}" role="status">${st.level === "red" ? "⚠ Stale · " : ""}Planner export as of ${esc(when)}${S.projExample ? " · EXAMPLE DATA" : ""}${f.rejects.length ? ` · ⚠ ${f.rejects.length} task(s) skipped` : ""}</div></div>
+      <div class="projtools"><label>Plan <select id="proj-plan">${planOpts}</select></label>
+        <label>Owner <input id="proj-owner" list="proj-owners" value="${esc(S.projOwner)}" placeholder="anyone (or (unassigned))" aria-label="Filter by owner (pick or type)"></label>
+        <label><input type="checkbox" id="proj-done"${S.projDone ? " checked" : ""}> Show completed</label>
+        <button class="btn" data-act="exportProjects">Export CSV</button><button class="btn" data-act="printProjects">Print</button></div></div>
+      ${dl}
+      <div class="projsum" role="list">${[["Open", m.sum.total - m.sum.completed], ["Overdue", m.sum.overdue], ["Due today", m.sum.today], ["In progress", m.sum.inProgress], ["Unassigned", m.sum.unassigned]].map(([k, v]) => `<div class="psq" role="listitem"><b>${v}</b><span>${k}</span></div>`).join("")}</div>
+      ${f.rejects.length ? `<details class="faint projrej"><summary>Skipped tasks</summary>${f.rejects.map(x => `<div>${esc(x)}</div>`).join("")}</details>` : ""}
+      ${groups.map(g => `<section class="pgroup"><h3>${esc(g.plan)} <span class="faint">›</span> ${esc(g.bucket)} <span class="faint">(${g.rows.length})</span></h3>
+        <table class="ptable"><thead><tr><th>Task</th><th>Owner</th><th>Status</th><th>Progress</th><th>Checklist</th><th>Due</th><th></th></tr></thead><tbody>${g.rows.map(row).join("")}</tbody></table></section>`).join("") || '<div class="faint" style="padding:10px">No tasks match.</div>'}
+      <div class="faint projfoot">Changes to tasks are made in Planner. Owners you set here stay in this dashboard (encrypted) and go out only in Export CSV. Rev ${REV}</div>`;
+  }
+  function setOwner(id, name) {
+    const v = String(name == null ? "" : name).trim();
+    if (v && !R.validOwner(v)) { render(); toast("Owner must be a name (no email addresses)."); return false; }
+    const t = S.projFeed && S.projFeed.plans.flatMap(p => p.tasks).find(x => x.id === id); if (!t) return false;
+    if (v === t.assignees.join(", ")) delete S.projOwners[id]; else S.projOwners[id] = v;
+    if (!S.projExample) track(DB.set("projectOwners", S.projOwners));
+    render(); return true;
+  }
+  function projectsChange(e) {
+    const t = e.target; if (!t.closest || !t.closest("#view-projects")) return false;
+    if (t.id === "proj-plan") { S.projPlan = t.value; render(); return true; }
+    if (t.id === "proj-owner") { S.projOwner = t.value.trim(); render(); return true; }
+    if (t.id === "proj-done") { S.projDone = t.checked; render(); return true; }
+    if (t.dataset.owner) { setOwner(t.dataset.owner, t.value); return true; }
+    return false;
+  }
+  function projectsClick(e) {
+    const b = e.target.closest("[data-ownreset]"); if (!b) return false;
+    delete S.projOwners[b.dataset.ownreset]; if (!S.projExample) track(DB.set("projectOwners", S.projOwners)); render(); return true;
+  }
+  function exportProjects() {
+    if (!S.projFeed) { toast("No Planner export to export yet."); return; }
+    if (S.vault && S.vault.kr && !confirm("This saves the project list unencrypted (CSV) to Downloads. Continue?")) return;
+    const rows = projectsModel().rows, a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([R.projectsCSV(rows)], { type: "text/csv" })); a.download = `dash-projects-${S.today}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast(`Exported ${rows.length} project task(s) (CSV).`);
+  }
   function useFeeds(feeds) {
     if (S.snap && S.snap.example) return;
     if (feeds.calendar && (!S.calFeed || S.calExample || Date.parse(feeds.calendar.generated_at) >= Date.parse(S.calFeed.generatedAt))) { S.calFeed = R.readCalendar(feeds.calendar); S.calExample = false; track(DB.set("calendarSnap", feeds.calendar)); }
+    if (feeds.projects && (!S.projFeed || S.projExample || Date.parse(feeds.projects.generated_at) >= Date.parse(S.projFeed.generatedAt))) { S.projFeed = R.readProjects(feeds.projects); S.projExample = false; track(DB.set("projectsFeed", feeds.projects)); }
     if (feeds.trips && (!S.tripsFeed || Date.parse(feeds.trips.generated_at) >= Date.parse(S.tripsFeed.generatedAt))) { S.tripsFeed = R.readTrips(feeds.trips); track(DB.set("trips", feeds.trips)); }
   }
   function stripModel(f) {
@@ -1314,7 +1391,7 @@
       </div></div>`;
   }
   function doPrint(which) { S.view = which; render(); document.querySelectorAll(".view").forEach(v => v.classList.toggle("printing", v.id === "view-" + which)); setTimeout(() => window.print(), 50); }
-  const printTarget = () => S.view === "manager" ? "manager" : S.view === "focus" ? "focus" : "print";   // 00.05: Ctrl+P on Daily Focus prints Daily Focus
+  const printTarget = () => S.view === "manager" ? "manager" : S.view === "focus" ? "focus" : S.view === "projects" ? "projects" : "print";   // 00.05: Ctrl+P on Daily Focus prints Daily Focus
 
   // ---------- help ----------
   function openHelp(sec) {
@@ -1343,7 +1420,8 @@
     openTimeFiles: () => pickFiles(".json", files => { files.forEach(([n, t]) => { const r = R2.parseTimeFile(t, n); S.fileEvents["picked:" + n] = r.events; if (r.bad) S.problems.push(r.bad); }); recompute(); render(); toast(`Merged ${files.length} time file(s).`); }),
     importLog: () => pickFile(".md,.txt", (n, t) => importLog(n, t)), logCall: () => logCall($("#asof")),
     print: () => doPrint("print"), printManager: () => doPrint("manager"), printFocus: () => doPrint("focus"), reload: () => reloadSafely(),
-    keyAccounts: () => keyAccountsDialog(), vFocus: () => setView("focus"), vDash: () => setView("dashboard"), vWork: () => setView("workload"), vPrint: () => setView("print"), vManager: () => setView("manager"),
+    keyAccounts: () => keyAccountsDialog(), vFocus: () => setView("focus"), vDash: () => setView("dashboard"), vWork: () => setView("workload"), vPrint: () => setView("print"), vManager: () => setView("manager"), vProjects: () => setView("projects"),
+    printProjects: () => doPrint("projects"), exportProjects: () => exportProjects(),
     hHelp: () => openHelp("help"), hHow: () => openHelp("howdoi"), hFaq: () => openHelp("faq"), hQuick: () => openHelp("quick"), hRev: () => openHelp("rev"), hKeys: () => openHelp("keys"),
   };
   function setView(v) { S.view = v; closePop(); render(); }
@@ -1355,6 +1433,7 @@
       if (!e.target.closest(".mitem")) closeMenus();
       const tab = e.target.closest(".tab"); if (tab) return setView(tab.dataset.view);
       if (focusClick(e)) return;
+      if (projectsClick(e)) return;
       const tl = e.target.closest("[data-filter]"); if (tl) { S.filter = S.filter === tl.dataset.filter ? null : tl.dataset.filter; render(); return; }
       if (e.target.id === "clearf") { S.filter = null; render(); return; }
       if (e.target.id === "trends-toggle") { S.trends = !S.trends; render(); return; }
@@ -1372,7 +1451,7 @@
       if (e.target.id === "wk-prev") { S.wkOffset++; render(); } if (e.target.id === "wk-next" && S.wkOffset > 0) { S.wkOffset--; render(); }
       if (e.target.id === "help-close" || e.target.id === "help") $("#help").classList.remove("open");
     });
-    document.addEventListener("change", e => { const s = e.target.closest("[data-ed]"); if (!s) return; const ent = S.entries.find(x => x.id === s.dataset.ed); updateEntry(ent, { [s.dataset.k]: s.value }); saveEntries(); render(); });
+    document.addEventListener("change", e => { if (projectsChange(e)) return; const s = e.target.closest("[data-ed]"); if (!s) return; const ent = S.entries.find(x => x.id === s.dataset.ed); updateEntry(ent, { [s.dataset.k]: s.value }); saveEntries(); render(); });
     document.addEventListener("keydown", focusKeys);
     document.addEventListener("keydown", e => { if (e.key === "Escape") { closeSnooze(); closeMenus(); closePop(); const c = $("#cleardlg"); if (c) c.remove(); $("#help").classList.remove("open"); } });
     $("#howdoi-input").addEventListener("input", e => { const q = e.target.value.toLowerCase(); document.querySelectorAll("#help-howdoi details").forEach(d => d.classList.toggle("hidden", q && !d.textContent.toLowerCase().includes(q))); });
@@ -1384,7 +1463,7 @@
   }
   function closeMenus() { document.querySelectorAll(".mtop").forEach(b => { b.setAttribute("aria-expanded", "false"); b.nextElementSibling.classList.add("hidden"); }); }
 
-  window.DASH.app = { state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel, checkTz };
+  window.DASH.app = { state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel, checkTz, setOwner, projectsModel };
   window.addEventListener("beforeunload", e => { if (pending.size) { e.preventDefault(); e.returnValue = ""; } });
   boot();
 })();

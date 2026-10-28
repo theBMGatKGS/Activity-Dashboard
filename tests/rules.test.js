@@ -371,4 +371,42 @@ t("K7 merge: the feed replaces the snapshot's event with the same id; snapshot-o
   const m = R.mergeEvents([{ id: "CAL-1", title: "feed" }], R.eventsFromSnapshot(s)); assert.strictEqual(m.find(e => e.id === "CAL-1").title, "feed"); assert.ok(m.some(e => e.id === "CAL-4"));
   assert.ok(R.eventsFromSnapshot(s).every(e => e.attendeeDomains.every(d => !d.includes("@"))));
 });
+// ---------- 00.07.000 Projects (Planner mirror, export only) (P-series) ----------
+const PJX = (() => { const w = {}; new Function("window", fs.readFileSync(path.join(__dirname, "../examples/example-projects.js"), "utf8"))(w); return w.DASH_EXAMPLE_PROJECTS; })();
+t("P1 example projects load with no rejects; 2 plans, 10 tasks", () => { const p = R.readProjects(clone(PJX)); assert.deepStrictEqual(p.rejects, []); assert.strictEqual(p.plans.length, 2); assert.strictEqual(p.plans.flatMap(x => x.tasks).length, 10); });
+t("P2 schema_version / generated_at / plans enforced", () => {
+  assert.throws(() => R.readProjects({ ...clone(PJX), schema_version: 2 }), /schema_version/);
+  assert.throws(() => R.readProjects({ ...clone(PJX), generated_at: "2026-10-19 06:45" }), /generated_at/);
+  assert.throws(() => R.readProjects({ ...clone(PJX), plans: {} }), /plans/); });
+t("P3 names only: '@' in assignees or an emails field rejects the task, the rest load", () => {
+  const b = clone(PJX); b.plans[0].tasks[0].assignees = ["someone@contoso.example"]; b.plans[0].tasks[1].assigneeEmails = ["x"];
+  const p = R.readProjects(b); assert.strictEqual(p.rejects.length, 2); assert.strictEqual(p.plans[0].tasks.length, 6); assert.ok(p.rejects.every(r => /names|emails/.test(r))); });
+t("P4 bad status, dates, percent, duplicate id rejected with reasons", () => {
+  const b = clone(PJX), ts = b.plans[0].tasks; ts[0].status = "done"; ts[1].due = "2026-02-30"; ts[2].percent = 140; ts[3].id = ts[4].id; ts[7].due = "2026-10-01";
+  const p = R.readProjects(b); assert.strictEqual(p.rejects.length, 5, p.rejects.join(" | "));
+  assert.ok(p.rejects.some(r => /status/.test(r)) && p.rejects.some(r => /due must be/.test(r)) && p.rejects.some(r => /percent/.test(r)) && p.rejects.some(r => /repeated/.test(r)) && p.rejects.some(r => /before start/.test(r))); });
+t("P5 rows: completed hidden by default, due words, sort by plan → bucket order → due", () => {
+  const p = R.readProjects(clone(PJX)), rows = R.projectRows(p, { today: "2026-10-19" }), by = id => rows.find(r => r.id === id);
+  assert.ok(!by("PT-7")); assert.strictEqual(R.projectRows(p, { today: "2026-10-19", showCompleted: true }).length, 10);
+  assert.strictEqual(by("PT-1").dueWord, "Overdue"); assert.strictEqual(by("PT-2").dueWord, "Today"); assert.strictEqual(by("PT-4").dueWord, "This week"); assert.strictEqual(by("PT-5").dueWord, "No date"); assert.strictEqual(by("PT-6").dueWord, "Later");
+  assert.deepStrictEqual(rows.map(r => r.id), ["PT-1", "PT-2", "PT-3", "PT-4", "PT-5", "PT-8", "PT-6", "PT-9", "PT-10"]);
+  assert.deepStrictEqual(R.projectSummary(rows), { total: 9, overdue: 1, today: 1, inProgress: 4, notStarted: 5, completed: 0, unassigned: 2 }); });
+t("P6 local owner wins over Planner; '' clears; owner filter (multi-assignee, case-insensitive, (unassigned))", () => {
+  const p = R.readProjects(clone(PJX)), o = { "PT-3": "Priya M.", "PT-1": "" };
+  const rows = R.projectRows(p, { today: "2026-10-19", owners: o });
+  assert.strictEqual(rows.find(r => r.id === "PT-3").owner, "Priya M."); assert.ok(rows.find(r => r.id === "PT-3").ownerLocal); assert.strictEqual(rows.find(r => r.id === "PT-1").owner, "");
+  assert.deepStrictEqual(R.projectRows(p, { today: "2026-10-19", owners: o, owner: "priya m." }).map(r => r.id), ["PT-3", "PT-4"]);
+  assert.deepStrictEqual(R.projectRows(p, { today: "2026-10-19", owner: "Dana L." }).map(r => r.id), ["PT-8", "PT-6"]);
+  assert.deepStrictEqual(R.projectRows(p, { today: "2026-10-19", owners: o, owner: "(unassigned)" }).map(r => r.id), ["PT-1", "PT-10"]);
+  assert.deepStrictEqual(R.projectRows(p, { today: "2026-10-19", planId: "PLAN-B" }).map(r => r.id), ["PT-9", "PT-10"]); });
+t("P7 owner picklist: config + Planner assignees + typed names, de-duplicated, no emails", () => {
+  const p = R.readProjects(clone(PJX)), c = R.projectOwnerChoices(p, ["Alex R.", "alex r.", "bad@x.example", "Example Owner"], { "PT-3": "Typed Name", "PT-1": "" });
+  assert.deepStrictEqual(c, ["Alex R.", "Chris T.", "Dana L.", "Example Owner", "Jordan P.", "Priya M.", "Sam K.", "Typed Name"]);
+  assert.ok(!R.validOwner("a@b.example") && !R.validOwner("  ") && R.validOwner("Jordan P.")); });
+t("P8 CSV: header, owner source, formula-safe cells", () => {
+  const b = clone(PJX); b.plans[0].tasks[2].title = "=HYPERLINK(1)"; const p = R.readProjects(b);
+  const csv = R.projectsCSV(R.projectRows(p, { today: "2026-10-19", owners: { "PT-3": "Sam K." } })), lines = csv.trim().split("\r\n");
+  assert.strictEqual(lines[0], R.PROJ_CSV_COLS.join(",")); assert.strictEqual(lines.length, 10);
+  const l3 = lines.find(l => l.includes('"PT-3"')); assert.ok(l3.includes(`"'=HYPERLINK(1)"`) && l3.includes('"Sam K.","dashboard"'), l3);
+  assert.ok(lines.find(l => l.includes('"PT-1"')).includes('"Jordan P.","planner","In progress",50')); });
 console.log(`\n${n - fail}/${n} passed`); process.exit(fail ? 1 : 0);

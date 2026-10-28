@@ -590,6 +590,74 @@
       dueToday: open.filter(it => it.due === today).map(it => it.id), overdue: open.filter(it => it.due < today).map(it => it.id), now: dayOf(nowIso) === today ? hourCT(nowIso) : null };
   }
 
+
+  // ---------- 00.07.000 Projects: a read-only mirror of Microsoft Planner (export only, nothing is written back) ----------
+  // projects.json (schema_version 1) is read only when encrypted (purpose "projects"). Owners are names, never emails.
+  const PROJ_STATUS = ["notStarted", "inProgress", "completed"], PROJ_PRI = ["urgent", "important", "medium", "low"];
+  const PROJ_STATUS_WORD = { notStarted: "Not started", inProgress: "In progress", completed: "Completed" };
+  const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const ownerOk = v => typeof v === "string" && v.trim() && !v.includes("@") && v.length <= 80;
+  function readProjects(raw) {
+    if (!raw || typeof raw !== "object" || raw.schema_version !== 1) throw new Error("projects: schema_version must be 1");
+    if (!ISO_OFF.test(raw.generated_at || "")) throw new Error("projects: generated_at must be ISO with offset");
+    if (!Array.isArray(raw.plans)) throw new Error("projects: plans must be an array");
+    const rejects = [], plans = [];
+    raw.plans.forEach((p, i) => {
+      if (!p || typeof p.id !== "string" || !p.id || typeof p.name !== "string" || !Array.isArray(p.tasks)) { rejects.push(`plan ${i + 1}: id/name/tasks missing`); return; }
+      const buckets = (Array.isArray(p.buckets) ? p.buckets : []).filter(b => b && typeof b.id === "string" && typeof b.name === "string").map(b => ({ id: b.id, name: b.name.slice(0, 80) }));
+      const bIds = new Set(buckets.map(b => b.id)), tasks = [], seen = new Set();
+      p.tasks.forEach((t, j) => {
+        const bad = m => rejects.push(`plan ${i + 1} task ${j + 1}: ${m}`);
+        if (!t || typeof t.id !== "string" || !t.id || seen.has(t.id)) return bad("id missing or repeated");
+        if (typeof t.title !== "string" || !t.title.trim()) return bad("title missing");
+        if (t.assigneeEmails !== undefined || t.emails !== undefined) return bad("emails are not accepted (assignees are names only)");
+        const as = Array.isArray(t.assignees) ? t.assignees : [];
+        if (as.some(a => !ownerOk(a))) return bad("assignees must be names (no '@')");
+        if (!PROJ_STATUS.includes(t.status)) return bad("status must be notStarted, inProgress or completed");
+        for (const k of ["start", "due"]) if (t[k] != null && !(DAY_RE.test(t[k]) && realDay(t[k]))) return bad(`${k} must be YYYY-MM-DD`);
+        if (t.start && t.due && t.due < t.start) return bad("due is before start");
+        const pct = t.percent == null ? (t.status === "completed" ? 100 : t.status === "inProgress" ? 50 : 0) : t.percent;
+        if (!Number.isFinite(pct) || pct < 0 || pct > 100) return bad("percent must be 0–100");
+        const ck = t.checklist && Number.isInteger(t.checklist.done) && Number.isInteger(t.checklist.total) && t.checklist.total >= 0 && t.checklist.done >= 0 && t.checklist.done <= t.checklist.total ? { done: t.checklist.done, total: t.checklist.total } : null;
+        seen.add(t.id);
+        tasks.push({ id: t.id, title: t.title.slice(0, 200), bucketId: bIds.has(t.bucketId) ? t.bucketId : null, assignees: [...new Set(as.map(a => a.trim()))], status: t.status, percent: Math.round(pct),
+          start: t.start || null, due: t.due || null, priority: PROJ_PRI.includes(t.priority) ? t.priority : "medium", labels: Array.isArray(t.labels) ? t.labels.filter(x => typeof x === "string").map(x => x.slice(0, 40)) : [],
+          checklist: ck, account: str(t.account, 120), completedOn: DAY_RE.test(t.completedOn || "") ? t.completedOn : null });
+      });
+      plans.push({ id: p.id, name: p.name.slice(0, 120), buckets, tasks });
+    });
+    return { generatedAt: raw.generated_at, source: str(raw.source, 40) || "planner-export", plans, rejects };
+  }
+  // Effective owner: a local assignment (owners map, taskId -> name; "" = cleared) wins over Planner's assignees.
+  function projectOwner(t, owners) { const o = owners && Object.prototype.hasOwnProperty.call(owners, t.id) ? owners[t.id] : null; return o != null && o !== "" ? o : (o === "" ? "" : t.assignees.join(", ")); }
+  function projectDueWord(t, today) { if (t.status === "completed") return "Done"; if (!t.due) return "No date"; const d = diffDays(t.due, today); return d < 0 ? "Overdue" : d === 0 ? "Today" : d <= 7 ? "This week" : "Later"; }
+  // Rows for one plan (or all), filtered by owner (exact, case-insensitive; "(unassigned)" = no owner) and completed toggle.
+  function projectRows(feed, opts) {
+    const o = opts || {}, today = o.today, owners = o.owners || {}, want = (o.owner || "").trim().toLowerCase();
+    const out = [];
+    (feed ? feed.plans : []).forEach(p => { if (o.planId && p.id !== o.planId) return;
+      const bName = id => (p.buckets.find(b => b.id === id) || {}).name || "No bucket";
+      p.tasks.forEach(t => {
+        if (!o.showCompleted && t.status === "completed") return;
+        const owner = projectOwner(t, owners), list = owner ? owner.split(", ").map(x => x.toLowerCase()) : [];
+        if (want && !(want === "(unassigned)" ? !owner : list.includes(want))) return;
+        out.push(Object.assign({}, t, { plan: p.name, planId: p.id, bucket: bName(t.bucketId), bucketOrder: t.bucketId ? p.buckets.findIndex(b => b.id === t.bucketId) : 999, owner, ownerLocal: Object.prototype.hasOwnProperty.call(owners, t.id), dueWord: projectDueWord(t, today) }));
+      }); });
+    return out.sort((a, b) => a.plan.localeCompare(b.plan) || a.bucketOrder - b.bucketOrder || (a.due || "9999").localeCompare(b.due || "9999") || a.id.localeCompare(b.id));
+  }
+  function projectSummary(rows) { const s = { total: rows.length, overdue: 0, today: 0, inProgress: 0, notStarted: 0, completed: 0, unassigned: 0 };
+    rows.forEach(r => { if (r.dueWord === "Overdue") s.overdue++; if (r.dueWord === "Today") s.today++; s[r.status]++; if (!r.owner) s.unassigned++; }); return s; }
+  function projectOwnerChoices(feed, configured, owners) {
+    const set = new Map(); const add = n => { if (ownerOk(n)) { const k = n.trim().toLowerCase(); if (!set.has(k)) set.set(k, n.trim()); } };
+    (configured || []).forEach(add); (feed ? feed.plans : []).forEach(p => p.tasks.forEach(t => t.assignees.forEach(add))); Object.values(owners || {}).forEach(add);
+    return [...set.values()].sort((a, b) => a.localeCompare(b));
+  }
+  const PROJ_CSV_COLS = ["plan", "bucket", "task_id", "title", "owner", "owner_source", "status", "percent", "priority", "start", "due", "due_word", "checklist", "labels", "account"];
+  function projectsCSV(rows) {
+    return PROJ_CSV_COLS.join(",") + "\r\n" + rows.map(r => [r.plan, r.bucket, r.id, r.title, r.owner, r.ownerLocal ? "dashboard" : "planner", PROJ_STATUS_WORD[r.status], r.percent, r.priority, r.start || "", r.due || "", r.dueWord,
+      r.checklist ? `${r.checklist.done}/${r.checklist.total}` : "", r.labels.join("; "), r.account || ""].map(csvCell).join(",")).join("\r\n") + "\r\n";
+  }
+
   g.DASH = g.DASH || {};
   g.DASH.rules = { LISTS, STATUSES, AUDIENCES, SUBJECTS, TOTAL_KEYS, LIST_KEY, GROUPS, COLD_DAYS, DEFAULT_RULES,
     DEFAULT_TZ, validTimeZone, detectTimeZone, setTimeZone, getTimeZone, tzLabel, zoneOffsetMs,
@@ -597,5 +665,6 @@
     lastActivity, isCold, inTotal, totals, mergeHistory, weeklySeries, wow, wowTone, sparkPoints, withConflicts, minutesBetween,
     guessAudience, guessSubject, learnAudience, lineHead, formatLine, managerItems, workload, parseCSV, snapshotFromCSV,
     KINDS, logFingerprint, migrateLogEntries, mergeLog, SOURCES, TOUCH_DIR, TOUCH_KIND, realDay, csvCell, calendarFills, conflictPartners, parseMinutes, parseNotebookLog, timeEntriesCSV, CSV_COLS, coldList,
-    ctIso, snoozeUntil, prevBusinessDay, isOutside, lastTouch, keyCold, overlays, focusSections, focusDelta, FOCUS_SECTIONS, todaysClear, readCalendar, readTrips, eventsFromSnapshot, mergeEvents, staleness, layoutLanes, todayStrip };
+    ctIso, snoozeUntil, prevBusinessDay, isOutside, lastTouch, keyCold, overlays, focusSections, focusDelta, FOCUS_SECTIONS, todaysClear, readCalendar, readTrips, eventsFromSnapshot, mergeEvents, staleness, layoutLanes, todayStrip,
+    PROJ_STATUS, PROJ_STATUS_WORD, readProjects, projectOwner, projectDueWord, projectRows, projectSummary, projectOwnerChoices, projectsCSV, PROJ_CSV_COLS, validOwner: ownerOk };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -4,6 +4,7 @@ data/
 # Local-data exports
 dash-local-data-*.json
 dash-time-entries-*.csv
+dash-projects-*.csv
 # 00.03: per-computer settings and anything encrypted or key-related never go into the code repo
 config.local.js
 *.enc

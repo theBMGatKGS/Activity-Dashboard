@@ -1,5 +1,13 @@
 # Release notes — Activity Dashboard
 
+## 00.07.000_261027 (Oct 27 2026)
+**Projects tab**: your Microsoft Planner plans in the dashboard, read-only.
+- Tasks grouped by plan and bucket, with owner, status, a progress bar, checklist count, due date (Overdue in red, Today, This week, Later, No date) and urgent/important flags. Squares on top count open, overdue, due today, in progress and unassigned.
+- **Owner**: pick a name from the list or type a new one. Names you set show "set here" and stay in this dashboard; ↺ Planner goes back to Planner's assignee. Planner itself is never changed.
+- Filter by plan and owner; tick Show completed to include finished tasks.
+- **Export CSV** saves what's on screen; **Print** prints it in the print colors.
+- Reads the new **encrypted** Planner export (`projects.json.enc`). Until it's set up, the tab says so.
+
 ## 00.06.000_261024 (Oct 24 2026)
 **Today strip** on Daily Focus, under the squares.
 - Today's meetings on a timeline from 07:00 to 19:00, wider when something starts earlier or ends later, in your computer's time zone. Client meetings are gold, internal blue, private holds grey. Meetings at the same time sit side by side in their own lanes and are hatched.

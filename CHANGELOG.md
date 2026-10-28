@@ -1,5 +1,16 @@
 # Changelog — Activity Dashboard
 
+## 00.07.000_261027 (Oct 27 2026)
+- New: Projects tab, a read-only mirror of Microsoft Planner (export only; nothing is written back). Approved Oct 27 2026: Activity Dashboard 00.07.000, owners from a picklist with free text allowed. Contract: `docs/projects-feed-schema.md`.
+- `rules.js`: `readProjects` (schema 1; plans → buckets → tasks; status notStarted/inProgress/completed; dates YYYY-MM-DD and real; due ≥ start; percent 0–100 (defaults 0/50/100 by status); assignees are names: any `@`, `assigneeEmails` or `emails` rejects the task; bad tasks are listed, the rest load), `projectOwner` (local owner wins; "" = cleared), `projectDueWord`, `projectRows` (plan / owner / completed filters; sorted plan → bucket order → due → id), `projectSummary`, `projectOwnerChoices` (config + Planner assignees + local owners, case-insensitive de-dup), `projectsCSV` (formula-safe via `csvCell`), `validOwner`.
+- `app.js`: purpose `projects` (`projects.json`) through the same feed path as calendar/trips (`FEED_READ`): read only as `.enc`, plaintext in an encrypted folder is validated and encrypted in place, newest `generated_at` wins, cached under SECRET `projectsFeed`. Local owners under SECRET `projectOwners` (in Export local data; File → Clear local data wipes them and the feed cache). EXAMPLE DATA loads `examples/example-projects.js`, keeps owner edits in memory only and never carries over into real data. View `projects`, tab + View menu, File → Print Projects… / Export Projects (CSV)…. REV 00.07.000_261027.
+- `hub.js`: `DATA_RE` adds `projects.json.enc`. `db.js`: SECRET adds `projectsFeed`, `projectOwners`; KEYS adds `projectOwners`; CACHE_ONLY adds `projectsFeed`. `sw.js`: cache bumped; example-projects.js in the shell. `config.js`: `projectOwners: []` (real names only in config.local.js). `.gitignore`: `dash-projects-*.csv`.
+- `app.css`: Projects (dark underground on screen); print: white page, print navy #102645 headings, print blue #0C77BC rule, no inputs' chrome.
+- Tests: `rules.test.js` P1–P8; `hub.test.js` R12 adds projects; new `t28_projects.py` (in `run_all.sh`); T13 revision.
+### Known limits (later)
+- The Planner writer (Cadence or a Power Automate flow) needs a keyring slot to produce `projects.json.enc`; until then the tab shows the empty state.
+- Owners set here are per browser (in Export/Import local data); they don't sync between computers yet.
+
 ## 00.06.000_261024 (Oct 24 2026)
 - New: Today strip + basic prep card (plan /workspace/plans/dashboard-calendar-plan.md, mockups 1/2, approved 10/24). Contracts: `docs/calendar-feed-schema.md`.
 - `rules.js`: `readCalendar` (schema 1; domains only: any `@`, `attendees` or `organizer` rejects the event; Teams link allow-list `https://teams.microsoft.com/`; bodyExcerpt ≤ 280), `readTrips` (flight/hotel/event/drive; any confirmation/PNR/loyalty/seat/ticket/passport field rejects the segment; map allow-list Apple Maps), `eventsFromSnapshot`, `mergeEvents` (feed wins by id), `staleness` (ok ≤ 6 h, amber, red > 24 h), `layoutLanes` (overlap clusters share the height; first free lane), `todayStrip` (07–19 widened to today's first start / last end; items that started yesterday or end tomorrow show only their last/first hour; hotels as chips; leave-by = flight − drive − 90 min; overdue / due-today markers; now).

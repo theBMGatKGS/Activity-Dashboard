@@ -6,7 +6,7 @@
 <!-- 00.03.003 CSP: only this site's own scripts and connections (00.04: plus the GitHub API, for the encrypted data hub). style-src also allows inline style ATTRIBUTES, which the UI uses for layout (no script can run from them). -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; connect-src 'self' https://api.github.com; form-action 'none'">
 <title>Activity Dashboard</title>
-<meta name="description" content="Activity Dashboard 00.06.000_261024 — local-first app, encrypted Data folder, installable">
+<meta name="description" content="Activity Dashboard 00.07.000_261027 — local-first app, encrypted Data folder, installable">
 <link rel="icon" href="assets/icon-64.png">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0b0e12">
@@ -52,10 +52,12 @@
           <button data-act="printFocus" role="menuitem">Print Daily Focus…</button>
           <button data-act="print" role="menuitem">Print my sheet…</button>
           <button data-act="printManager" role="menuitem">Print Manager's sheet…</button>
+          <button data-act="printProjects" role="menuitem">Print Projects…</button>
+          <button data-act="exportProjects" role="menuitem">Export Projects (CSV)…</button>
         </div></div>
       <div class="mitem"><button class="mtop" aria-haspopup="true" aria-expanded="false">View</button>
         <div class="mmenu hidden" role="menu">
-          <button data-act="vFocus" role="menuitem">Daily Focus</button><button data-act="vDash" role="menuitem">Totals</button><button data-act="vWork" role="menuitem">Workload</button>
+          <button data-act="vFocus" role="menuitem">Daily Focus</button><button data-act="vDash" role="menuitem">Totals</button><button data-act="vWork" role="menuitem">Workload</button><button data-act="vProjects" role="menuitem">Projects</button>
           <button data-act="vPrint" role="menuitem">Print sheet (mine)</button><button data-act="vManager" role="menuitem">Manager's sheet (sanitized)</button>
         </div></div>
       <div class="mitem"><button class="mtop" aria-haspopup="true" aria-expanded="false">Help</button>
@@ -66,7 +68,7 @@
         </div></div>
     </nav>
     <div class="tabs" role="tablist">
-      <button class="tab" role="tab" data-view="focus">Focus</button><button class="tab" role="tab" data-view="dashboard">Totals</button><button class="tab" role="tab" data-view="workload">Workload</button>
+      <button class="tab" role="tab" data-view="focus">Focus</button><button class="tab" role="tab" data-view="dashboard">Totals</button><button class="tab" role="tab" data-view="workload">Workload</button><button class="tab" role="tab" data-view="projects">Projects</button>
       <button class="tab" role="tab" data-view="print">Print sheet</button><button class="tab" role="tab" data-view="manager">Manager's sheet</button>
     </div>
   </div>
@@ -94,6 +96,7 @@
     <div id="coldlist" style="margin-top:8px"></div>
   </section>
   <section id="view-workload" class="view hidden" style="display:flex;flex-direction:column;gap:8px"></section>
+  <section id="view-projects" class="view hidden" aria-label="Projects"></section>
   <section id="view-print" class="view hidden"><div class="sheettools faint" style="margin-bottom:6px">Preview of my weekly sheet (landscape, one page). File → Print my sheet… or Ctrl+P.</div><div class="sheetwrap"><div id="sheet-print"></div></div></section>
   <section id="view-manager" class="view hidden"><div class="sheettools faint" style="margin-bottom:6px">Manager's sheet — SANITIZED FOR MANAGER — no pricing, bid details or confidential details. Open loops only; items tagged Withhold in To Do never appear; no Going Cold total. Print or save as PDF only. File → Print Manager's sheet….</div><div class="sheetwrap"><div id="sheet-manager"></div></div></section>
 </main>
@@ -116,6 +119,7 @@
     <li>Calls and chats you didn't schedule: <b>+ Log call</b> (above the list), or write <code>- [log]</code> lines in your notebook log. They load by themselves from <code>Data/notebook-log.js</code> once it's synced, and <b>File → Import notebook log…</b> is the fallback.</li>
     <li>Print: <b>File → Print my sheet…</b> or <b>Print Manager's sheet…</b> (landscape, one page).</li></ol></section>
    <section id="help-help"><h2>Help</h2>
+    <h3 id="help-projects">Projects</h3><p>The <b>Projects</b> tab mirrors your Microsoft Planner plans. It is <b>read-only and export only</b>: nothing here is written back to Planner, so change tasks in Planner. Tasks are grouped by plan and bucket and show owner, status, progress, checklist, due date (Overdue, Today, This week, Later, No date) and urgent/important priority. <b>Owner</b>: pick a name from the list or type any name (no email addresses). A name you set shows <b>set here</b>; <b>↺ Planner</b> goes back to Planner's assignee. Owners you set are kept in this browser, encrypted with your Data folder key, and are included in Export local data. The list comes from <code>projectOwners</code> in config.local.js, Planner's assignees and names you've typed. Filter by plan or owner (type <code>(unassigned)</code> for tasks with no owner). <b>Export CSV</b> saves the filtered list (plain CSV, asks first when the Data folder is encrypted). <b>Print</b> prints one landscape list in the print colors. The data comes from the encrypted <code>projects.json.enc</code> in the Data folder or GitHub hub (see docs/projects-feed-schema.md); "⚠ Stale" means the export is more than 24 hours old.</p>
     <h3>Daily Focus</h3><p>The home screen. <b>Squares</b>: Due Today (the ▲/▼ chip compares the snapshot's Due Today total with the previous business day's latest snapshot; Monday compares with Friday; it ignores items you mark Done here), Overdue, Waiting past due (Waiting on items whose due date, the check-back date, is today or earlier) and Going cold (★ key accounts with no touch in 14+ days). <b>Sections</b>, in order: Due Today, Overdue, Owed to outside (Follow-ups and Account touches you owe someone outside: the task has an account, or its person isn't on your internal-people list), Waiting · past check-back, Going cold · key, Travel ≤ 7 days, then <b>Later this week</b> (collapsed). About 12 rows show in total (<code>focusRowCap</code> in config.js); each section keeps at least one row, Due Today and Overdue at least three, and <b>+n more</b> opens the rest. Open items with no date are counted under the sections, and show a red <b>⚠ no date</b> in Owed to outside and Going cold.</p>
     <h3>Done, Snooze and Log touch</h3><p><b>✓ Done</b> hides the row here (Undo for 8 seconds) and counts it in "n done here, not yet in To Do" until you tick it off in To Do. The dashboard never changes To Do: when a later snapshot shows the task done, the mark clears itself; if you edited the task in To Do after marking it, To Do wins and the row comes back ("reopened in To Do"). <b>Snooze</b>: Later today (+3 h), Tomorrow 8:00, Next Monday 8:00 or a date you pick; the due date doesn't change, and if To Do re-dates the task the snooze ends. <b>Log touch</b> opens + Log call with the account and person filled in (Phone, 15 min); it counts as a touch for Going cold. Stars, Done and Snooze sync between your computers inside your encrypted time file.</p>
     <h3>Key accounts and colors</h3><p>☆/★ next to an account stars it as a key account (Focus rows, the Totals list, Workload). File → Key accounts &amp; internal people… lists them all. On first run the dashboard offers to star your T1 accounts. Colors mean urgency only and always come with a word and an icon: ● Today green, ▲ Overdue red, hourglass Waiting amber, ◐ Cooling blue, ◆ This week ivory, ✈ Travel, ▸ Later grey.</p>
@@ -148,6 +152,7 @@
     <details><summary>…handle two overlapping meetings?</summary>Neither counts until you press <b>Attended?</b> on the one you went to. Only that one fills.</details>
     <details><summary>…log a phone call or Teams chat?</summary><b>+ Log call</b>: pick Phone, Teams chat, Teams call or Other, plus minutes and the account.</details>
     <details><summary>…import calls from my notebook?</summary>Write <code>- [log] 2026-10-19 13:15 | 25m | Teams call | | | Acme Fab | Priya M. | note</code> lines in your notebook log. They load by themselves from <code>Data/notebook-log.js</code>, or use File → Import notebook log…. Other lines are ignored.</details>
+    <details><summary>…see or export my Planner projects?</summary>Open the <b>Projects</b> tab (or View → Projects). Export CSV saves the list; File → Print Projects… prints it. Change tasks in Planner itself.</details>
     <details><summary>…export my time to a spreadsheet?</summary>File → Export time entries (CSV)…, or Export CSV in Workload.</details>
     <details><summary>…clear data without losing time?</summary>File → Clear local data… keeps time entries unless you tick the delete box and type DELETE.</details>
     <details><summary>…fix a wrong audience guess?</summary>In Workload, change the Audience dropdown on that entry. Future meetings with those domains will use your choice.</details>
@@ -193,6 +198,7 @@
    <section id="help-keys"><h2>Keyboard shortcuts</h2><p>On Daily Focus (off while you type in a field or a dialog is open):</p><table><tr><th>Key</th><th>Does</th></tr>
     <tr><td><code>j</code> / <code>k</code></td><td>Next / previous row</td></tr><tr><td><code>d</code></td><td>✓ Done on the focused row</td></tr><tr><td><code>s</code></td><td>Snooze menu (arrow keys, Enter, Esc)</td></tr><tr><td><code>t</code></td><td>Log touch</td></tr><tr><td><code>Tab</code></td><td>Squares → meetings → sections; Enter on a square jumps to its section</td></tr></table></section>
    <section id="help-rev"><h2>Revision log</h2><table><tr><th>Revision</th><th>Date</th><th>Changes</th></tr>
+    <tr><td class="mono">00.07.000_261027</td><td>Oct 27 2026</td><td>Projects tab: your Microsoft Planner plans, read-only, grouped by plan and bucket, with owner, status, progress, checklist and due date. Pick an owner from the list or type one; it stays in this dashboard (Planner isn't changed). Filter by plan and owner, Export CSV, and print in the print colors. Reads the encrypted Planner export (projects.json.enc).</td></tr>
     <tr><td class="mono">00.06.000_261024</td><td>Oct 24 2026</td><td>Today strip on Daily Focus: today's meetings on a timeline (overlaps side by side), travel with a leave-by time, tonight's hotel, To Do deadline markers and a "Calendar as of" chip. Click a meeting for its details and today's itinerary. Reads the encrypted calendar feed and trips; without them, meetings come from the Inbox snapshot.</td></tr>
     <tr><td class="mono">00.05.003_261024</td><td>Oct 24 2026</td><td>Today's Clear: a progress bar under the Daily Focus squares counts what you've cleared of today's and overdue tasks. Snoozed items show hatched and never count. Prints as a flat navy bar with the counts.</td></tr>
     <tr><td class="mono">00.05.002_261023</td><td>Oct 23 2026</td><td>Fix: GitHub sync now starts when you unlock after the dashboard has started (it showed "Synced" without ☁ and EXAMPLE DATA). A set-up that can't start shows "⚠ GitHub not connected". Lock also disconnects GitHub sync.</td></tr>

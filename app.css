@@ -373,3 +373,43 @@ table.tbl select{background:var(--surface2);border:1px solid var(--line);border-
   #view-focus.printing .tclear .pct,#view-focus.printing .tclear .cap{color:#102645!important}
   #view-focus.printing .tclear .pnote{color:#1a1a1a!important}
 }
+/* 00.07.000 Projects (read-only Planner mirror): underground on screen */
+#view-projects{display:flex;flex-direction:column;gap:10px}
+#view-projects.hidden{display:none}
+.projhead{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.projhead h2{margin:0;font-size:16px}
+.projasof{font-size:11px;color:var(--muted)} .projasof.amber{color:var(--inctx)} .projasof.red{color:var(--fail)}
+.projtools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px}
+.projtools select,.projtools input[type=text],.projtools input:not([type]),.ownin{background:var(--surface2);border:1px solid var(--line);border-radius:6px;padding:3px 7px}
+.projsum{display:flex;gap:8px;flex-wrap:wrap}
+.psq{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 12px;min-width:92px;display:flex;flex-direction:column}
+.psq b{font-size:20px} .psq span{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.pgroup{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 12px}
+.pgroup h3{margin:0 0 6px;font-size:13px}
+.ptable{width:100%;border-collapse:collapse;font-size:12.5px}
+.ptable th{text-align:left;font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--line);padding:3px 6px}
+.ptable td{border-bottom:1px solid var(--line2);padding:4px 6px;vertical-align:middle}
+.ptable tr.pdone td{color:var(--faint)} .ptable tr.pdone .ptitle{text-decoration:line-through}
+.pacct,.plabel{font-size:10.5px;border:1px solid var(--line);border-radius:10px;padding:0 6px;color:var(--muted)}
+.ownin{width:150px} .ownset{font-size:10px;color:var(--info)} .linkbtn{font-size:10.5px;padding:0 4px}
+.pbar{display:inline-block;width:60px;height:6px;background:var(--panel3);border-radius:3px;vertical-align:middle;overflow:hidden}
+.pbar i{display:block;height:100%;background:var(--accent)}
+.pdue.over{color:var(--fail)} .pdue.over .dw::before{content:"▲ "} .pdue.today{color:var(--pass)} .pdue.today .dw::before{content:"● "} .pdue.week{color:var(--ink)} .pdue.nodate{color:var(--inctx)}
+.ppri{font-size:10.5px;color:var(--inctx)} .ppri.urgent{color:var(--fail);font-weight:700}
+.projfoot{font-size:11px} .projempty{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 18px}
+@media print{
+  #view-projects.printing{display:block!important;background:#fff!important;color:#1a1a1a!important;padding:.3in .35in;font:8.5pt/1.3 var(--sans)}
+  #view-projects.printing .projtools,#view-projects.printing .linkbtn,#view-projects.printing .projrej{display:none!important}
+  #view-projects.printing h2{color:#102645;border-bottom:3px solid #0C77BC;padding-bottom:4px}
+  #view-projects.printing .projasof{color:#474747!important}
+  #view-projects.printing .psq,#view-projects.printing .pgroup{background:#fff!important;border:1px solid #9e9e9e;border-radius:0;color:#1a1a1a}
+  #view-projects.printing .pgroup{break-inside:avoid;margin-bottom:6px}
+  #view-projects.printing .pgroup h3{color:#102645}
+  #view-projects.printing .ptable th{color:#102645;border-bottom:1.5px solid #102645}
+  #view-projects.printing .ptable td{border-bottom:1px solid #d0d0d0;color:#1a1a1a}
+  #view-projects.printing .ownin{border:0;background:transparent!important;color:#1a1a1a!important;padding:0;width:auto}
+  #view-projects.printing .pbar{background:#e6e6e6} #view-projects.printing .pbar i{background:#102645}
+  #view-projects.printing .pdue.over{color:#ac242a!important;font-weight:700} #view-projects.printing .pdue.today{color:#102645!important}
+  #view-projects.printing .pacct,#view-projects.printing .plabel{color:#474747;border-color:#9e9e9e}
+  #view-projects.printing .ownset{color:#0C77BC}
+}
