@@ -39,7 +39,7 @@ with sync_playwright() as p:
     check(pl["pinned"] is True and [c["title"] for c in [t2 for t2 in pl["tasks"] if t2["id"] == "PIN-4"][0]["checklist"]] == ["Block 1 (6:00-9:30 AM)", "Block 2 (10:00-11:00 AM)"] and [t2 for t2 in pl["tasks"] if t2["id"] == "PIN-1"][0]["notes"] == "Source: example inbox task", "pinned, notes and checklist item names (focus blocks) imported")
     pg.click('.tab[data-view="focus"]'); pg.wait_for_selector("#fc-focus")
     ids = pg.eval_on_selector_all("#fc-focus [data-pinedit]", STRIP_IDS)
-    check(ids == ["PIN-2", "PIN-4", "PIN-1", "PIN-3"], f"Daily Focus strip: open tasks only, overdue first, then due date, no date last ({ids})")
+    check(ids == ["PIN-2", "PIN-1", "PIN-4", "PIN-3"], f"Daily Focus strip: open tasks only, urgent first (overdue, then by date), then the rest by date, no date last ({ids})")
     order = pg.evaluate("[...document.querySelector('#view-focus').children].map(e => e.className.split(' ')[0])")
     check(order.index("fcstrip") <= 1 and order.index("fcstrip") < order.index("strip"), f"strip sits at the top of Daily Focus, above the Today strip ({order[:4]})")
     check("1 overdue" in pg.inner_text("#fc-focus") and "4 open of 5" in pg.inner_text("#fc-focus"), "strip header: open of total, overdue count")
@@ -62,9 +62,9 @@ with sync_playwright() as p:
     pg.click("[data-pact=togglePin]"); pg.wait_for_timeout(50)
     check(pg.query_selector("#fc-projects") is None and "Pin to Front and center" in pg.inner_text("[data-pact=togglePin]"), "Unpin removes the strip")
     pg.click("[data-pact=togglePin]"); pg.wait_for_timeout(50); check(pg.query_selector("#fc-projects") is not None, "Pin brings it back")
-    for tid in ["PIN-2", "PIN-4", "PIN-1", "PIN-3"]:
+    for tid in ["PIN-2", "PIN-1", "PIN-4", "PIN-3"]:
         pg.click(f"#fc-projects [data-pinedit='{tid}']"); pg.wait_for_selector("#projdlg"); pg.select_option("#pd-status", "completed"); pg.click("#pd-save"); pg.wait_for_timeout(50)
-        if tid == "PIN-1": check(pg.eval_on_selector_all("#fc-projects [data-pinedit]", STRIP_IDS) == ["PIN-3"], "completed tasks leave the strip")
+        if tid == "PIN-4": check(pg.eval_on_selector_all("#fc-projects [data-pinedit]", STRIP_IDS) == ["PIN-3"], "completed tasks leave the strip")
     check(pg.query_selector("#fc-projects") is None, "strip clears once every task is completed (Projects)")
     pg.click('.tab[data-view="focus"]'); pg.wait_for_timeout(50); check(pg.query_selector("#fc-focus") is None, "strip clears on Daily Focus too")
     if SHOTS: pg.screenshot(path=str(SHOTS / "08000-5-focus-cleared.png"))

@@ -747,7 +747,7 @@
   }
 
   // ---------- 00.08.000 Pinned "Front and center" strip + File → Import project JSON… ----------
-  // A pinned plan shows its open tasks (overdue first, then by due date, no date last) at the top of Daily Focus and Projects;
+  // A pinned plan shows its open tasks (urgent first (00.08.000 ruling: "put urgent items at the top, then the rest by date"); within each group overdue first, then by due date, no date last) at the top of Daily Focus and Projects;
   // the plan drops out of the strip once every task is completed.
   function pinnedStrip(store, today) {
     const out = [];
@@ -755,7 +755,7 @@
       const open = p.tasks.filter(t => t.status !== "completed"); if (!open.length) return;
       const bName = id => (p.buckets.find(b => b.id === id) || {}).name || "No bucket";
       const tasks = open.map(t => Object.assign({}, t, { planId: p.id, bucket: bName(t.bucketId), dueWord: projectDueWord(t, today) }))
-        .sort((a, b) => (b.dueWord === "Overdue") - (a.dueWord === "Overdue") || (a.due || "9999").localeCompare(b.due || "9999") || a.id.localeCompare(b.id));
+        .sort((a, b) => (b.priority === "urgent") - (a.priority === "urgent") || (b.dueWord === "Overdue") - (a.dueWord === "Overdue") || (a.due || "9999").localeCompare(b.due || "9999") || a.id.localeCompare(b.id));
       out.push({ planId: p.id, name: p.name, tasks, open: open.length, total: p.tasks.length, overdue: tasks.filter(t => t.dueWord === "Overdue").length });
     });
     return out;

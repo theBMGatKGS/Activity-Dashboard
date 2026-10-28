@@ -498,7 +498,9 @@ t("P8b import guards: pricing, email, bad pinned, bad bucket, schema; all or not
 t("P8c pinned strip: open tasks only, overdue first then due date, no date last; clears once every task is completed", () => {
   const s = R.readStore(imp(PIF).store); let st = R.pinnedStrip(s, "2026-10-19");
   assert.strictEqual(st.length, 1); assert.strictEqual(st[0].open, 4); assert.strictEqual(st[0].total, 5); assert.strictEqual(st[0].overdue, 1);
-  assert.deepStrictEqual(st[0].tasks.map(t => [t.id, t.dueWord]), [["PIN-2", "Overdue"], ["PIN-4", "Today"], ["PIN-1", "This week"], ["PIN-3", "No date"]]);
+  assert.deepStrictEqual(st[0].tasks.map(t => [t.id, t.dueWord]), [["PIN-2", "Overdue"], ["PIN-1", "This week"], ["PIN-4", "Today"], ["PIN-3", "No date"]], "urgent first (overdue, then by date), then the rest");
+  { const u = R.readStore(imp(PIF).store); u.plans[0].tasks.find(t => t.id === "PIN-3").priority = "urgent"; assert.deepStrictEqual(R.pinnedStrip(u, "2026-10-19")[0].tasks.map(t => t.id), ["PIN-2", "PIN-1", "PIN-3", "PIN-4"], "an undated urgent task stays above non-urgent ones"); }
+  assert.ok(true);
   assert.deepStrictEqual(R.pinnedStrip(ST(), "2026-10-19"), [], "plans that are not pinned never show");
   s.plans[0].tasks.forEach(t => { if (t.id !== "PIN-3") t.status = "completed"; }); st = R.pinnedStrip(s, "2026-10-19"); assert.deepStrictEqual(st[0].tasks.map(t => t.id), ["PIN-3"]);
   s.plans[0].tasks[2].status = "completed"; assert.deepStrictEqual(R.pinnedStrip(s, "2026-10-19"), [], "strip clears when every task is completed");
