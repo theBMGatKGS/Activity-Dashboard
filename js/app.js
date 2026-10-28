@@ -1049,7 +1049,8 @@
     S.projStore.updated_at = new Date().toISOString();
     if (S.projExample) { render(); return; }
     const body = { schema_version: 1, updated_at: S.projStore.updated_at, plans: S.projStore.plans };
-    track(DB.set("projectsStore", body));
+    track(DB.set("projectsStore", body));   // while locked the encrypted cache writes nothing
+    S.projDirty = !canSaveToFolder() && !!(S.vault && S.vault.kr);
     if (canSaveToFolder()) {
       const text = JSON.stringify(body), ct = await V.encrypt(S.vault.key, S.vault.kr, "projstore", text);
       await track(writeText(STORE_NAME + ".enc", ct));
@@ -1086,7 +1087,7 @@
     if (!st0 || !st0.plans.length) { el.innerHTML = `<div class="projempty"><h2>Projects</h2><p>No projects yet. Projects you make here are the source of truth and export as Planner-ready CSV, Excel (xlsx) and Graph JSON. Nothing is sent to Planner.</p><button class="btn" data-pact="addPlan">+ New plan</button> ${imp}</div>`; return; }
     const m = projectsModel(), plan = curPlan();
     const when = `${R.dayLabel(R.isoDay(st0.updated_at))} ${R.hm(st0.updated_at)} ${R.tzLabel(st0.updated_at)}`;
-    const where = S.projExample ? "EXAMPLE DATA · changes are kept until reload" : canSaveToFolder() ? "saved encrypted in the Data folder" : "saved in this browser only · encrypt the Data folder (File → Encryption…) to keep projects there";
+    const where = S.projExample ? "EXAMPLE DATA · changes are kept until reload" : S.vault && S.vault.kr && !S.vault.key ? "🔒 locked · changes are kept in memory only (browser only, not saved) until you unlock: File → Encryption…" : canSaveToFolder() ? "saved encrypted in the Data folder" : "saved in this browser only · encrypt the Data folder (File → Encryption…) to keep projects there";
     const planOpts = `<option value="">All plans</option>` + st0.plans.map(p => `<option value="${esc(p.id)}"${p.id === S.projPlan ? " selected" : ""}>${esc(p.name)}</option>`).join("");
     const dl = `<datalist id="proj-owners">${m.choices.map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist>`;
     const groups = [];
@@ -1186,6 +1187,7 @@
     const r = R.storeFromFeed(S.projFeed, S.projStore, new Date().toISOString()); S.projStore = R.readStore(r.store); S.projPlan = ""; saveStore(); toast(`Imported ${r.added} task(s) from the Planner export.`);
   }
   function useFeeds(feeds) {
+    if (S.projDirty && canSaveToFolder() && S.projStore && !S.projExample) { S.projDirty = false; saveStore(); }   // edits made while locked are saved once unlocked
     if (S.snap && S.snap.example) return;
     if (feeds.calendar && (!S.calFeed || S.calExample || Date.parse(feeds.calendar.generated_at) >= Date.parse(S.calFeed.generatedAt))) { S.calFeed = R.readCalendar(feeds.calendar); S.calExample = false; track(DB.set("calendarSnap", feeds.calendar)); }
     if (feeds.projects && (!S.projFeed || S.projExample || Date.parse(feeds.projects.generated_at) >= Date.parse(S.projFeed.generatedAt))) { S.projFeed = R.readProjects(feeds.projects); S.projExample = false; track(DB.set("projectsFeed", feeds.projects)); }

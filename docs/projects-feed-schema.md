@@ -7,7 +7,7 @@ Ruling Oct 27 2026: "Projects is the source of truth and exports Planner-ready C
 
 Rules: names only (no "@"); real YYYY-MM-DD dates, due ≥ start; percent 0–100; priority urgent/important/medium/low; checklist ≤ 20 items, titles ≤ 100; notes ≤ 2000; **no pricing or dollar figures** in any text.
 
-Exports (files only, nothing calls Planner or Graph): Planner CSV (Planner's "Export plan to Excel" columns), xlsx (same columns, one sheet per plan), Graph JSON (`plannerPlan`, `plannerBucket`, `plannerTask`, `plannerTaskDetails` shapes; owners in `x_ownerNames`).
+Exports (files only, nothing calls Planner or Graph): Planner CSV (Planner's "Export plan to Excel" columns), xlsx (same columns, one sheet per plan), Graph JSON (`plannerPlan`, `plannerBucket`, `plannerTask`, `plannerTaskDetails`; writable Graph fields only; checklist keys are client GUIDs, stable per item; no orderHint (the service sets it); start/due dates are local midnight of the exporting computer's zone in UTC so Planner shows the same date; ids, refs, owner names, counts and completion date are `x_` hints for the importer). Planner has no CSV/xlsx import: those two match Planner's "Export plan to Excel" layout.
 
 ## 2. `projects.json` (optional Planner export feed, import only)
 

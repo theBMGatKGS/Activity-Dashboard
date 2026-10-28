@@ -14,6 +14,8 @@ def check(c, m):
     global ok; print(("PASS " if c else "FAIL ") + m); ok = ok and c
 Q = lambda now="2026-10-19T09:20:00-05:00", view="projects": f"?now={now}&machine=test&view={view}"
 IDS = "e => e.map(x => x.dataset.ptask)"
+GF = json.loads((SRC / "tests/fixtures/guard-fixtures.json").read_text())   # money / email fixtures (exempted file)
+MONEY = {m.split(" ")[0]: m for m in GF["money"] if m.startswith(("Bid ", "Quote is "))}
 def dl(pg, sel):
     with pg.expect_download() as d: pg.click(sel)
     return d.value.suggested_filename, pathlib.Path(d.value.path()).read_bytes()
@@ -39,13 +41,13 @@ with sync_playwright() as p:
     answers[:] = ["Pilot Example"]; pg.click("[data-pact='addPlan']"); pg.wait_for_timeout(50)
     check(pg.evaluate("DASH.app.state.projPlan") != "" and "Pilot Example › To do" in pg.inner_text("#view-projects").replace("\n", " "), "+ Plan creates a plan with a 'To do' bucket and selects it")
     answers[:] = ["Design"]; pg.click(".projacts [data-pact='addBucket']"); pg.wait_for_timeout(50)
-    answers[:] = ["Bid " + "$" + "5,000"]; pg.click(".projacts [data-pact='addBucket']"); pg.wait_for_timeout(50)
+    answers[:] = [MONEY["Bid"]]; pg.click(".projacts [data-pact='addBucket']"); pg.wait_for_timeout(50)
     check("Pilot Example › Design" in pg.inner_text("#view-projects").replace("\n", " ") and "pricing" in pg.inner_text("#toast"), "+ Bucket adds a bucket; a bucket with a dollar figure is refused")
     pg.click(".projacts [data-pact='addTask']"); pg.wait_for_selector("#projdlg")
     pg.fill("#pd-title", "Walk the riser"); pg.select_option("#pd-bucket", label="Design"); pg.fill("#pd-owner", "Dana L."); pg.select_option("#pd-status", "inProgress"); pg.fill("#pd-pct", "40")
     pg.fill("#pd-due", "2026-10-23"); pg.select_option("#pd-pri", "important"); pg.fill("#pd-notes", "Bring the layout")
     for x in ["Print layout", "Walk floors 1-3"]: pg.fill("#pd-cknew", x); pg.press("#pd-cknew", "Enter")
-    pg.check("[data-ck='0']"); pg.fill("#pd-notes", "Quote is " + "$" + "9,000"); pg.click("#pd-save")
+    pg.check("[data-ck='0']"); pg.fill("#pd-notes", MONEY["Quote"]); pg.click("#pd-save")
     check("pricing" in pg.inner_text("#pd-err") and pg.query_selector("#projdlg") is not None, "editor refuses pricing in notes and stays open")
     pg.fill("#pd-notes", "Bring the layout"); pg.click("#pd-save"); pg.wait_for_timeout(50)
     t = pg.evaluate("DASH.app.state.projStore.plans.find(p => p.name === 'Pilot Example').tasks[0]")
@@ -115,12 +117,20 @@ with sync_playwright() as p:
     check(not any(x in blob for x in ["Plain Folder Plan", "Imported example task", "Chris T."]), "the encrypted files hold no readable plan, task or owner text")
     env = mac.evaluate("Promise.all(['projectsStore','projectsFeed'].map(k => DASH.db.getRaw(k))).then(v => v.map(x => !!(x && x.dashCache === 1 && typeof x.env === 'string' && !x.env.includes('Plain'))))")
     check(env == [True, True] and mac.evaluate("['projectsStore','projectsFeed'].every(k => DASH.db.SECRET.has(k))"), f"IndexedDB: projectsStore and projectsFeed are SECRET, stored as encrypted envelopes ({env})")
-    dec = mac.evaluate("(async () => { const t = (await DASH.vault.decrypt(DASH.app.state.vault.key, DASH.app.state.vault.kr, await (await window.DASH_TEST_FS.getFileHandle('projects-store.json.enc')).getFile().then(f => f.text()), 'projstore')); return JSON.parse(t).plans.map(p => p.name); })()") if mac.evaluate("!!(DASH.app.state.vault && window.DASH_TEST_FS)") else None
-    check(dec is None or sorted(dec) == ["Feed Example", "Plain Folder Plan"], f"projects-store.json.enc decrypts (purpose projstore) to the store ({dec})")
+    dec = mac.evaluate("(async () => { try { const f = await (await window.DASH_TEST_FS.getFileHandle('projects-store.json.enc')).getFile(); const t = await DASH.vault.decrypt(DASH.app.state.vault.key, DASH.app.state.vault.kr, await f.text(), 'projstore'); return JSON.parse(t).plans.map(p => p.name).sort(); } catch (e) { return 'decrypt failed: ' + e.message; } })()")
+    check(dec == ["Feed Example", "Plain Folder Plan"], f"projects-store.json.enc decrypts with purpose projstore to the store ({dec})")
     for act in ["exportProjects", "exportProjectsXlsx", "exportProjectsGraph"]:
         msgs.clear()
         with mac.expect_download(): mac.click(f".projacts [data-act='{act}']")
         check(any("unencrypted" in m for m in msgs), f"T2 {act} asks first when the Data folder is encrypted ({msgs})")
+    # A2: locked → an edit writes no store file, raises no page error, and the header says so
+    before = (data / "projects-store.json.enc").read_text(); errs0 = len(errors)
+    mac.click('.mtop:has-text("File")'); mac.click('[data-act="encryption"]'); mac.wait_for_selector("[data-v='lock']"); mac.click("[data-v='lock']"); mac.wait_for_timeout(100)
+    mac.fill("[data-owner='FT-1']", "Sam K."); mac.press("[data-owner='FT-1']", "Enter"); mac.evaluate("DASH.app.flush()"); mac.wait_for_timeout(200)
+    after = sorted(x for x in os.listdir(data) if x.startswith("projects-store"))
+    check(after == ["projects-store.json.enc"] and (data / "projects-store.json.enc").read_text() == before and len(errors) == errs0 and "browser only" in mac.inner_text(".projasof") and "locked" in mac.inner_text(".projasof"), f"A2 locked: editing writes no store file, no page error, header says locked / browser only ({after})")
+    env2 = mac.evaluate("DASH.db.getRaw('projectsStore').then(x => !!(x && x.dashCache === 1 && !x.env.includes('Sam')))")
+    check(env2, "A2 locked: nothing readable reaches the browser cache")
     c.close(); b.close()
 check(not errors, "no page errors" + (f": {errors[:3]}" if errors else ""))
 print("T28", "PASS" if ok else "FAIL"); sys.exit(0 if ok else 1)

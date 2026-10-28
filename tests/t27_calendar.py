@@ -78,7 +78,12 @@ with sync_playwright() as p:
     w = q3.evaluate("[document.querySelector('.strip').getBoundingClientRect().right, document.documentElement.clientWidth]")
     check(w[0] <= w[1], f"narrow / 200% zoom: strip fits the window ({w})")
     if SHOTS: q3.screenshot(path=str(SHOTS / "06000-6-narrow.png"), clip={"x": 0, "y": 0, "width": 900, "height": 700})
-    c3.close(); ctx.close()
+    c3.close()
+    # 00.07.000 Z2: one unpinned check in Eastern: the same instants, shown in Eastern wall-clock (leave by 16:15 ET = 20:15Z)
+    ce = b.new_context(timezone_id="America/New_York", viewport={"width": 1440, "height": 900}); qe = ce.new_page(); qe.goto((SRC / "index.html").as_uri() + Q()); qe.wait_for_selector(".strip .sev")
+    me = qe.evaluate("(() => { const m = DASH.app.state.stripModel; return [m.from, m.to, m.leaveBy]; })()")
+    check(me == [7, 21, "2026-10-19T20:15:00.000Z"] and "leave by 16:15" in qe.inner_text(".stripbar") and "as of Mon 10/19 07:30 ET" in qe.inner_text(".calchip"), f"Eastern (unpinned zone): leave-by is the same instant (20:15Z, shown 16:15 ET), strip ends 21:00 for the 20:45 ET landing, chip 07:30 ET ({me})")
+    ce.close(); ctx.close()
     # ---------------- Part B: encrypted feed through the Data folder ----------------
     FS_JS = (SRC / "tests/t21_vault.py").read_text().split('FS_JS = """', 1)[1].split('"""', 1)[0]
     tmp = pathlib.Path(tempfile.mkdtemp()); app = tmp / "Dashboard"; shutil.copytree(SRC, app, ignore=shutil.ignore_patterns("tests", ".git"))

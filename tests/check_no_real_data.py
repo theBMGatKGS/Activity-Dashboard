@@ -37,13 +37,14 @@ for f in sorted(ROOT.rglob("*")):
     for m in EMAIL.finditer(t):
         if not m.group(1).lower().endswith(".example"): bad.append(f"{rel}: email {m.group(0)}")
     noisy = f.suffix == ".woff2"   # compressed font bytes: money/phone patterns match random bytes, so only denylist, email and domain checks apply
+    if rel == "tests/fixtures/guard-fixtures.json": noisy = True   # 00.07.000: explicit money/email guard fixtures (fictional); domain, denylist and email checks still apply
     for m in ([] if noisy else PHONE.finditer(t)): bad.append(f"{rel}: phone-like {m.group(0)}")
     for m in ([] if noisy else MONEY.finditer(t)):
         if not re.fullmatch(r"\$\d", m.group(0)): bad.append(f"{rel}: money {m.group(0)}")
     for m in DOMAIN.finditer(t):
         d = m.group(0).lower()
         if m.start() > 0 and t[m.start() - 1] == ".": continue  # a suffix hint such as ".co.uk" in the rules list
-        if d not in ALLOWED_DOMAINS and not d.endswith(".example") and not re.match(r"^(superdesign\.dev|github\.com|api\.github\.com|scripts\.sil\.org|teams\.microsoft\.com|maps\.apple\.com)$", d): bad.append(f"{rel}: domain {d}")
+        if d not in ALLOWED_DOMAINS and not d.endswith(".example") and not re.match(r"^(superdesign\.dev|github\.com|api\.github\.com|scripts\.sil\.org|teams\.microsoft\.com|maps\.apple\.com|schemas\.openxmlformats\.org)$", d): bad.append(f"{rel}: domain {d}")
     if rel.startswith(("Data/", "examples/")) or rel.endswith(".json"):
         for m in PERSON.finditer(t):
             if m.group(1) not in PEOPLE and m.group(1) != "Me": bad.append(f"{rel}: person not in example allowlist: {m.group(1)}")

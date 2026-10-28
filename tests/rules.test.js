@@ -418,25 +418,42 @@ t("S2 store schema enforced; bad tasks skipped with reasons", () => {
   assert.throws(() => R.readStore({ ...clone(PJS), schema_version: 2 }), /schema_version/); assert.throws(() => R.readStore({ ...clone(PJS), updated_at: "yesterday" }), /updated_at/);
   const b = clone(PJS); b.plans[0].tasks[0].assignees = ["x@contoso.example"]; b.plans[0].tasks[1].bucketId = "NOPE"; b.plans[0].tasks[2].checklist = [{ id: "c", title: "", done: false }];
   const r = R.readStore(b); assert.strictEqual(r.rejects.length, 3, r.rejects.join(" | ")); });
-t("S3 no pricing or dollar figures: title, notes, checklist, labels, plan and bucket names", () => {
+const GF = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures/guard-fixtures.json"), "utf8"));
+t("S3 pricing guard: every money fixture caught in title, notes, labels, checklist; plan/bucket names", () => {
   const t0 = clone(ST().plans[0].tasks[0]), ids = new Set(["B1"]);
-  for (const [k, v] of [["title", "Quote " + "$" + "12,500"], ["notes", "budget 40k USD"], ["labels", ["€" + "300"]], ["checklist", [{ id: "c1", title: "price 1,200 dollars", done: false }]]]) assert.match(R.taskProblem({ ...t0, [k]: v }, ids) || "", /pricing/, k);
-  assert.strictEqual(R.taskProblem(t0, ids), null); assert.match(R.namedProblem("Bid $5", "plan"), /pricing/); assert.strictEqual(R.namedProblem("Riser 3 rev 2", "bucket"), null); });
+  GF.money.forEach(m => { assert.ok(R.hasMoney(m), "missed: " + m);
+    for (const [k, v] of [["title", m], ["notes", m], ["labels", [m]], ["checklist", [{ id: "c1", title: m, done: false }]]]) assert.match(R.taskProblem({ ...t0, [k]: v }, ids) || "", /pricing/, `${k}: ${m}`); });
+  assert.strictEqual(R.taskProblem(t0, ids), null); assert.match(R.namedProblem(GF.money[0], "plan"), /pricing/); });
+t("S3b pricing guard: no false positives on dates, counts, part numbers, revisions, lengths", () => {
+  GF.notMoney.forEach(m => assert.ok(!R.hasMoney(m), "false positive: " + m)); assert.strictEqual(R.namedProblem("Riser 3 rev 2", "bucket"), null); });
+t("S8 email guard: @ (full-width too), [at], (at), AT … DOT, %40; owners and text; no false positives", () => {
+  const t0 = clone(ST().plans[0].tasks[0]), ids = new Set(["B1"]);
+  GF.email.forEach(e => { assert.ok(R.hasEmail(e), "missed: " + e); assert.ok(!R.validOwner(e), "owner accepted: " + e); assert.match(R.taskProblem({ ...t0, notes: e }, ids) || "", /email/, e); });
+  GF.notEmail.forEach(e => assert.ok(!R.hasEmail(e), "false positive: " + e)); ["Jordan P.", "Sam K.", "New Person Example"].forEach(n => assert.ok(R.validOwner(n), n)); });
 t("S4 Planner CSV: Planner's export columns, BOM, US dates, Late, checklist columns, formula-safe, plan filter", () => {
   const s = ST(); s.plans[1].tasks[0].title = "=CMD()"; const csv = R.plannerCSV(s, "PLAN-B", "2026-10-21"), L = csv.replace(/^\ufeff/, "").trim().split("\r\n");
   assert.ok(csv.startsWith("\ufeff")); assert.strictEqual(L[0], R.PLANNER_COLS.map(c => `"${c}"`).join(",")); assert.strictEqual(L.length, 3);
   assert.ok(L[1].startsWith(`"PT-9","'=CMD()","Design","In progress","Medium","Alex R.","10/5/2026","10/20/2026","True"`), L[1]);
   const all = R.plannerCSV(ST(), null, "2026-10-19").replace(/^\ufeff/, "").trim().split("\r\n"); assert.ok(all[0].startsWith('"Plan Name","Task ID"')); assert.strictEqual(all.length, 11);
   assert.ok(all.find(l => l.includes('"PT-1"')).includes('"Pull drawings","Pull drawings; Mark up risers; Send to team"')); });
-t("S5 Graph JSON: plannerPlan / plannerBucket / plannerTask / plannerTaskDetails shapes", () => {
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+t("S5 Graph JSON: writable Graph fields only, x_ hints, GUID checklist keys, no orderHint, due dates at local midnight", () => {
   const g = R.plannerGraph(ST(), "PLAN-A"), p = g.plans[0]; assert.strictEqual(g.plans.length, 1);
-  assert.strictEqual(p.plannerPlan["@odata.type"], "#microsoft.graph.plannerPlan"); assert.strictEqual(p.plannerPlan.title, "Accounts");
-  assert.ok(p.plannerBuckets.every(b => b["@odata.type"] === "#microsoft.graph.plannerBucket" && b.planId === "PLAN-A" && typeof b.orderHint === "string"));
-  const t1 = p.plannerTasks.find(t => t.id === "PT-1"); assert.strictEqual(t1["@odata.type"], "#microsoft.graph.plannerTask"); assert.strictEqual(t1.priority, 1); assert.strictEqual(t1.percentComplete, 50);
-  assert.strictEqual(t1.dueDateTime, "2026-10-16T00:00:00Z"); assert.deepStrictEqual(t1.assignments, {}); assert.deepStrictEqual(t1.x_ownerNames, ["Jordan P."]); assert.strictEqual(t1.activeChecklistItemCount, 2);
-  const d1 = p.plannerTaskDetails.find(d => d.id === "PT-1"); assert.strictEqual(d1["@odata.type"], "#microsoft.graph.plannerTaskDetails"); assert.strictEqual(d1.previewType, "checklist");
-  assert.deepStrictEqual(Object.values(d1.checklist).map(c => [c["@odata.type"], c.title, c.isChecked]), [["#microsoft.graph.plannerChecklistItem", "Pull drawings", true], ["#microsoft.graph.plannerChecklistItem", "Mark up risers", false], ["#microsoft.graph.plannerChecklistItem", "Send to team", false]]);
-  assert.strictEqual(p.plannerTasks.find(t => t.id === "PT-7").percentComplete, 100); assert.ok(!JSON.stringify(g).includes("@contoso")); });
+  assert.deepStrictEqual(Object.keys(p.plannerPlan), ["@odata.type", "title", "x_localId"]); assert.strictEqual(p.plannerPlan.title, "Accounts");
+  assert.ok(p.plannerBuckets.every(b => b["@odata.type"] === "#microsoft.graph.plannerBucket" && !("id" in b) && !("orderHint" in b) && b.x_planRef === "PLAN-A"));
+  const t1 = p.plannerTasks.find(t => t.x_localId === "PT-1");
+  ["id", "orderHint", "checklistItemCount", "activeChecklistItemCount", "completedDateTime", "planId", "bucketId"].forEach(k => assert.ok(!(k in t1), "read-only / id field present: " + k));
+  assert.strictEqual(t1.priority, 1); assert.strictEqual(t1.percentComplete, 50); assert.deepStrictEqual(t1.assignments, {}); assert.deepStrictEqual(t1.x_ownerNames, ["Jordan P."]); assert.strictEqual(t1.x_activeChecklistItemCount, 2);
+  withTz("America/Chicago", () => assert.strictEqual(R.plannerGraph(ST(), "PLAN-A").plans[0].plannerTasks[0].dueDateTime, "2026-10-16T05:00:00Z"));
+  withTz("America/New_York", () => assert.strictEqual(R.plannerGraph(ST(), "PLAN-A").plans[0].plannerTasks[0].dueDateTime, "2026-10-16T04:00:00Z"));
+  withTz("America/Los_Angeles", () => { const d = R.plannerGraph(ST(), "PLAN-A").plans[0].plannerTasks[0].dueDateTime; assert.strictEqual(d, "2026-10-16T07:00:00Z"); assert.strictEqual(R.ymd(new Date(d)), "2026-10-16", "shows the same date in the user's zone"); });
+  withTz("America/Chicago", () => assert.strictEqual(R.graphDate("2026-11-02"), "2026-11-02T06:00:00Z", "after the DST change (CST)"));
+  const d1 = p.plannerTaskDetails.find(d => d.x_taskRef === "PT-1"); assert.strictEqual(d1["@odata.type"], "#microsoft.graph.plannerTaskDetails"); assert.strictEqual(d1.previewType, "checklist");
+  const keys = Object.keys(d1.checklist); assert.strictEqual(keys.length, 3); assert.ok(keys.every(k => GUID.test(k)), keys.join(","));
+  assert.deepStrictEqual(keys, Object.keys(R.plannerGraph(ST(), "PLAN-A").plans[0].plannerTaskDetails.find(d => d.x_taskRef === "PT-1").checklist), "GUIDs are stable across exports");
+  assert.strictEqual(new Set(R.plannerGraph(ST()).plans.flatMap(q => q.plannerTaskDetails.flatMap(d => Object.keys(d.checklist)))).size, 3 + 6, "GUIDs are unique");
+  assert.deepStrictEqual(Object.values(d1.checklist).map(c => [c["@odata.type"], c.title, c.isChecked, "orderHint" in c]), [["#microsoft.graph.plannerChecklistItem", "Pull drawings", true, false], ["#microsoft.graph.plannerChecklistItem", "Mark up risers", false, false], ["#microsoft.graph.plannerChecklistItem", "Send to team", false, false]]);
+  assert.strictEqual(R.plannerGraph(ST()).plans[0].plannerTasks.find(t => t.x_localId === "PT-7").percentComplete, 100); });
 t("S6 xlsx: valid stored zip (CRC, central directory), one sheet per plan, inline strings, formula-safe", () => {
   const s = ST(); s.plans[0].tasks[0].title = "=HYPERLINK(1)"; const x = R.plannerXlsx(s, null, "2026-10-19"), b = Buffer.from(x.bytes);
   assert.deepStrictEqual(x.sheets, ["Accounts", "Example Retrofit"]); assert.strictEqual(b.readUInt32LE(0), 0x04034b50); assert.strictEqual(b.readUInt32LE(b.length - 22), 0x06054b50);

@@ -593,10 +593,11 @@
 
   // ---------- 00.07.000 Projects: a read-only mirror of Microsoft Planner (export only, nothing is written back) ----------
   // projects.json (schema_version 1) is read only when encrypted (purpose "projects"). Owners are names, never emails.
+  const hasEmailEarly = v => /@|%40|[\[({<]\s*at\s*[\])}>]|\s+at\s+[\w-]+\s*(?:\s|[\[({<])\s*dot\b/i.test(String(v).normalize("NFKC"));
   const PROJ_STATUS = ["notStarted", "inProgress", "completed"], PROJ_PRI = ["urgent", "important", "medium", "low"];
   const PROJ_STATUS_WORD = { notStarted: "Not started", inProgress: "In progress", completed: "Completed" };
   const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
-  const ownerOk = v => typeof v === "string" && v.trim() && !v.includes("@") && v.length <= 80;
+  const ownerOk = v => typeof v === "string" && !!v.trim() && v.length <= 80 && !hasEmailEarly(v);
   function readProjects(raw) {
     if (!raw || typeof raw !== "object" || raw.schema_version !== 1) throw new Error("projects: schema_version must be 1");
     if (!ISO_OFF.test(raw.generated_at || "")) throw new Error("projects: generated_at must be ISO with offset");
@@ -660,8 +661,23 @@
 
 
   // ---------- 00.07.000 rev 2: Projects is the source of truth (store), Planner-ready exports (CSV, xlsx, Graph JSON) ----------
-  const MONEY_RE = /(?:[$€£]\s?\d|\b\d[\d,]*(?:\.\d+)?\s?[kKmM]?\s?(?:USD|EUR|GBP|dollars?|bucks)\b)/i;
-  const hasMoney = v => typeof v === "string" && MONEY_RE.test(v);
+  // Pricing guard (P1). Text is NFKC-normalised first, so full-width ＄ ＠ ０-９ count as $ @ 0-9.
+  const CUR_SYM = "$€£¥₹₩₽¢", CUR_CODE = "USD|CAD|EUR|GBP|AUD|NZD|JPY|CNY|RMB|MXN|INR|CHF|SEK|NOK|DKK|BRL|KRW|SGD|HKD|ZAR";
+  const NUM = String.raw`\d[\d,]*(?:\.\d+)?`, MULT = String.raw`(?:\s?(?:[kKmMbB]|mm|thousand|million|billion|grand))?`;
+  const SPELLED = "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|a few|several";
+  const MONEY_RES = [
+    new RegExp(`[${CUR_SYM}]\\s?\\d`),                                                     // currency symbol before the number (any width)
+    new RegExp(`\\d${MULT}\\s?[${CUR_SYM}]`),                                              // currency symbol after the number
+    new RegExp(`\\b(?:${CUR_CODE})\\s?\\$?\\s?\\d`, "i"),                                   // ISO code before the number
+    new RegExp(`${NUM}${MULT}\\s?(?:${CUR_CODE}|dollars?|bucks|euros?|pounds? sterling|cents?)\\b`, "i"),   // number then code or word
+    new RegExp(`\\b(?:${SPELLED})\\b(?:[\\s-]+[a-z]+){0,4}?[\\s-]+(?:dollars?|bucks|euros?|grand)\\b`, "i"), // spelled-out amounts
+    new RegExp(`\\b(?:prices?|priced|pricing|costs?|costing|quoted?|quotes|budget(?:ed)?|fees?|msrp|list price|discount(?:ed)?|invoice[sd]?|po value|total cost)\\b\\s*(?:is|was|of|at|to|=|:|~|about|around|approx\\.?)?\\s*~?\\s*\\d`, "i"), // a price word then a number
+    new RegExp(`\\b\\d{1,3}(?:,\\d{3})+\\.\\d{2}\\b|\\b\\d+\\.00\\b`),                       // bare decimal money
+  ];
+  const hasMoney = v => { if (typeof v !== "string") return false; const t = v.normalize("NFKC"); return MONEY_RES.some(r => r.test(t)); };
+  // Email guard (P2): @ (any width), [at] (at) {at}, "x AT y DOT z", %40.
+  const EMAIL_RES = [/@/, /[\[({<]\s*at\s*[\])}>]/i, /%40/i, /\b[\w.+-]+\s+at\s+[\w-]+\s*(?:\s|[\[({<])\s*dot\s*[\])}>]?\s*[a-z]{2,}\b/i, /\b[\w.+-]+\s*[\[({<]\s*at\s*[\])}>]\s*[\w-]+/i];
+  const hasEmail = v => typeof v === "string" && EMAIL_RES.some(r => r.test(v.normalize("NFKC")));
   const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
   // Validates one task; returns an error string or null. Used on every save and when reading the store.
   function taskProblem(t, bucketIds) {
@@ -679,10 +695,10 @@
     if (t.notes != null && (typeof t.notes !== "string" || t.notes.length > 2000)) return "notes are too long";
     const texts = [t.title, t.notes || "", t.account || ""].concat(t.labels || [], t.checklist.map(c => c.title));
     if (texts.some(hasMoney)) return "no pricing or dollar figures in projects";
-    if (texts.concat(t.assignees).some(x => /@/.test(x))) return "no email addresses in projects";
+    if (texts.concat(t.assignees).some(hasEmail)) return "no email addresses in projects";
     return null;
   }
-  function namedProblem(n, what) { if (typeof n !== "string" || !n.trim()) return `${what} name is required`; if (n.length > 100) return `${what} name is too long`; if (hasMoney(n)) return "no pricing or dollar figures in projects"; if (n.includes("@")) return "no email addresses in projects"; return null; }
+  function namedProblem(n, what) { if (typeof n !== "string" || !n.trim()) return `${what} name is required`; if (n.length > 100) return `${what} name is too long`; if (hasMoney(n)) return "no pricing or dollar figures in projects"; if (hasEmail(n)) return "no email addresses in projects"; return null; }
   function readStore(raw) {
     if (!raw || typeof raw !== "object" || raw.schema_version !== 1) throw new Error("projects-store: schema_version must be 1");
     if (!ISO_OFF.test(raw.updated_at || "")) throw new Error("projects-store: updated_at must be ISO with offset");
@@ -735,19 +751,25 @@
     return "\ufeff" + head.map(csvCell).join(",") + "\r\n" + rows.map(r => (multi ? [r.plan] : []).concat(r.cells).map(csvCell).join(",")).join("\r\n") + "\r\n";
   }
   // Graph-shaped JSON: plannerPlan / plannerBucket / plannerTask / plannerTaskDetails. Ids are local; Graph assigns its own on create.
+  // Graph-ready JSON (G1). Writable fields only, in Graph's names; anything Graph sets itself or needs mapping is under x_ (hints).
+  // Checklist keys are client GUIDs (stable per task + item, so re-exports match). orderHint is omitted: the service generates it.
+  // dueDateTime / startDateTime: Graph stores UTC; Planner shows the date in the user's zone, so a date is sent as local midnight of
+  // this computer's zone converted to UTC (e.g. 2026-10-16 → 2026-10-16T05:00:00Z in Central), which never shows a day early.
+  function guidFrom(s) { const h = i => { let x = 0x811c9dc5 ^ i; for (let k = 0; k < s.length; k++) { x ^= s.charCodeAt(k); x = Math.imul(x, 0x01000193) >>> 0; } return x.toString(16).padStart(8, "0"); };
+    const hex = h(1) + h(2) + h(3) + h(4); return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${"89ab"[parseInt(hex[16], 16) & 3]}${hex.slice(17, 20)}-${hex.slice(20, 32)}`; }
+  function graphDate(d) { return d ? new Date(ctIso(d, "00:00")).toISOString().replace(".000Z", "Z") : null; }
   function plannerGraph(store, planId) {
-    const hint = i => " " + "!".repeat(1) + String.fromCharCode(65 + Math.min(i, 25)) + String(i).padStart(4, "0");
-    const dt = d => d ? d + "T00:00:00Z" : null;
-    return { "@odata.context": "local-export#planner", exportedFor: "Microsoft Graph Planner (create plan, buckets, tasks, then PATCH details)", schema_version: 1,
+    return { "x_about": "Local export shaped for Microsoft Graph Planner. Create the plan, then buckets (set planId), then tasks (set planId, bucketId, assignments from x_ownerNames), then PATCH each task's details. x_ fields are hints, not Graph properties. Nothing here was sent anywhere.", schema_version: 2,
       plans: store.plans.filter(p => !planId || p.id === planId).map(p => ({
-        plannerPlan: { "@odata.type": "#microsoft.graph.plannerPlan", id: p.id, title: p.name },
-        plannerBuckets: p.buckets.map((b, i) => ({ "@odata.type": "#microsoft.graph.plannerBucket", id: b.id, name: b.name, planId: p.id, orderHint: hint(i) })),
-        plannerTasks: p.tasks.map((t, i) => ({ "@odata.type": "#microsoft.graph.plannerTask", id: t.id, planId: p.id, bucketId: t.bucketId, title: t.title, orderHint: hint(i),
+        plannerPlan: { "@odata.type": "#microsoft.graph.plannerPlan", title: p.name, x_localId: p.id },
+        plannerBuckets: p.buckets.map(b => ({ "@odata.type": "#microsoft.graph.plannerBucket", name: b.name, x_localId: b.id, x_planRef: p.id })),
+        plannerTasks: p.tasks.map(t => ({ "@odata.type": "#microsoft.graph.plannerTask", title: t.title,
           percentComplete: t.status === "completed" ? 100 : t.status === "notStarted" ? 0 : Math.min(99, Math.max(1, t.percent)), priority: PRI_GRAPH[t.priority],
-          startDateTime: dt(t.start), dueDateTime: dt(t.due), completedDateTime: dt(t.completedOn), assignments: {}, appliedCategories: {},
-          checklistItemCount: t.checklist.length, activeChecklistItemCount: t.checklist.filter(c => !c.done).length, x_ownerNames: t.assignees, x_labels: t.labels })),
-        plannerTaskDetails: p.tasks.map(t => ({ "@odata.type": "#microsoft.graph.plannerTaskDetails", id: t.id, description: t.notes || "", previewType: t.checklist.length ? "checklist" : "automatic",
-          checklist: Object.fromEntries(t.checklist.map((c, i) => [c.id, { "@odata.type": "#microsoft.graph.plannerChecklistItem", title: c.title, isChecked: c.done, orderHint: hint(i) }])) })) })) };
+          startDateTime: graphDate(t.start), dueDateTime: graphDate(t.due), assignments: {}, appliedCategories: {},
+          x_localId: t.id, x_planRef: p.id, x_bucketRef: t.bucketId, x_ownerNames: t.assignees, x_labels: t.labels, x_completedOn: t.completedOn,
+          x_checklistItemCount: t.checklist.length, x_activeChecklistItemCount: t.checklist.filter(c => !c.done).length })),
+        plannerTaskDetails: p.tasks.map(t => ({ "@odata.type": "#microsoft.graph.plannerTaskDetails", x_taskRef: t.id, description: t.notes || "", previewType: t.checklist.length ? "checklist" : "automatic",
+          checklist: Object.fromEntries(t.checklist.map(c => [guidFrom(p.id + "/" + t.id + "/" + c.id), { "@odata.type": "#microsoft.graph.plannerChecklistItem", title: c.title, isChecked: c.done }])) })) })) };
   }
   // Minimal xlsx (Office Open XML, stored zip, inline strings): one sheet per plan with Planner's export columns.
   const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
@@ -768,14 +790,13 @@
   const xesc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
   function colName(i) { let s = ""; i++; while (i) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
   function sheetName(n, used) { let b = n.replace(/[\[\]:*?\/\\]/g, " ").trim().slice(0, 31) || "Plan"; let s = b, k = 2; while (used.has(s.toLowerCase())) s = b.slice(0, 28) + " " + k++; used.add(s.toLowerCase()); return s; }
-  const OX = ["http://schemas", "openxmlformats", "org"].join(".");   // OOXML namespace host, joined so the repo's domain scan sees no literal host
   function plannerXlsx(store, planId, today) {
     const plans = store.plans.filter(p => !planId || p.id === planId), used = new Set(), names = plans.map(p => sheetName(p.name, used));
-    const sheet = rows => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="${OX}/spreadsheetml/2006/main"><sheetData>${rows.map((r, i) => `<row r="${i + 1}">${r.map((v, j) => `<c r="${colName(j)}${i + 1}" t="inlineStr"><is><t xml:space="preserve">${xesc(/^[=+\-@]/.test(v) ? "'" + v : v)}</t></is></c>`).join("")}</row>`).join("")}</sheetData></worksheet>`;
-    const files = [["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="${OX}/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${plans.map((p, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`],
-      ["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${OX}/package/2006/relationships"><Relationship Id="rId1" Type="${OX}/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
-      ["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="${OX}/spreadsheetml/2006/main" xmlns:r="${OX}/officeDocument/2006/relationships"><sheets>${names.map((n, i) => `<sheet name="${xesc(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`],
-      ["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${OX}/package/2006/relationships">${plans.map((p, i) => `<Relationship Id="rId${i + 1}" Type="${OX}/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}</Relationships>`]]
+    const sheet = rows => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows.map((r, i) => `<row r="${i + 1}">${r.map((v, j) => `<c r="${colName(j)}${i + 1}" t="inlineStr"><is><t xml:space="preserve">${xesc(/^[=+\-@]/.test(v) ? "'" + v : v)}</t></is></c>`).join("")}</row>`).join("")}</sheetData></worksheet>`;
+    const files = [["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${plans.map((p, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`],
+      ["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
+      ["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${names.map((n, i) => `<sheet name="${xesc(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`],
+      ["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${plans.map((p, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}</Relationships>`]]
       .concat(plans.map((p, i) => [`xl/worksheets/sheet${i + 1}.xml`, sheet([PLANNER_COLS].concat(plannerRows(store, p.id, today).map(r => r.cells)))]));
     return { bytes: zipStore(files), sheets: names };
   }
@@ -789,5 +810,5 @@
     KINDS, logFingerprint, migrateLogEntries, mergeLog, SOURCES, TOUCH_DIR, TOUCH_KIND, realDay, csvCell, calendarFills, conflictPartners, parseMinutes, parseNotebookLog, timeEntriesCSV, CSV_COLS, coldList,
     ctIso, snoozeUntil, prevBusinessDay, isOutside, lastTouch, keyCold, overlays, focusSections, focusDelta, FOCUS_SECTIONS, todaysClear, readCalendar, readTrips, eventsFromSnapshot, mergeEvents, staleness, layoutLanes, todayStrip,
     PROJ_STATUS, PROJ_STATUS_WORD, readProjects, projectOwner, projectDueWord, projectRows, projectSummary, projectOwnerChoices, projectsCSV, PROJ_CSV_COLS, validOwner: ownerOk,
-    hasMoney, taskProblem, namedProblem, readStore, normTask, storeFromFeed, storeAsFeed, PLANNER_COLS, plannerRows, plannerCSV, plannerGraph, plannerXlsx, crc32, zipStore };
+    hasMoney, hasEmail, guidFrom, graphDate, taskProblem, namedProblem, readStore, normTask, storeFromFeed, storeAsFeed, PLANNER_COLS, plannerRows, plannerCSV, plannerGraph, plannerXlsx, crc32, zipStore };
 })(typeof window !== "undefined" ? window : globalThis);
