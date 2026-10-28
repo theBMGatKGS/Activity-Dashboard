@@ -7,6 +7,7 @@ Part B (Data folder stand-in as in T27): unencrypted folder: projects stay in th
 plaintext projects.json feed is not read. After encryption: saving writes projects-store.json.enc only, no readable text, cache
 envelopes; the Planner feed is encrypted in place and Import copies it into the store; every export asks first (T2). argv[1]: shots dir."""
 import pathlib, shutil, tempfile, json, os, re, sys, zipfile
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent)); import sentinels as SN
 from playwright.sync_api import sync_playwright
 SRC = pathlib.Path(__file__).resolve().parents[1]; ok = True; errors = []
 SHOTS = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else None
@@ -89,6 +90,11 @@ with sync_playwright() as p:
     snap = json.loads((app / "examples/example-snapshot.json").read_text()); snap.pop("example")
     st = json.loads(re.search(r"=\s*(\{[\s\S]*\});\s*$", (app / "examples/example-projects.js").read_text()).group(1))
     feed = {"schema_version": 1, "generated_at": st["updated_at"], "source": "planner-export", "plans": [{"id": "PLAN-F", "name": "Feed Example", "buckets": [{"id": "FB1", "name": "Doing"}], "tasks": [{"id": "FT-1", "title": "Imported example task", "bucketId": "FB1", "assignees": ["Chris T."], "status": "notStarted", "due": "2026-10-30"}]}]}
+    # every plaintext field carries a long unique sentinel (dates and enums keep their format; see tests/sentinels.py)
+    feed, SENTS, IDM = SN.seed(feed, skip={"source", "status"}, id_keys={"id", "bucketId"})
+    FT1, FEEDPLAN = IDM["FT-1"], feed["plans"][0]["name"]
+    PLAINPLAN, OWNER2 = SN.sentinel("t28.plainPlan") + " Plain Folder Plan", SN.sentinel("t28.lockedOwner")
+    SENTS += [SN.sentinel("t28.plainPlan"), OWNER2]
     data = tmp / "Data"; data.mkdir(); (data / "inbox-snapshot.json").write_text(json.dumps(snap)); (data / "projects.json").write_text(json.dumps(feed))
     def fs(op, name, text):
         if op == "list": return sorted(x for x in os.listdir(data) if not x.endswith(".crswap"))
@@ -104,7 +110,7 @@ with sync_playwright() as p:
     mac.goto((app / "index.html").as_uri() + Q().replace("machine=test", "machine=mac")); mac.wait_for_selector("#view-projects"); mac.evaluate("DASH.app.syncNow()"); mac.evaluate("DASH.app.flush()")
     probs = mac.evaluate("DASH.app.state.problems.join(' | ')")
     check(mac.evaluate("DASH.app.state.projFeed") is None and mac.query_selector(".projempty") is not None and "only read encrypted" in probs, "unencrypted folder: plaintext projects.json is NOT read; empty state")
-    ans[:] = ["Plain Folder Plan"]; mac.click("[data-pact='addPlan']"); mac.evaluate("DASH.app.flush()"); mac.wait_for_timeout(100)
+    ans[:] = [PLAINPLAN]; mac.click("[data-pact='addPlan']"); mac.evaluate("DASH.app.flush()"); mac.wait_for_timeout(100)
     check(not any(x.startswith("projects-store") for x in os.listdir(data)) and "browser only" in mac.inner_text(".projasof"), f"unencrypted folder: projects stay in the browser, no projects-store file is written ({sorted(os.listdir(data))})")
     mac.click('.mtop:has-text("File")'); mac.click('[data-act="encryption"]'); mac.wait_for_selector("#vaultsetup"); mac.fill("#vp1", "correct horse battery 07000"); mac.fill("#vp2", "correct horse battery 07000"); mac.click("#vs-ok")
     mac.wait_for_selector("#rk-value", timeout=20000); mac.check("#rk-done"); mac.click("#rk-ok"); mac.wait_for_function("() => document.querySelector('#toast').textContent.startsWith('Data folder encrypted')", timeout=20000)
@@ -112,13 +118,16 @@ with sync_playwright() as p:
     check("projects.json.enc" in os.listdir(data) and "projects.json" not in os.listdir(data) and mac.evaluate("!!DASH.app.state.projFeed"), "after encryption the Planner feed is encrypted in place and read")
     mac.click(".projacts [data-act='importPlanner']"); mac.evaluate("DASH.app.flush()"); mac.wait_for_timeout(200)
     names = sorted(os.listdir(data))
-    check("projects-store.json.enc" in names and "projects-store.json" not in names and mac.query_selector("[data-ptask='FT-1']") is not None, f"Import Planner export copies the feed into the store; saved as projects-store.json.enc only ({names})")
-    blob = "".join((data / n).read_text() for n in names if n.endswith(".enc") or n == "keyring.json")
-    check(not any(x in blob for x in ["Plain Folder Plan", "Imported example task", "Chris T."]), "the encrypted files hold no readable plan, task or owner text")
-    env = mac.evaluate("Promise.all(['projectsStore','projectsFeed'].map(k => DASH.db.getRaw(k))).then(v => v.map(x => !!(x && x.dashCache === 1 && typeof x.env === 'string' && !x.env.includes('Plain'))))")
+    check("projects-store.json.enc" in names and "projects-store.json" not in names and mac.query_selector(f"[data-ptask='{FT1}']") is not None, f"Import Planner export copies the feed into the store; saved as projects-store.json.enc only ({names})")
+    S0 = [x for x in SENTS if x != OWNER2]
+    lk = SN.leaks({n: (data / n).read_text() for n in names if n.endswith(".enc") or n == "keyring.json"}, S0)
+    check(len(S0) >= 8 and not lk, f"the encrypted files hold none of the {len(S0)} plaintext sentinels (raw text and decoded ciphertext) ({lk[:2]})")
+    envs = mac.evaluate("Promise.all(['projectsStore','projectsFeed'].map(k => DASH.db.getRaw(k))).then(v => v.map(x => x && x.dashCache === 1 && typeof x.env === 'string' ? x.env : null))")
+    env = [e is not None and not SN.leaks({"cache": e}, S0) for e in envs]
     check(env == [True, True] and mac.evaluate("['projectsStore','projectsFeed'].every(k => DASH.db.SECRET.has(k))"), f"IndexedDB: projectsStore and projectsFeed are SECRET, stored as encrypted envelopes ({env})")
-    dec = mac.evaluate("(async () => { try { const f = await (await window.DASH_TEST_FS.getFileHandle('projects-store.json.enc')).getFile(); const t = await DASH.vault.decrypt(DASH.app.state.vault.key, DASH.app.state.vault.kr, await f.text(), 'projstore'); return JSON.parse(t).plans.map(p => p.name).sort(); } catch (e) { return 'decrypt failed: ' + e.message; } })()")
-    check(dec == ["Feed Example", "Plain Folder Plan"], f"projects-store.json.enc decrypts with purpose projstore to the store ({dec})")
+    dec = mac.evaluate("(async () => { try { const f = await (await window.DASH_TEST_FS.getFileHandle('projects-store.json.enc')).getFile(); return await DASH.vault.decrypt(DASH.app.state.vault.key, DASH.app.state.vault.kr, await f.text(), 'projstore'); } catch (e) { return 'decrypt failed: ' + e.message; } })()")
+    names_dec = sorted(p["name"] for p in json.loads(dec)["plans"]) if dec.startswith("{") else dec
+    check(names_dec == sorted([FEEDPLAN, PLAINPLAN]) and all(x in dec for x in S0), f"projects-store.json.enc decrypts with purpose projstore to the store, and every sentinel is in the plaintext (control) ({str(names_dec)[:80]})")
     for act in ["exportProjects", "exportProjectsXlsx", "exportProjectsGraph"]:
         msgs.clear()
         with mac.expect_download(): mac.click(f".projacts [data-act='{act}']")
@@ -126,10 +135,11 @@ with sync_playwright() as p:
     # A2: locked → an edit writes no store file, raises no page error, and the header says so
     before = (data / "projects-store.json.enc").read_text(); errs0 = len(errors)
     mac.click('.mtop:has-text("File")'); mac.click('[data-act="encryption"]'); mac.wait_for_selector("[data-v='lock']"); mac.click("[data-v='lock']"); mac.wait_for_timeout(100)
-    mac.fill("[data-owner='FT-1']", "Sam K."); mac.press("[data-owner='FT-1']", "Enter"); mac.evaluate("DASH.app.flush()"); mac.wait_for_timeout(200)
+    mac.fill(f"[data-owner='{FT1}']", OWNER2); mac.press(f"[data-owner='{FT1}']", "Enter"); mac.evaluate("DASH.app.flush()"); mac.wait_for_timeout(200)
     after = sorted(x for x in os.listdir(data) if x.startswith("projects-store"))
     check(after == ["projects-store.json.enc"] and (data / "projects-store.json.enc").read_text() == before and len(errors) == errs0 and "browser only" in mac.inner_text(".projasof") and "locked" in mac.inner_text(".projasof"), f"A2 locked: editing writes no store file, no page error, header says locked / browser only ({after})")
-    env2 = mac.evaluate("DASH.db.getRaw('projectsStore').then(x => !!(x && x.dashCache === 1 && !x.env.includes('Sam')))")
+    e2 = mac.evaluate("DASH.db.getRaw('projectsStore').then(x => x && x.dashCache === 1 ? x.env : null)")
+    env2 = e2 is not None and not SN.leaks({"cache": e2}, [OWNER2]) and not SN.leaks({n: (data / n).read_text() for n in os.listdir(data) if n.endswith(".enc")}, [OWNER2]) and mac.evaluate(f"DASH.app.state.projStore.plans.flatMap(p => p.tasks).some(t => t.assignees.includes('{OWNER2}'))")
     check(env2, "A2 locked: nothing readable reaches the browser cache")
     c.close(); b.close()
 check(not errors, "no page errors" + (f": {errors[:3]}" if errors else ""))

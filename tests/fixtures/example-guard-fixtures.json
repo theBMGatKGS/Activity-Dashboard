@@ -84,7 +84,10 @@
   "jane.doe at contoso . com",
   "jane&#64;contoso.example",
   "ja​ne@contoso.example",
-  "jane&commat;contoso.example"
+  "jane&commat;contoso.example",
+  "jane at contoso dot com",
+  "a at b dot com",
+  "Jane At Contoso Dot Com"
  ],
  "notEmail": [
   "Meet at 10",

@@ -12,3 +12,4 @@ config.local.js
 *.enc
 keyring.json
 *recovery-key*.txt
+__pycache__/

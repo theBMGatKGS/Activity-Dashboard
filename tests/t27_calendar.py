@@ -6,6 +6,7 @@ events, accessibility, print palette, reduced motion. Part B (Data folder test s
 unencrypted folder is NOT read; after encryption it is encrypted in place (.enc), read, cached under SECRET keys as envelopes,
 and the folder holds no readable event text. Optional argv[1]: shots dir."""
 import pathlib, shutil, tempfile, json, os, re, sys
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent)); import sentinels as SN
 from playwright.sync_api import sync_playwright
 SRC = pathlib.Path(__file__).resolve().parents[1]; ok = True; errors = []
 SHOTS = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else None
@@ -90,6 +91,10 @@ with sync_playwright() as p:
     snap = json.loads((app / "examples/example-snapshot.json").read_text()); snap.pop("example")
     w = {}; exec("pass"); calx = json.loads(re.search(r"=\s*(\{[\s\S]*\});\s*$", (app / "examples/example-calendar.js").read_text()).group(1))
     data = tmp / "Data"; data.mkdir(); (data / "inbox-snapshot.json").write_text(json.dumps(snap))
+    # every plaintext field carries a long unique sentinel (dates and enums keep their format; see tests/sentinels.py)
+    SKIP = {"source", "kind", "calendar", "tz", "homeTz", "number"}
+    calx, SENTS, IDM = SN.seed(calx, skip=SKIP, domain_keys={"attendeeDomains", "organizerDomain"}, url_keys={"teamsUrl", "mapUrl"}, id_keys={"id", "linkedTodoIds"})
+    CAL6 = IDM["CAL-6"]
     (data / "calendar-snapshot.json").write_text(json.dumps(calx["calendar"])); (data / "trips.json").write_text(json.dumps(calx["trips"]))
     def fs(op, name, text):
         if op == "list": return sorted(x for x in os.listdir(data) if not x.endswith(".crswap"))
@@ -103,16 +108,19 @@ with sync_playwright() as p:
     mac = c.new_page(); mac.on("pageerror", lambda e: errors.append(f"B: {e}")); mac.on("dialog", lambda d: d.accept())
     mac.goto((app / "index.html").as_uri() + Q() .replace("machine=test", "machine=mac")); mac.wait_for_selector(".sq"); mac.evaluate("DASH.app.syncNow()"); mac.evaluate("DASH.app.flush()")
     probs = mac.evaluate("DASH.app.state.problems.join(' | ')")
-    check(mac.evaluate("DASH.app.state.calFeed") is None and mac.query_selector("[data-cal='CAL-6']") is None and "only read encrypted" in probs, f"unencrypted folder: the plaintext feed is NOT read, and the sync chip says why")
+    check(mac.evaluate("DASH.app.state.calFeed") is None and mac.query_selector(f"[data-cal='{CAL6}']") is None and "only read encrypted" in probs, f"unencrypted folder: the plaintext feed is NOT read, and the sync chip says why")
     mac.click('.mtop:has-text("File")'); mac.click('[data-act="encryption"]'); mac.wait_for_selector("#vaultsetup"); mac.fill("#vp1", "correct horse battery 06000"); mac.fill("#vp2", "correct horse battery 06000"); mac.click("#vs-ok")
     mac.wait_for_selector("#rk-value", timeout=20000); mac.check("#rk-done"); mac.click("#rk-ok"); mac.wait_for_function("() => document.querySelector('#toast').textContent.startsWith('Data folder encrypted')", timeout=20000)
     mac.evaluate("DASH.app.syncNow()"); mac.evaluate("DASH.app.syncNow()"); mac.wait_for_timeout(300)
     names = sorted(os.listdir(data))
     check("calendar-snapshot.json.enc" in names and "trips.json.enc" in names, f"after encryption the feeds are encrypted in place ({names})")
-    blob = "".join((data / n).read_text() for n in names if n.endswith(".enc") or n == "keyring.json")
-    check(not any(x in blob for x in ["design review prep", "Example Hotel", "account-a.example", "XYZ"]), "the encrypted files hold no readable event, hotel or domain text")
-    check(mac.evaluate("!!DASH.app.state.calFeed && DASH.app.state.calFeed.events.length === 6") and mac.query_selector("[data-cal='CAL-6']") is not None, "encrypted feed is read: the private hold from the feed shows in the strip")
-    env = mac.evaluate("Promise.all(['calendarSnap','trips'].map(k => DASH.db.getRaw(k))).then(v => v.map(x => !!(x && x.dashCache === 1 && typeof x.env === 'string' && !x.env.includes('Example'))))")
+    lk = SN.leaks({n: (data / n).read_text() for n in names if n.endswith(".enc") or n == "keyring.json"}, SENTS)
+    check(len(SENTS) >= 40 and not lk, f"the encrypted files hold none of the {len(SENTS)} plaintext sentinels (raw text and decoded ciphertext) ({lk[:2]})")
+    pt = mac.evaluate("(async () => { const r = n => window.DASH_TEST_FS.getFileHandle(n).then(h => h.getFile()).then(f => f.text()); const k = DASH.app.state.vault; return (await DASH.vault.decrypt(k.key, k.kr, await r('calendar-snapshot.json.enc'), 'calendar')) + (await DASH.vault.decrypt(k.key, k.kr, await r('trips.json.enc'), 'trips')); })()")
+    check(all(x in pt for x in SENTS), "control: every sentinel is in the decrypted feeds (so the scan above is meaningful)")
+    check(mac.evaluate("!!DASH.app.state.calFeed && DASH.app.state.calFeed.events.length === 6") and mac.query_selector(f"[data-cal='{CAL6}']") is not None, "encrypted feed is read: the private hold from the feed shows in the strip")
+    envs = mac.evaluate("Promise.all(['calendarSnap','trips'].map(k => DASH.db.getRaw(k))).then(v => v.map(x => x && x.dashCache === 1 && typeof x.env === 'string' ? x.env : null))")
+    env = [e is not None and not SN.leaks({"cache": e}, SENTS) for e in envs]
     check(env == [True, True], f"IndexedDB cache: calendarSnap and trips are stored as encrypted envelopes ({env})")
     c.close(); b.close()
 check(not errors, "no page errors" + (f": {errors[:3]}" if errors else ""))

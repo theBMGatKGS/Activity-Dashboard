@@ -687,11 +687,11 @@
   const hasMoney = v => { if (typeof v !== "string") return false; const t = clean(v); return MONEY_RES.some(r => r.test(t)) || bareDecimalMoney(t); };
   // Email guard (P2): @ (any width), [at] (at) {at}, "x AT y DOT z", %40.
   // Email guard (P2/P2b): @ (any width), &#64; / &commat;, %40, [at] (at) {at} <at>, "name at host.tld" (a real dot between
-  // host parts, spaces allowed: "jane.doe at contoso . com"), and the upper-case "JANE AT CONTOSO DOT EXAMPLE" form. A lower-case
-  // "at … dot" sentence ("Walk at noon dot plan") is not an address.
+  // host parts, spaces allowed: "jane.doe at contoso . com"), and the spelled-out "jane at contoso dot com" form in any case, which must end in a
+  // domain-ending word (com, net, org, io, uk, example…), so "Walk at noon dot plan" is not an address.
   const EMAIL_RES = [/@/, /&#0*64;|&#x0*40;|&commat;/i, /%40/i, /[\[({<]\s*at\s*[\])}>]/i,
     /\b[\w.+-]+\s+at\s+[a-z][\w-]*(?:\s*\.\s*[a-z][\w-]*)*\s*\.\s*[a-z]{2,24}\b/i,
-    /\b[\w.+-]+\s+AT\s+[A-Za-z][\w-]*\s+DOT\s+[A-Za-z]{2,24}\b/];
+    /\b[\w.+-]+\s+at\s+[a-z][\w-]*(?:\s+dot\s+[a-z][\w-]*)*\s+dot\s+(?:com|net|org|edu|gov|mil|int|io|co|us|uk|ca|au|de|fr|es|it|nl|be|ch|se|no|dk|fi|ie|jp|cn|in|mx|br|biz|info|me|ai|app|dev|tech|cloud|example|test|local)\b/i];   // E3: spelled-out form, any case, must end in a domain-ending word
   const hasEmail = v => typeof v === "string" && EMAIL_RES.some(r => r.test(clean(v)));
   const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
   // Validates one task; returns an error string or null. Used on every save and when reading the store.
