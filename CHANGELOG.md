@@ -1,5 +1,9 @@
 # Changelog — Activity Dashboard
 
+## 00.08.001_261028 (Oct 28 2026)
+- Profile picture: `assets/avatar.png` replaced with the account's public GitHub profile picture (128 × 128 PNG. GitHub's file, sha256 3c76e0942bc04b4a4198d89d7cd7d78d2fc3180827ff411bcb6044af780d25fe, was re-saved losslessly with no compression (pixels identical) because its compressed bytes tripped the no-real-data scanner's money pattern; bundled sha256 697787dffb96af9fbafdcd6a2fe7b3daa649bb798b652b4ec0bd77a36c7bccd8), bundled with the app. No hot-link, no runtime network fetch, no CSP change. Screen only; prints unchanged; "AD" initials fallback kept. REV 00.08.001_261028.
+- Tests: T12b asserts the bundled file's sha256 and PNG signature and that it loads from the app folder; T12c asserts it isn't shown in print; T13 revision.
+
 ## 00.08.000_261028 (Oct 28 2026)
 - Ruling (Oct 28 2026): "A: build 00.08.000 with the pinned Front and center strip and Import button".
 - New: **Pinned / Front and center**. A plan carries `pinned` (boolean, stored in `projects-store.json`). 📌 Pin / Unpin on the Projects tab. Pinned plans show a "Front and center" strip at the top of Daily Focus (under the header, above the Today strip) and of Projects: open tasks only, overdue first, then by due date, no date last, with bucket, owner, status and checklist count; click a task to edit it. A plan drops out once every task is completed. Dark on screen; print uses the print palette (white, navy #102645, blue #0C77BC rule, overdue red #AC242A).

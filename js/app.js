@@ -3,7 +3,7 @@
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
   const R = DASH.rules, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.08.000_261028";
+  const REV = "00.08.001_261028";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);

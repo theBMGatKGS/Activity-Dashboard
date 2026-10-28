@@ -1,5 +1,8 @@
 # Release notes — Activity Dashboard
 
+## 00.08.001_261028 (Oct 28 2026)
+- Your GitHub profile picture now shows in the upper-left corner (on screen only, not on printed sheets).
+
 ## 00.08.000_261028 (Oct 28 2026)
 **Front and center**: pin a plan and keep its open tasks in view.
 - On the Projects tab, pick a plan and press **📌 Pin to Front and center**. Its open tasks show at the top of Daily Focus and Projects, overdue first, until every task is completed. Unpin any time.

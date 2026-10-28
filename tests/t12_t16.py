@@ -17,6 +17,9 @@ with sync_playwright() as p:
     pg.goto((SRC / "index.html").as_uri() + Q); pg.wait_for_selector(".tile")
     # T12
     check(pg.evaluate("getComputedStyle(document.getElementById('avatar')).borderRadius") == "50%" and pg.evaluate("document.getElementById('avatar').naturalWidth") > 0, "T12 avatar renders, circular crop")
+    import hashlib; AV = SRC / "assets/avatar.png"; avb = AV.read_bytes()
+    check(hashlib.sha256(avb).hexdigest() == "697787dffb96af9fbafdcd6a2fe7b3daa649bb798b652b4ec0bd77a36c7bccd8" and avb[:8] == b"\x89PNG\r\n\x1a\n" and pg.evaluate("document.getElementById('avatar').getAttribute('src')") == "assets/avatar.png", "T12b 00.08.001: bundled avatar is the recorded GitHub picture (sha256), a PNG, loaded from the app folder (no hot-link)")
+    pg.emulate_media(media="print"); check(not pg.is_visible("#avatar") or pg.evaluate("getComputedStyle(document.querySelector('.top')).display") == "none", "T12c avatar is not shown when printing"); pg.emulate_media(media="screen")
     check(not any("github" in u for u in net) and not net, "T12 no network request (no github.com)")
     tmp = pathlib.Path(tempfile.mkdtemp()) / "d"; shutil.copytree(SRC, tmp, ignore=shutil.ignore_patterns("tests")); (tmp / "assets/avatar.png").unlink()
     p2 = ctx.new_page(); p2.goto((tmp / "index.html").as_uri() + Q); p2.wait_for_selector(".tile"); p2.wait_for_timeout(200)
@@ -29,7 +32,7 @@ with sync_playwright() as p:
         pg.click(".mtop >> text=Help"); pg.click(f"[data-act={act}]")
         top = pg.evaluate(f"(()=>{{const s=document.getElementById('{sec}').getBoundingClientRect(),b=document.querySelector('.helpbody').getBoundingClientRect();return s.top-b.top}})()")
         check(pg.is_visible("#help") and abs(top) < 40, f"T13 Help → {sec} opens at that section"); pg.keyboard.press("Escape")
-    rev = pg.inner_text("#rev"); REVNOW = pg.evaluate("DASH.app.REV"); check(rev == "Rev " + REVNOW and REVNOW == "00.08.000_261028", f"T13/T14 Revision cell '{rev}'")
+    rev = pg.inner_text("#rev"); REVNOW = pg.evaluate("DASH.app.REV"); check(rev == "Rev " + REVNOW and REVNOW == "00.08.001_261028", f"T13/T14 Revision cell '{rev}'")
     check(REVNOW in pg.inner_text("#help-rev") and "00.02.000_261019" in pg.inner_text("#help-rev") and "00.01.000_261019" in pg.inner_text("#help-rev"), "T13 Revision log lists the running revision")
     # T14
     check(pg.title() == "Activity Dashboard" and pg.inner_text(".appname") == "Activity Dashboard", "T14 exact name in title and header")
