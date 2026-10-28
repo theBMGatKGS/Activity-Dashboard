@@ -764,18 +764,20 @@
   // ([{title, done}] or plain strings). Every task runs taskProblem (pricing and email guards included); all or nothing:
   // if anything is rejected nothing is imported. Tasks whose id is already in the plan are kept as they are (skipped).
   const IMPORT_MAX = 2000000;
+  const BAD_IDS = new Set(["__proto__", "constructor", "prototype"]);   // I3: never accepted as plan, bucket, task or checklist ids
+  const idOk = v => ID_RE.test(v || "") && !BAD_IDS.has(v);
   function importProjectFile(raw, store, nowIso) {
     if (!raw || typeof raw !== "object" || raw.schema_version !== 1 || !Array.isArray(raw.plans)) throw new Error("project JSON: schema_version 1 and a plans array are required");
     const out = store ? JSON.parse(JSON.stringify({ schema_version: 1, updated_at: store.updated_at, plans: store.plans })) : { schema_version: 1, updated_at: nowIso, plans: [] };
     const rejects = [], adds = [], planIds = []; let skipped = 0;
     raw.plans.forEach((p, i) => {
       const at = `plan ${i + 1}`;
-      if (!p || typeof p !== "object" || !ID_RE.test(p.id || "")) { rejects.push(`${at}: id missing or invalid`); return; }
+      if (!p || typeof p !== "object" || !idOk(p.id)) { rejects.push(`${at}: id missing or invalid`); return; }
       const pe = namedProblem(p.name, "plan"); if (pe) { rejects.push(`${at}: ${pe}`); return; }
       if (p.pinned !== undefined && typeof p.pinned !== "boolean") { rejects.push(`${at}: pinned must be true or false`); return; }
       if (!Array.isArray(p.tasks)) { rejects.push(`${at}: tasks must be an array`); return; }
       const buckets = [];
-      (Array.isArray(p.buckets) ? p.buckets : []).forEach((b, k) => { const be = !b || !ID_RE.test(b.id || "") ? "id missing or invalid" : namedProblem(b.name, "bucket");
+      (Array.isArray(p.buckets) ? p.buckets : []).forEach((b, k) => { const be = !b || !idOk(b.id) ? "id missing or invalid" : namedProblem(b.name, "bucket");
         if (be) rejects.push(`${at} bucket ${k + 1}: ${be}`); else buckets.push({ id: b.id, name: b.name.trim() }); });
       let plan = out.plans.find(x => x.id === p.id);
       const bIds = new Set(buckets.map(b => b.id).concat(plan ? plan.buckets.map(b => b.id) : [])), seen = new Set(), tasks = [];
@@ -783,11 +785,11 @@
         const bad = m => rejects.push(`${at} task ${j + 1}: ${m}`);
         if (!t0 || typeof t0 !== "object") return bad("not an object");
         const ck = Array.isArray(t0.checklist) ? t0.checklist : t0.checklist == null ? [] : null; if (!ck) return bad("checklist must be a list of items");
-        const tid = String(t0.id || "");
+        const tid = String(t0.id || ""); if (BAD_IDS.has(tid)) return bad("id missing");
         const t = { id: tid, title: t0.title, bucketId: t0.bucketId == null ? null : t0.bucketId, assignees: t0.assignees == null ? [] : t0.assignees, status: t0.status || "notStarted",
           percent: t0.percent == null ? (t0.status === "completed" ? 100 : t0.status === "inProgress" ? 50 : 0) : t0.percent, start: t0.start || null, due: t0.due || null,
           priority: t0.priority || "medium", labels: Array.isArray(t0.labels) ? t0.labels : [], notes: t0.notes == null ? "" : t0.notes, account: t0.account || null,
-          checklist: ck.map((c, k) => typeof c === "string" ? { id: (tid.slice(0, 56) || "T") + "-C" + (k + 1), title: c, done: false } : c && typeof c === "object" ? { id: ID_RE.test(c.id || "") ? c.id : (tid.slice(0, 56) || "T") + "-C" + (k + 1), title: c.title, done: c.done === true } : { id: "", title: "", done: false }),
+          checklist: ck.map((c, k) => typeof c === "string" ? { id: (tid.slice(0, 56) || "T") + "-C" + (k + 1), title: c, done: false } : c && typeof c === "object" ? { id: idOk(c.id) ? c.id : (tid.slice(0, 56) || "T") + "-C" + (k + 1), title: c.title, done: c.done === true } : { id: "", title: "", done: false }),
           completedOn: t0.completedOn || null };
         if (t.status === "completed" && !t.completedOn) t.completedOn = null;
         const e = taskProblem(t, bIds) || (seen.has(t.id) ? "id repeated" : null); if (e) return bad(e);

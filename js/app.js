@@ -1199,14 +1199,15 @@
       ${st.map(p => `<div class="fcplan"><div class="fcpn">${esc(p.name)} <span class="faint">· ${p.open} open of ${p.total}${p.overdue ? ` · <span class="fcover">${p.overdue} overdue</span>` : ""}</span></div><div role="list">${p.tasks.map(row).join("")}</div></div>`).join("")}</section>`;
   }
   function importProjectJson(name, text) {
-    if (!S.projExample && !canSaveToFolder()) { toast("⚠ Import project JSON needs an encrypted, unlocked Data folder (File → Encryption…), so the projects are never kept unencrypted. Nothing was imported."); return; }
+    if (S.projExample || (S.snap && S.snap.example)) { toast("⚠ Load your real data first: a project file is never mixed with EXAMPLE DATA. Nothing was imported."); return; }   // X1
+    if (!canSaveToFolder()) { toast("⚠ Import project JSON needs an encrypted, unlocked Data folder (File → Encryption…), so the projects are never kept unencrypted. Nothing was imported."); return; }
     if (text.length > R.IMPORT_MAX) { toast(`⚠ ${name} is too large to be a project file. Nothing was imported.`); return; }
     let raw; try { raw = JSON.parse(text); } catch (e) { toast(`⚠ ${name} is not valid JSON. Nothing was imported.`); return; }
     let r; try { r = R.importProjectFile(raw, S.projStore, new Date().toISOString()); } catch (e) { toast(`⚠ ${name}: ${e.message}. Nothing was imported.`); return; }
     S.importRejects = r.rejects;
     if (r.rejects.length) { toast(`⚠ ${name}: nothing imported, ${r.rejects.length} problem(s): ${r.rejects.slice(0, 3).join("; ")}${r.rejects.length > 3 ? "; …" : ""}`); return; }
     S.projStore = R.readStore(r.store); S.projPlan = r.planIds.length === 1 ? r.planIds[0] : ""; saveStore();
-    toast(`Imported ${r.added} task(s) from ${name}${r.skipped ? `; ${r.skipped} already here, kept as they are` : ""}.${S.projExample ? " EXAMPLE DATA: kept until reload." : ` Saved encrypted. ${name} itself is not encrypted: delete it now.`}`);
+    toast(`Imported ${r.added} task(s) from ${name}${r.skipped ? `; ${r.skipped} already here, kept as they are` : ""}. Saved encrypted. ${name} itself is not encrypted: delete it now.`);
   }
   function useFeeds(feeds) {
     if (S.projDirty && canSaveToFolder() && S.projStore && !S.projExample) { S.projDirty = false; saveStore(); }   // edits made while locked are saved once unlocked

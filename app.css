@@ -441,7 +441,7 @@ table.tbl select{background:var(--surface2);border:1px solid var(--line);border-
   .view.printing .fcstrip{background:#fff!important;border:2px solid #102645;color:#1a1a1a;padding:3px 8px}
   .view.printing .fch{color:#102645;border-bottom:1.5px solid #0C77BC}
   .view.printing .fch .badge{background:#F2F2F2;color:#1a1a1a}
-  .view.printing .fcrow{border-top:1px solid #E2E2E2;font-size:8.5pt;padding:1px 0;grid-template-columns:130px minmax(0,1fr) 160px 140px}
+  .view.printing .fcrow{border-top:1px solid #E2E2E2;font-size:8.5pt;padding:1px 0;grid-template-columns:120px minmax(0,1fr) 150px 170px} .view.printing .fcrow>.mono{white-space:nowrap}
   .view.printing .fcrow .tlink,.view.printing .fcpn,.view.printing .fcb,.view.printing .faint{color:#1a1a1a!important}
   .view.printing .fcstrip .pdue.over,.view.printing .fcover{color:#AC242A!important}
   .view.printing .fcstrip .pdue{color:#1a1a1a}

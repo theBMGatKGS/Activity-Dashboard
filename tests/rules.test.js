@@ -493,6 +493,12 @@ t("P8b import guards: pricing, email, bad pinned, bad bucket, schema; all or not
   const bb = clone(PIF); bb.plans[0].tasks[0].bucketId = "NOPE"; assert.ok(imp(bb).rejects[0].includes("unknown bucket"));
   const rep = clone(PIF); rep.plans[0].tasks[1].id = "PIN-1"; assert.ok(imp(rep).rejects[0].includes("repeated"));
   assert.throws(() => imp({ schema_version: 2, plans: [] }), /schema_version/); assert.throws(() => imp({ schema_version: 1 }), /plans/);
+  for (const bad of ["__proto__", "constructor", "prototype"]) {   // I3
+    const a1 = clone(PIF); a1.plans[0].id = bad; assert.ok(imp(a1).rejects[0].includes("id"), "plan id " + bad);
+    const a2 = clone(PIF); a2.plans[0].buckets[0].id = bad; assert.ok(imp(a2).rejects.length > 0, "bucket id " + bad);
+    const a3 = clone(PIF); a3.plans[0].tasks[0].id = bad; assert.ok(imp(a3).rejects[0].includes("id"), "task id " + bad);
+    const a4 = clone(PIF); a4.plans[0].tasks[0].checklist = [{ id: bad, title: "x", done: false }]; const r4 = imp(a4); assert.deepStrictEqual(r4.rejects, []); assert.notStrictEqual(r4.store.plans[0].tasks[0].checklist[0].id, bad, "checklist id " + bad + " replaced"); }
+  assert.strictEqual(({}).polluted, undefined);
   const ok1bad1 = clone(PIF); ok1bad1.plans.push({ id: "PLAN-2", name: "Second", buckets: [], tasks: [{ id: "Z1", title: GF.money[1] }] });
   const r2 = imp(ok1bad1, ST()); assert.strictEqual(r2.store, null, "one bad task: nothing imported"); assert.strictEqual(r2.rejects.length, 1); });
 t("P8c pinned strip: open tasks only, overdue first then due date, no date last; clears once every task is completed", () => {
