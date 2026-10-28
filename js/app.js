@@ -267,10 +267,11 @@
   function innerName(n) { if (!/\.enc$/i.test(n)) return n; const b = n.slice(0, -4); return /\.(json|js)$/i.test(b) ? b : b.replace(/\.(json|js)([^.]*)$/i, "$2.$1"); }
   const isSnapName = n => SNAP_NAMES.includes(n) || /^inbox-snapshot(?:[^a-z0-9][^/]*)?\.jso?n?$/i.test(n);
   const isLogName = n => LOG_NAMES.includes(n) || /^notebook-log(?:[^a-z0-9][^/]*)?\.js$/i.test(n);
-  const CAL_NAME = "calendar-snapshot.json", TRIPS_NAME = "trips.json", PROJ_NAME = "projects.json";   // 00.07.000: Planner export for Projects (encrypted only)
-  const FEED_READ = { calendar: raw => R.readCalendar(raw), trips: raw => R.readTrips(raw), projects: raw => R.readProjects(raw) };
+  const CAL_NAME = "calendar-snapshot.json", TRIPS_NAME = "trips.json", PROJ_NAME = "projects.json", STORE_NAME = "projects-store.json";   // 00.07.000: optional Planner export feed + the Projects store (source of truth), both encrypted only
+  const FEED_READ = { calendar: raw => R.readCalendar(raw), trips: raw => R.readTrips(raw), projects: raw => R.readProjects(raw), projstore: raw => R.readStore(raw) };
+  const stampOf = raw => raw.generated_at || raw.updated_at;
     // 00.06.000: calendar / travel assistants feeds (encrypted only)
-  const purposeOf = n => R2.isTimeFile(n) ? "time" : n === CAL_NAME ? "calendar" : n === TRIPS_NAME ? "trips" : n === PROJ_NAME ? "projects" : isSnapName(n) ? "snapshot" : isLogName(n) ? "log" : null;
+  const purposeOf = n => R2.isTimeFile(n) ? "time" : n === CAL_NAME ? "calendar" : n === TRIPS_NAME ? "trips" : n === PROJ_NAME ? "projects" : n === STORE_NAME ? "projstore" : isSnapName(n) ? "snapshot" : isLogName(n) ? "log" : null;
   async function writeText(name, text) {
     const fh = await S.dir.getFileHandle(name, { create: true });
     const w = await fh.createWritable();            // Chromium writes to a temporary swap file; close() swaps it in (atomic)
@@ -424,7 +425,7 @@
           try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, "snapshot")); R.readSnapshot(old); if (new Date(old.generated_at) > new Date(raw.generated_at)) body = null; } catch (e) { /* none yet, or the old one is invalid: replace it */ }
         } else if (FEED_READ[purpose]) {   // 00.06.000 (00.07.000: + projects): validate, keep the newer copy
           target = name + ENC; const raw = JSON.parse(text); FEED_READ[purpose](raw); body = JSON.stringify(raw);
-          try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, purpose)); if (Date.parse(old.generated_at) > Date.parse(raw.generated_at)) body = null; } catch (e) { /* none yet */ }
+          try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, purpose)); if (Date.parse(stampOf(old)) > Date.parse(stampOf(raw))) body = null; } catch (e) { /* none yet */ }
         } else { target = "notebook-log.js" + ENC; parseLogJs(text); body = text; }
         if (body != null) {
           const ct = await V.encrypt(S.vault.key, S.vault.kr, purpose, body); await writeText(target, ct);
@@ -516,7 +517,7 @@
     try {
       if (purpose === "time") { const p = R2.parseTimeFile(plain, inner); if (p.bad || !p.machine) return { ok: false, why: p.bad || "not a time log" }; return { ok: true, stamp: p.updated_at }; }
       if (purpose === "log") { parseLogJs(plain); return { ok: true, stamp: null }; }
-      if (FEED_READ[purpose]) { const raw = JSON.parse(plain); FEED_READ[purpose](raw); return { ok: true, stamp: raw.generated_at }; }
+      if (FEED_READ[purpose]) { const raw = JSON.parse(plain); FEED_READ[purpose](raw); return { ok: true, stamp: stampOf(raw) }; }
       const raw = parseSnapshotText(inner, plain); R.readSnapshot(raw); return { ok: true, stamp: raw.generated_at };   // invalid snapshot (e.g. wrong source) = not ok
     } catch (e) { return { ok: false, why: e.message || String(e) }; }
   }
@@ -1015,66 +1016,137 @@
       if (await loadScript(CFG.exampleCalendarPath || "examples/example-calendar.js") && window.DASH_EXAMPLE_CALENDAR) {
         try { S.calFeed = R.readCalendar(window.DASH_EXAMPLE_CALENDAR.calendar); S.tripsFeed = R.readTrips(window.DASH_EXAMPLE_CALENDAR.trips); S.calExample = true; } catch (e) { S.calFeed = S.tripsFeed = null; }
       }
-      S.projFeed = null; S.projOwners = {}; S.projOwnersLoaded = false;   // 00.07.000: example projects; owner choices made here are kept only until reload
-      if (await loadScript(CFG.exampleProjectsPath || "examples/example-projects.js") && window.DASH_EXAMPLE_PROJECTS) { try { S.projFeed = R.readProjects(window.DASH_EXAMPLE_PROJECTS); } catch (e) { S.projFeed = null; } }
-      S.projExample = !!S.projFeed;
+      S.projFeed = null; S.projStore = null; S.projStoreLoaded = false;   // 00.07.000: example projects; edits made here are kept only until reload
+      if (await loadScript(CFG.exampleProjectsPath || "examples/example-projects.js") && window.DASH_EXAMPLE_PROJECTS) { try { S.projStore = R.readStore(window.DASH_EXAMPLE_PROJECTS); } catch (e) { S.projStore = null; } }
+      S.projExample = !!S.projStore;
       return;
     }
-    if (S.projExample) { S.projFeed = null; S.projOwners = {}; S.projExample = false; }   // never carry example projects into real data
+    if (S.projExample) { S.projFeed = null; S.projStore = null; S.projExample = false; }   // never carry example projects into real data
     if (!S.projFeed) { const pj = await DB.get("projectsFeed"); try { if (pj && pj.schema_version) S.projFeed = R.readProjects(pj); } catch (e) { /* ignore a bad cache */ } }
-    if (!S.projOwnersLoaded) { const ow = await DB.get("projectOwners"); S.projOwners = ow && typeof ow === "object" && !Array.isArray(ow) ? ow : {}; S.projOwnersLoaded = true; }
+    if (!S.projStoreLoaded) { const st = await DB.get("projectsStore"); try { if (st && st.schema_version && (!S.projStore || Date.parse(st.updated_at) > Date.parse(S.projStore.updated_at))) S.projStore = R.readStore(st); } catch (e) { /* ignore a bad cache */ } S.projStoreLoaded = true; }
     if (S.calExample) { S.calFeed = null; S.tripsFeed = null; S.calExample = false; }   // never carry example events into real data
     if (!S.calFeed) { const c = await DB.get("calendarSnap"); try { if (c && c.schema_version) S.calFeed = R.readCalendar(c); } catch (e) { /* ignore a bad cache */ } }
     if (!S.tripsFeed) { const t = await DB.get("trips"); try { if (t && t.schema_version) S.tripsFeed = R.readTrips(t); } catch (e) { /* ignore */ } }
   }
 
-  // ---------- 00.07.000 Projects: Planner mirror, export only ----------
-  // Planner stays the source of truth: nothing is written back. Owners chosen here (picklist + free text) are a local layer, kept
-  // in IndexedDB under the SECRET key projectOwners (encrypted with the Data folder key) and shown as "set here" in the table and CSV.
-  // The picklist = config projectOwners (real names only in config.local.js) + Planner assignees + owners already typed here.
-  Object.assign(S, { projFeed: null, projOwners: {}, projPlan: "", projOwner: "", projDone: false, projExample: false });
+  // ---------- 00.07.000 Projects: the dashboard is the source of truth; Planner-ready exports (CSV, xlsx, Graph JSON) ----------
+  // Ruling (Oct 27 2026): "Projects is the source of truth and exports Planner-ready CSV, xlsx and Graph JSON". No network calls.
+  // The store lives in IndexedDB (SECRET key projectsStore, encrypted with the Data folder key) and in the Data folder / hub as
+  // projects-store.json.enc only (never plaintext; not written at all until the folder is encrypted). Newest updated_at wins.
+  // EXAMPLE DATA: the fictional store from examples/example-projects.js; edits stay in memory until reload.
+  // The rev 1 Planner export feed (projects.json.enc) is optional: File → Import Planner export copies it into the store.
+  Object.assign(S, { projFeed: null, projStore: null, projStoreLoaded: false, projPlan: "", projOwner: "", projDone: false, projExample: false });
+  const projUid = p => p + "-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   function projectsModel() {
-    const rows = R.projectRows(S.projFeed, { today: S.today, owners: S.projOwners, planId: S.projPlan || null, owner: S.projOwner, showCompleted: S.projDone });
-    return { rows, sum: R.projectSummary(rows), choices: R.projectOwnerChoices(S.projFeed, CFG.projectOwners, S.projOwners) };
+    const feed = R.storeAsFeed(S.projStore);
+    const rows = R.projectRows(feed, { today: S.today, planId: S.projPlan || null, owner: S.projOwner, showCompleted: S.projDone });
+    return { rows, sum: R.projectSummary(rows), choices: R.projectOwnerChoices(feed, CFG.projectOwners, {}), feed };
   }
   const DUECLS = { Overdue: "over", Today: "today", "This week": "week", Later: "later", "No date": "pnd", Done: "done" };
+  const canSaveToFolder = () => !!(S.dir && S.granted && S.vault && S.vault.kr && S.vault.key);
+  async function saveStore() {
+    if (!S.projStore) return;
+    S.projStore.updated_at = new Date().toISOString();
+    if (S.projExample) { render(); return; }
+    const body = { schema_version: 1, updated_at: S.projStore.updated_at, plans: S.projStore.plans };
+    track(DB.set("projectsStore", body));
+    if (canSaveToFolder()) {
+      const text = JSON.stringify(body), ct = await V.encrypt(S.vault.key, S.vault.kr, "projstore", text);
+      await track(writeText(STORE_NAME + ".enc", ct));
+    }
+    render();
+  }
+  function curPlan() { const ps = S.projStore ? S.projStore.plans : []; return ps.find(p => p.id === S.projPlan) || (ps.length === 1 ? ps[0] : null); }
+  function findTask(id) { for (const p of (S.projStore ? S.projStore.plans : [])) { const t = p.tasks.find(x => x.id === id); if (t) return { p, t }; } return null; }
+  const projOps = {
+    addPlan(name) { const e = R.namedProblem(name, "plan"); if (e) return e; if (!S.projStore) S.projStore = { schema_version: 1, updated_at: new Date().toISOString(), plans: [], rejects: [] };
+      const id = projUid("PLAN"); S.projStore.plans.push({ id, name: name.trim(), buckets: [{ id: projUid("B"), name: "To do" }], tasks: [] }); S.projPlan = id; saveStore(); return null; },
+    renamePlan(id, name) { const e = R.namedProblem(name, "plan"); if (e) return e; const p = S.projStore.plans.find(x => x.id === id); p.name = name.trim(); saveStore(); return null; },
+    deletePlan(id) { S.projStore.plans = S.projStore.plans.filter(x => x.id !== id); if (S.projPlan === id) S.projPlan = ""; saveStore(); return null; },
+    addBucket(planId, name) { const e = R.namedProblem(name, "bucket"); if (e) return e; const p = S.projStore.plans.find(x => x.id === planId); if (!p) return "pick a plan first"; p.buckets.push({ id: projUid("B"), name: name.trim() }); saveStore(); return null; },
+    renameBucket(planId, id, name) { const e = R.namedProblem(name, "bucket"); if (e) return e; const b = S.projStore.plans.find(x => x.id === planId).buckets.find(x => x.id === id); b.name = name.trim(); saveStore(); return null; },
+    deleteBucket(planId, id) { const p = S.projStore.plans.find(x => x.id === planId); if (p.tasks.some(t => t.bucketId === id)) return "move or delete the bucket's tasks first"; p.buckets = p.buckets.filter(x => x.id !== id); saveStore(); return null; },
+    saveTask(planId, t) { const p = S.projStore.plans.find(x => x.id === planId); if (!p) return "pick a plan first";
+      if (t.status === "completed") { t.percent = 100; t.completedOn = t.completedOn || S.today; } else { t.completedOn = null; if (t.status === "notStarted" && t.percent === 100) t.percent = 0; }
+      const e = R.taskProblem(t, new Set(p.buckets.map(b => b.id))); if (e) return e;
+      const n = R.normTask(t), i = p.tasks.findIndex(x => x.id === t.id); if (i >= 0) p.tasks[i] = n; else p.tasks.push(n); saveStore(); return null; },
+    deleteTask(id) { const f = findTask(id); if (!f) return "no such task"; f.p.tasks = f.p.tasks.filter(x => x.id !== id); saveStore(); return null; },
+  };
+  function setOwner(id, name) {
+    const f = findTask(id); if (!f) return false;
+    const names = String(name == null ? "" : name).split(/[,;]/).map(x => x.trim()).filter(Boolean);
+    const e = projOps.saveTask(f.p.id, Object.assign(JSON.parse(JSON.stringify(f.t)), { assignees: names }));
+    if (e) { render(); toast("Owner: " + (/names/.test(e) || /email/.test(e) ? "must be a name (no email addresses)." : e)); return false; }
+    return true;
+  }
   function renderProjects() {
     const el = $("#view-projects"); if (!el) return;
-    if (!S.projFeed) { el.innerHTML = `<div class="projempty"><h2>Projects</h2><p>No Planner export yet. When <code>projects.json</code> (encrypted) is in the Data folder or GitHub hub, your Planner plans show here, read-only. See Help → Projects.</p></div>`; return; }
-    const m = projectsModel(), f = S.projFeed, st = R.staleness(f.generatedAt, (qp.get("now") || new Date().toISOString()));
-    const when = `${R.dayLabel(R.isoDay(f.generatedAt))} ${R.hm(f.generatedAt)} ${R.tzLabel(f.generatedAt)}`;
-    const planOpts = `<option value="">All plans</option>` + f.plans.map(p => `<option value="${esc(p.id)}"${p.id === S.projPlan ? " selected" : ""}>${esc(p.name)}</option>`).join("");
+    const st0 = S.projStore;
+    const imp = S.projFeed ? `<button class="btn" data-act="importPlanner">Import Planner export</button>` : "";
+    if (!st0 || !st0.plans.length) { el.innerHTML = `<div class="projempty"><h2>Projects</h2><p>No projects yet. Projects you make here are the source of truth and export as Planner-ready CSV, Excel (xlsx) and Graph JSON. Nothing is sent to Planner.</p><button class="btn" data-pact="addPlan">+ New plan</button> ${imp}</div>`; return; }
+    const m = projectsModel(), plan = curPlan();
+    const when = `${R.dayLabel(R.isoDay(st0.updated_at))} ${R.hm(st0.updated_at)} ${R.tzLabel(st0.updated_at)}`;
+    const where = S.projExample ? "EXAMPLE DATA · changes are kept until reload" : canSaveToFolder() ? "saved encrypted in the Data folder" : "saved in this browser only · encrypt the Data folder (File → Encryption…) to keep projects there";
+    const planOpts = `<option value="">All plans</option>` + st0.plans.map(p => `<option value="${esc(p.id)}"${p.id === S.projPlan ? " selected" : ""}>${esc(p.name)}</option>`).join("");
     const dl = `<datalist id="proj-owners">${m.choices.map(c => `<option value="${esc(c)}"></option>`).join("")}</datalist>`;
-    const groups = []; m.rows.forEach(r => { const k = r.plan + " · " + r.bucket; let g = groups.find(x => x.k === k); if (!g) groups.push(g = { k, plan: r.plan, bucket: r.bucket, rows: [] }); g.rows.push(r); });
+    const groups = [];
+    st0.plans.forEach(p => { if (S.projPlan && p.id !== S.projPlan) return; p.buckets.concat([{ id: null, name: "No bucket" }]).forEach(b => { const rows = m.rows.filter(r => r.planId === p.id && r.bucketId === b.id); if (b.id || rows.length) groups.push({ p, b, rows }); }); });
     const row = r => `<tr data-ptask="${esc(r.id)}" class="${r.status === "completed" ? "pdone" : ""}">
-      <td class="ptitle">${esc(r.title)}${r.account ? ` <span class="pacct">${esc(r.account)}</span>` : ""}${r.labels.filter(l => l !== r.account).map(l => ` <span class="plabel">${esc(l)}</span>`).join("")}</td>
-      <td class="pown"><input class="ownin" list="proj-owners" data-owner="${esc(r.id)}" value="${esc(r.owner)}" placeholder="unassigned" aria-label="Owner of ${esc(r.title)} (pick or type)" maxlength="80">${r.ownerLocal ? ` <span class="ownset" title="Set in this dashboard; Planner still shows: ${esc(r.assignees.join(", ") || "nobody")}">set here</span> <button class="btn linkbtn" data-ownreset="${esc(r.id)}" aria-label="Use Planner's owner for ${esc(r.title)}">↺ Planner</button>` : ""}</td>
+      <td class="ptitle"><button class="tlink" data-pedit="${esc(r.id)}" aria-label="Edit ${esc(r.title)}">${esc(r.title)}</button>${r.account ? ` <span class="pacct">${esc(r.account)}</span>` : ""}${r.labels.filter(l => l !== r.account).map(l => ` <span class="plabel">${esc(l)}</span>`).join("")}</td>
+      <td class="pown"><input class="ownin" list="proj-owners" data-owner="${esc(r.id)}" value="${esc(r.owner)}" placeholder="unassigned" aria-label="Owner of ${esc(r.title)} (pick or type)" maxlength="80"></td>
       <td>${esc(R.PROJ_STATUS_WORD[r.status])}</td>
       <td class="ppct"><span class="pbar" aria-hidden="true"><i style="width:${r.percent}%"></i></span> <span class="mono">${r.percent}%</span></td>
       <td>${r.checklist ? `<span class="mono">${r.checklist.done}/${r.checklist.total}</span>` : ""}</td>
       <td class="pdue ${DUECLS[r.dueWord]}">${r.due ? `<span class="mono">${esc(R.dayLabel(r.due))}</span> ` : ""}<span class="dw">${esc(r.dueWord)}</span></td>
       <td>${r.priority === "urgent" ? '<span class="ppri urgent">Urgent</span>' : r.priority === "important" ? '<span class="ppri">Important</span>' : ""}</td></tr>`;
-    el.innerHTML = `<div class="projhead"><div><h2>Projects <span class="faint" style="font-size:12px;font-weight:400">· mirrored from Planner · read-only, export only</span></h2>
-        <div class="projasof ${st.level}" role="status">${st.level === "red" ? "⚠ Stale · " : ""}Planner export as of ${esc(when)}${S.projExample ? " · EXAMPLE DATA" : ""}${f.rejects.length ? ` · ⚠ ${f.rejects.length} task(s) skipped` : ""}</div></div>
+    el.innerHTML = `<div class="projhead"><div><h2>Projects <span class="faint" style="font-size:12px;font-weight:400">· source of truth · exports Planner-ready CSV, xlsx and Graph JSON</span></h2>
+        <div class="projasof" role="status">Updated ${esc(when)} · ${esc(where)}</div></div>
       <div class="projtools"><label>Plan <select id="proj-plan">${planOpts}</select></label>
         <label>Owner <input id="proj-owner" list="proj-owners" value="${esc(S.projOwner)}" placeholder="anyone (or (unassigned))" aria-label="Filter by owner (pick or type)"></label>
-        <label><input type="checkbox" id="proj-done"${S.projDone ? " checked" : ""}> Show completed</label>
-        <button class="btn" data-act="exportProjects">Export CSV</button><button class="btn" data-act="printProjects">Print</button></div></div>
+        <label><input type="checkbox" id="proj-done"${S.projDone ? " checked" : ""}> Show completed</label></div></div>
+      <div class="projtools projacts"><button class="btn" data-pact="addPlan">+ Plan</button>${plan ? `<button class="btn" data-pact="renamePlan">Rename plan</button><button class="btn" data-pact="deletePlan">Delete plan</button><button class="btn" data-pact="addBucket">+ Bucket</button><button class="btn" data-pact="addTask">+ Task</button>` : '<span class="faint">Pick a plan to add buckets and tasks.</span>'}
+        <span class="sep"></span><button class="btn" data-act="exportProjects">Export CSV</button><button class="btn" data-act="exportProjectsXlsx">Export xlsx</button><button class="btn" data-act="exportProjectsGraph">Export Graph JSON</button><button class="btn" data-act="printProjects">Print</button>${imp}</div>
       ${dl}
       <div class="projsum" role="list">${[["Open", m.sum.total - m.sum.completed], ["Overdue", m.sum.overdue], ["Due today", m.sum.today], ["In progress", m.sum.inProgress], ["Unassigned", m.sum.unassigned]].map(([k, v]) => `<div class="psq" role="listitem"><b>${v}</b><span>${k}</span></div>`).join("")}</div>
-      ${f.rejects.length ? `<details class="faint projrej"><summary>Skipped tasks</summary>${f.rejects.map(x => `<div>${esc(x)}</div>`).join("")}</details>` : ""}
-      ${groups.map(g => `<section class="pgroup"><h3>${esc(g.plan)} <span class="faint">›</span> ${esc(g.bucket)} <span class="faint">(${g.rows.length})</span></h3>
-        <table class="ptable"><thead><tr><th>Task</th><th>Owner</th><th>Status</th><th>Progress</th><th>Checklist</th><th>Due</th><th></th></tr></thead><tbody>${g.rows.map(row).join("")}</tbody></table></section>`).join("") || '<div class="faint" style="padding:10px">No tasks match.</div>'}
-      <div class="faint projfoot">Changes to tasks are made in Planner. Owners you set here stay in this dashboard (encrypted) and go out only in Export CSV. Rev ${REV}</div>`;
+      ${st0.rejects && st0.rejects.length ? `<details class="faint projrej"><summary>⚠ ${st0.rejects.length} item(s) skipped</summary>${st0.rejects.map(x => `<div>${esc(x)}</div>`).join("")}</details>` : ""}
+      ${groups.map(g => `<section class="pgroup"><h3>${esc(g.p.name)} <span class="faint">›</span> ${esc(g.b.name)} <span class="faint">(${g.rows.length})</span>${g.b.id ? ` <button class="btn linkbtn" data-pact="addTask" data-plan="${esc(g.p.id)}" data-bucket="${esc(g.b.id)}">+ Task</button><button class="btn linkbtn" data-pact="renameBucket" data-plan="${esc(g.p.id)}" data-bucket="${esc(g.b.id)}">Rename</button><button class="btn linkbtn" data-pact="deleteBucket" data-plan="${esc(g.p.id)}" data-bucket="${esc(g.b.id)}">Delete</button>` : ""}</h3>
+        ${g.rows.length ? `<table class="ptable"><thead><tr><th>Task</th><th>Owner</th><th>Status</th><th>Progress</th><th>Checklist</th><th>Due</th><th></th></tr></thead><tbody>${g.rows.map(row).join("")}</tbody></table>` : '<div class="faint" style="font-size:12px">No tasks.</div>'}</section>`).join("") || '<div class="faint" style="padding:10px">No tasks match.</div>'}
+      <div class="faint projfoot">Exports are files only; nothing is sent to Planner or Microsoft Graph. No pricing or dollar figures in projects. Rev ${REV}</div>`;
   }
-  function setOwner(id, name) {
-    const v = String(name == null ? "" : name).trim();
-    if (v && !R.validOwner(v)) { render(); toast("Owner must be a name (no email addresses)."); return false; }
-    const t = S.projFeed && S.projFeed.plans.flatMap(p => p.tasks).find(x => x.id === id); if (!t) return false;
-    if (v === t.assignees.join(", ")) delete S.projOwners[id]; else S.projOwners[id] = v;
-    if (!S.projExample) track(DB.set("projectOwners", S.projOwners));
-    render(); return true;
+  // ---- task editor ----
+  function taskEditor(planId, task) {
+    closeTaskEditor();
+    const p = S.projStore.plans.find(x => x.id === planId), t = task ? JSON.parse(JSON.stringify(task)) : { id: projUid("T"), title: "", bucketId: (p.buckets[0] || {}).id || null, assignees: [], status: "notStarted", percent: 0, start: null, due: null, priority: "medium", labels: [], notes: "", account: null, checklist: [] };
+    const d = document.createElement("div"); d.id = "projdlg"; d.className = "overlay open";
+    const ck = () => t.checklist.map((c, i) => `<li><label><input type="checkbox" data-ck="${i}"${c.done ? " checked" : ""}> ${esc(c.title)}</label> <button class="btn linkbtn" data-ckdel="${i}" aria-label="Remove ${esc(c.title)}">✕</button></li>`).join("");
+    const draw = () => { d.innerHTML = `<div class="dlg projdlg" role="dialog" aria-modal="true" aria-labelledby="pd-h" tabindex="-1"><h3 id="pd-h">${task ? "Edit task" : "New task"} · ${esc(p.name)}</h3>
+      <label>Title <input id="pd-title" value="${esc(t.title)}" maxlength="255"></label>
+      <div class="pdrow"><label>Bucket <select id="pd-bucket">${p.buckets.map(b => `<option value="${esc(b.id)}"${b.id === t.bucketId ? " selected" : ""}>${esc(b.name)}</option>`).join("")}</select></label>
+        <label>Owner <input id="pd-owner" list="proj-owners" value="${esc(t.assignees.join(", "))}" placeholder="pick or type"></label></div>
+      <div class="pdrow"><label>Status <select id="pd-status">${R.PROJ_STATUS.map(s2 => `<option value="${s2}"${s2 === t.status ? " selected" : ""}>${R.PROJ_STATUS_WORD[s2]}</option>`).join("")}</select></label>
+        <label>Progress % <input id="pd-pct" type="number" min="0" max="100" value="${t.percent}"></label>
+        <label>Priority <select id="pd-pri">${["urgent", "important", "medium", "low"].map(x => `<option value="${x}"${x === t.priority ? " selected" : ""}>${x[0].toUpperCase() + x.slice(1)}</option>`).join("")}</select></label></div>
+      <div class="pdrow"><label>Start <input id="pd-start" type="date" value="${t.start || ""}"></label><label>Due <input id="pd-due" type="date" value="${t.due || ""}"></label></div>
+      <label>Labels (comma-separated) <input id="pd-labels" value="${esc(t.labels.join(", "))}"></label>
+      <label>Account <input id="pd-acct" value="${esc(t.account || "")}"></label>
+      <label>Notes <textarea id="pd-notes" rows="3" maxlength="2000">${esc(t.notes || "")}</textarea></label>
+      <div><b>Checklist</b> <span class="faint">(${t.checklist.filter(c => c.done).length}/${t.checklist.length})</span><ul class="pdck">${ck()}</ul><input id="pd-cknew" placeholder="Add a checklist item, Enter" maxlength="100"></div>
+      <div id="pd-err" class="danger" role="alert"></div>
+      <div class="pdbtns"><button class="btn" id="pd-save">Save</button><button class="btn" id="pd-cancel">Cancel</button>${task ? '<button class="btn dangerbtn" id="pd-del">Delete task</button>' : ""}</div></div>`; };
+    const read = () => { const v = id => d.querySelector(id).value;
+      Object.assign(t, { title: v("#pd-title"), bucketId: v("#pd-bucket") || null, assignees: v("#pd-owner").split(/[,;]/).map(x => x.trim()).filter(Boolean), status: v("#pd-status"), percent: Number(v("#pd-pct")),
+        priority: v("#pd-pri"), start: v("#pd-start") || null, due: v("#pd-due") || null, labels: v("#pd-labels").split(",").map(x => x.trim()).filter(Boolean), account: v("#pd-acct").trim() || null, notes: v("#pd-notes") }); };
+    draw(); document.body.appendChild(d); d.querySelector("#pd-title").focus();
+    d.addEventListener("change", e => { const i = e.target.dataset.ck; if (i != null) { read(); t.checklist[+i].done = e.target.checked; draw(); } });
+    d.addEventListener("keydown", e => { if (e.target.id === "pd-cknew" && e.key === "Enter") { e.preventDefault(); const x = e.target.value.trim(); if (!x) return; read(); t.checklist.push({ id: projUid("C"), title: x, done: false }); draw(); d.querySelector("#pd-cknew").focus(); } });
+    d.addEventListener("click", e => {
+      if (e.target.dataset.ckdel != null) { read(); t.checklist.splice(+e.target.dataset.ckdel, 1); draw(); return; }
+      if (e.target.id === "pd-cancel" || e.target === d) return closeTaskEditor();
+      if (e.target.id === "pd-del") { if (!confirm("Delete this task?")) return; projOps.deleteTask(t.id); closeTaskEditor(); toast("Task deleted."); return; }
+      if (e.target.id === "pd-save") { read(); const err = projOps.saveTask(planId, t); if (err) { d.querySelector("#pd-err").textContent = "⚠ " + err; return; } closeTaskEditor(); toast("Task saved."); }
+    });
   }
+  function closeTaskEditor() { const d = $("#projdlg"); if (d) d.remove(); }
   function projectsChange(e) {
     const t = e.target; if (!t.closest || !t.closest("#view-projects")) return false;
     if (t.id === "proj-plan") { S.projPlan = t.value; render(); return true; }
@@ -1084,20 +1156,40 @@
     return false;
   }
   function projectsClick(e) {
-    const b = e.target.closest("[data-ownreset]"); if (!b) return false;
-    delete S.projOwners[b.dataset.ownreset]; if (!S.projExample) track(DB.set("projectOwners", S.projOwners)); render(); return true;
+    const ed2 = e.target.closest("[data-pedit]"); if (ed2) { const f = findTask(ed2.dataset.pedit); if (f) taskEditor(f.p.id, f.t); return true; }
+    const b = e.target.closest("[data-pact]"); if (!b) return false;
+    const a = b.dataset.pact, plan = b.dataset.plan ? S.projStore.plans.find(x => x.id === b.dataset.plan) : curPlan(), say = err => { if (err) toast("⚠ " + err); };
+    if (a === "addPlan") { const n = prompt("New plan name"); if (n != null) say(projOps.addPlan(n)); }
+    else if (a === "renamePlan" && plan) { const n = prompt("Rename plan", plan.name); if (n != null) say(projOps.renamePlan(plan.id, n)); }
+    else if (a === "deletePlan" && plan) { if (confirm(`Delete the plan "${plan.name}" and its ${plan.tasks.length} task(s)?`)) say(projOps.deletePlan(plan.id)); }
+    else if (a === "addBucket" && plan) { const n = prompt("New bucket name"); if (n != null) say(projOps.addBucket(plan.id, n)); }
+    else if (a === "renameBucket") { const bk = plan.buckets.find(x => x.id === b.dataset.bucket), n = prompt("Rename bucket", bk.name); if (n != null) say(projOps.renameBucket(plan.id, bk.id, n)); }
+    else if (a === "deleteBucket") { if (confirm("Delete this bucket?")) say(projOps.deleteBucket(plan.id, b.dataset.bucket)); }
+    else if (a === "addTask" && plan) { taskEditor(plan.id, null); if (b.dataset.bucket) { $("#pd-bucket").value = b.dataset.bucket; } }
+    return true;
   }
-  function exportProjects() {
-    if (!S.projFeed) { toast("No Planner export to export yet."); return; }
-    if (S.vault && S.vault.kr && !confirm("This saves the project list unencrypted (CSV) to Downloads. Continue?")) return;
-    const rows = projectsModel().rows, a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([R.projectsCSV(rows)], { type: "text/csv" })); a.download = `dash-projects-${S.today}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    toast(`Exported ${rows.length} project task(s) (CSV).`);
+  function exportProjects(kind) {
+    if (!S.projStore || !S.projStore.plans.length) { toast("No projects to export yet."); return; }
+    const word = kind === "xlsx" ? "Excel (xlsx)" : kind === "graph" ? "Graph JSON" : "CSV";
+    if (S.vault && S.vault.kr && !confirm(`This saves your projects unencrypted (${word}) to Downloads. Continue?`)) return;
+    const planId = S.projPlan || null, base = `dash-projects-${S.today}`;
+    let blob, name;
+    if (kind === "xlsx") { blob = new Blob([R.plannerXlsx(S.projStore, planId, S.today).bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }); name = base + ".xlsx"; }
+    else if (kind === "graph") { blob = new Blob([JSON.stringify(R.plannerGraph(S.projStore, planId), null, 1)], { type: "application/json" }); name = base + "-graph.json"; }
+    else { blob = new Blob([R.plannerCSV(S.projStore, planId, S.today)], { type: "text/csv" }); name = base + ".csv"; }
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast(`Exported ${word}: ${name}`);
+  }
+  function importPlanner() {
+    if (!S.projFeed) { toast("No Planner export (projects.json.enc) found."); return; }
+    if (S.projExample) { toast("Load your real data first."); return; }
+    const r = R.storeFromFeed(S.projFeed, S.projStore, new Date().toISOString()); S.projStore = R.readStore(r.store); S.projPlan = ""; saveStore(); toast(`Imported ${r.added} task(s) from the Planner export.`);
   }
   function useFeeds(feeds) {
     if (S.snap && S.snap.example) return;
     if (feeds.calendar && (!S.calFeed || S.calExample || Date.parse(feeds.calendar.generated_at) >= Date.parse(S.calFeed.generatedAt))) { S.calFeed = R.readCalendar(feeds.calendar); S.calExample = false; track(DB.set("calendarSnap", feeds.calendar)); }
     if (feeds.projects && (!S.projFeed || S.projExample || Date.parse(feeds.projects.generated_at) >= Date.parse(S.projFeed.generatedAt))) { S.projFeed = R.readProjects(feeds.projects); S.projExample = false; track(DB.set("projectsFeed", feeds.projects)); }
+    if (feeds.projstore && (!S.projStore || S.projExample || Date.parse(feeds.projstore.updated_at) > Date.parse(S.projStore.updated_at))) { S.projStore = R.readStore(feeds.projstore); S.projExample = false; track(DB.set("projectsStore", feeds.projstore)); }
     if (feeds.trips && (!S.tripsFeed || Date.parse(feeds.trips.generated_at) >= Date.parse(S.tripsFeed.generatedAt))) { S.tripsFeed = R.readTrips(feeds.trips); track(DB.set("trips", feeds.trips)); }
   }
   function stripModel(f) {
@@ -1421,7 +1513,7 @@
     importLog: () => pickFile(".md,.txt", (n, t) => importLog(n, t)), logCall: () => logCall($("#asof")),
     print: () => doPrint("print"), printManager: () => doPrint("manager"), printFocus: () => doPrint("focus"), reload: () => reloadSafely(),
     keyAccounts: () => keyAccountsDialog(), vFocus: () => setView("focus"), vDash: () => setView("dashboard"), vWork: () => setView("workload"), vPrint: () => setView("print"), vManager: () => setView("manager"), vProjects: () => setView("projects"),
-    printProjects: () => doPrint("projects"), exportProjects: () => exportProjects(),
+    printProjects: () => doPrint("projects"), exportProjects: () => exportProjects("csv"), exportProjectsXlsx: () => exportProjects("xlsx"), exportProjectsGraph: () => exportProjects("graph"), importPlanner: () => importPlanner(),
     hHelp: () => openHelp("help"), hHow: () => openHelp("howdoi"), hFaq: () => openHelp("faq"), hQuick: () => openHelp("quick"), hRev: () => openHelp("rev"), hKeys: () => openHelp("keys"),
   };
   function setView(v) { S.view = v; closePop(); render(); }
@@ -1453,7 +1545,7 @@
     });
     document.addEventListener("change", e => { if (projectsChange(e)) return; const s = e.target.closest("[data-ed]"); if (!s) return; const ent = S.entries.find(x => x.id === s.dataset.ed); updateEntry(ent, { [s.dataset.k]: s.value }); saveEntries(); render(); });
     document.addEventListener("keydown", focusKeys);
-    document.addEventListener("keydown", e => { if (e.key === "Escape") { closeSnooze(); closeMenus(); closePop(); const c = $("#cleardlg"); if (c) c.remove(); $("#help").classList.remove("open"); } });
+    document.addEventListener("keydown", e => { if (e.key === "Escape") { closeTaskEditor(); closeSnooze(); closeMenus(); closePop(); const c = $("#cleardlg"); if (c) c.remove(); $("#help").classList.remove("open"); } });
     $("#howdoi-input").addEventListener("input", e => { const q = e.target.value.toLowerCase(); document.querySelectorAll("#help-howdoi details").forEach(d => d.classList.toggle("hidden", q && !d.textContent.toLowerCase().includes(q))); });
     window.addEventListener("beforeprint", () => { const w = printTarget(); document.querySelectorAll(".view").forEach(v => v.classList.toggle("printing", v.id === "view-" + w)); });
     window.addEventListener("afterprint", () => document.querySelectorAll(".view").forEach(v => v.classList.remove("printing")));
@@ -1463,7 +1555,7 @@
   }
   function closeMenus() { document.querySelectorAll(".mtop").forEach(b => { b.setAttribute("aria-expanded", "false"); b.nextElementSibling.classList.add("hidden"); }); }
 
-  window.DASH.app = { state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel, checkTz, setOwner, projectsModel };
+  window.DASH.app = { state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel, checkTz, setOwner, projectsModel, saveStore, projOps };
   window.addEventListener("beforeunload", e => { if (pending.size) { e.preventDefault(); e.returnValue = ""; } });
   boot();
 })();

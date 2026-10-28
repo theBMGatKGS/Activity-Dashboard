@@ -1,4 +1,4 @@
-"""T27 (00.06.000): Today strip + prep card on Daily Focus, the calendar assistant calendar feed and Travel trips. Fictional example data only.
+"""T27 (00.06.000; 00.07.000: browser zone pinned to America/Chicago so wall-clock checks hold on any box zone): Today strip + prep card on Daily Focus, the calendar assistant calendar feed and Travel trips. Fictional example data only.
 Part A (example, file://): strip under the header, 07–20 (widened by the flight), overlapping meetings side by side (no overlap
 of boxes), private hold, travel band + leave-by, hotel chip, deadline markers, now line, staleness chip (ok / amber / red),
 empty state without a feed, prep card (dialog, details, itinerary, Esc returns focus), real data after example drops example
@@ -16,7 +16,7 @@ BOX = "(id => { const r = document.querySelector(`[data-cal='${id}']`).getBoundi
 def inter(a, b): return a[0] < b[1] - 0.5 and b[0] < a[1] - 0.5 and a[2] < b[3] - 0.5 and b[2] < a[3] - 0.5
 with sync_playwright() as p:
     b = p.chromium.launch()
-    ctx = b.new_context(viewport={"width": 1440, "height": 900}); pg = ctx.new_page(); pg.on("pageerror", lambda e: errors.append(str(e)))
+    ctx = b.new_context(timezone_id="America/Chicago", viewport={"width": 1440, "height": 900}); pg = ctx.new_page(); pg.on("pageerror", lambda e: errors.append(str(e)))
     pg.goto((SRC / "index.html").as_uri() + Q()); pg.wait_for_selector(".strip .sev")
     m = pg.evaluate("(() => { const m = DASH.app.state.stripModel; return [m.from, m.to, m.events.length, m.travel.length, m.hotels.length, m.leaveBy]; })()")
     check(m[:5] == [7, 20, 5, 2, 1], f"strip model: 07–20 (widened by the 19:45 landing), 5 meetings, drive + flight, hotel chip ({m})")
@@ -72,9 +72,9 @@ with sync_playwright() as p:
     check(pr == ["rgb(255, 255, 255)", "rgb(255, 255, 255)", "rgb(12, 119, 188)", "rgb(16, 38, 69)", "none"], f"print: white strip, outlined events (client = print blue #0C77BC), navy travel, no hatch fill ({pr})")
     if SHOTS: pg.screenshot(path=str(SHOTS / "06000-5-print.png"), clip={"x": 0, "y": 0, "width": 1440, "height": 400})
     pg.emulate_media(media="screen"); pg.evaluate("document.getElementById('view-focus').classList.remove('printing')")
-    c2 = b.new_context(viewport={"width": 1440, "height": 900}, reduced_motion="reduce"); q2 = c2.new_page(); q2.goto((SRC / "index.html").as_uri() + Q()); q2.wait_for_selector(".sev")
+    c2 = b.new_context(timezone_id="America/Chicago", viewport={"width": 1440, "height": 900}, reduced_motion="reduce"); q2 = c2.new_page(); q2.goto((SRC / "index.html").as_uri() + Q()); q2.wait_for_selector(".sev")
     check(q2.evaluate("getComputedStyle(document.querySelector('.sev')).transitionDuration") == "0s", "reduced motion: no transitions on the strip"); c2.close()
-    c3 = b.new_context(viewport={"width": 900, "height": 900}); q3 = c3.new_page(); q3.goto((SRC / "index.html").as_uri() + Q()); q3.wait_for_selector(".sev")
+    c3 = b.new_context(timezone_id="America/Chicago", viewport={"width": 900, "height": 900}); q3 = c3.new_page(); q3.goto((SRC / "index.html").as_uri() + Q()); q3.wait_for_selector(".sev")
     w = q3.evaluate("[document.querySelector('.strip').getBoundingClientRect().right, document.documentElement.clientWidth]")
     check(w[0] <= w[1], f"narrow / 200% zoom: strip fits the window ({w})")
     if SHOTS: q3.screenshot(path=str(SHOTS / "06000-6-narrow.png"), clip={"x": 0, "y": 0, "width": 900, "height": 700})
@@ -94,7 +94,7 @@ with sync_playwright() as p:
             st = pth.stat(); return {"m": int(st.st_mtime_ns // 1_000_000), "size": st.st_size, "text": pth.read_text()}
         if op == "write": t = data / (name + ".crswap"); t.write_text(text); os.replace(t, pth); return True
         if op == "remove": pth.unlink(missing_ok=True); return True
-    c = b.new_context(viewport={"width": 1440, "height": 900}); c.expose_function("__fs", fs); c.add_init_script(FS_JS)
+    c = b.new_context(timezone_id="America/Chicago", viewport={"width": 1440, "height": 900}); c.expose_function("__fs", fs); c.add_init_script(FS_JS)
     mac = c.new_page(); mac.on("pageerror", lambda e: errors.append(f"B: {e}")); mac.on("dialog", lambda d: d.accept())
     mac.goto((app / "index.html").as_uri() + Q() .replace("machine=test", "machine=mac")); mac.wait_for_selector(".sq"); mac.evaluate("DASH.app.syncNow()"); mac.evaluate("DASH.app.flush()")
     probs = mac.evaluate("DASH.app.state.problems.join(' | ')")

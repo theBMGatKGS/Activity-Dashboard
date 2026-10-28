@@ -416,3 +416,11 @@ table.tbl select{background:var(--surface2);border:1px solid var(--line);border-
   #view-projects.printing .ownset{color:#0C77BC}
   #view-projects.printing .ppri{color:#102645!important} #view-projects.printing .ppri.urgent{color:#ac242a!important}
 }
+/* 00.07.000 rev 2: editing */
+.projacts{justify-content:flex-start} .projacts .sep{flex:1}
+.tlink{background:none;border:0;padding:0;color:var(--ink);cursor:pointer;text-align:left;font:inherit} .tlink:hover{color:var(--info);text-decoration:underline}
+.projdlg{width:560px;top:60px;display:flex;flex-direction:column;gap:8px;max-height:calc(100vh - 80px);overflow:auto}
+.projdlg label{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--muted)}
+.projdlg input,.projdlg select,.projdlg textarea{background:var(--surface2);border:1px solid var(--line);border-radius:6px;padding:4px 7px;color:var(--ink)}
+.pdrow{display:flex;gap:10px} .pdrow label{flex:1} .pdck{list-style:none;padding:0;margin:4px 0} .pdbtns{display:flex;gap:8px}
+@media print{#view-projects.printing .projacts,#view-projects.printing .pgroup h3 .linkbtn{display:none!important} #view-projects.printing .tlink{color:#1a1a1a}}

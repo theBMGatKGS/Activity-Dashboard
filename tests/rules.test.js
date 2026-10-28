@@ -372,7 +372,9 @@ t("K7 merge: the feed replaces the snapshot's event with the same id; snapshot-o
   assert.ok(R.eventsFromSnapshot(s).every(e => e.attendeeDomains.every(d => !d.includes("@"))));
 });
 // ---------- 00.07.000 Projects (Planner mirror, export only) (P-series) ----------
-const PJX = (() => { const w = {}; new Function("window", fs.readFileSync(path.join(__dirname, "../examples/example-projects.js"), "utf8"))(w); return w.DASH_EXAMPLE_PROJECTS; })();
+const PJS = (() => { const w = {}; new Function("window", fs.readFileSync(path.join(__dirname, "../examples/example-projects.js"), "utf8"))(w); return w.DASH_EXAMPLE_PROJECTS; })();
+// The optional Planner export feed (rev 1 contract) built from the example store: checklist as counts, generated_at.
+const PJX = { schema_version: 1, generated_at: PJS.updated_at, source: "planner-export", plans: PJS.plans.map(p => ({ id: p.id, name: p.name, buckets: p.buckets, tasks: p.tasks.map(t => { const o = Object.assign({}, t); delete o.notes; o.checklist = t.checklist.length ? { done: t.checklist.filter(c => c.done).length, total: t.checklist.length } : undefined; return o; }) })) };
 t("P1 example projects load with no rejects; 2 plans, 10 tasks", () => { const p = R.readProjects(clone(PJX)); assert.deepStrictEqual(p.rejects, []); assert.strictEqual(p.plans.length, 2); assert.strictEqual(p.plans.flatMap(x => x.tasks).length, 10); });
 t("P2 schema_version / generated_at / plans enforced", () => {
   assert.throws(() => R.readProjects({ ...clone(PJX), schema_version: 2 }), /schema_version/);
@@ -409,4 +411,41 @@ t("P8 CSV: header, owner source, formula-safe cells", () => {
   assert.strictEqual(lines[0], R.PROJ_CSV_COLS.join(",")); assert.strictEqual(lines.length, 10);
   const l3 = lines.find(l => l.includes('"PT-3"')); assert.ok(l3.includes(`"'=HYPERLINK(1)"`) && l3.includes('"Sam K.","dashboard"'), l3);
   assert.ok(lines.find(l => l.includes('"PT-1"')).includes('"Jordan P.","planner","In progress",50')); });
+// ---------- 00.07.000 rev 2: store (source of truth) + Planner-ready exports (S-series) ----------
+const ST = () => R.readStore(clone(PJS));
+t("S1 example store loads: 2 plans, 10 tasks, checklists as items", () => { const s = ST(); assert.deepStrictEqual(s.rejects, []); assert.strictEqual(s.plans.flatMap(p => p.tasks).length, 10); assert.strictEqual(s.plans[0].tasks[0].checklist.length, 3); });
+t("S2 store schema enforced; bad tasks skipped with reasons", () => {
+  assert.throws(() => R.readStore({ ...clone(PJS), schema_version: 2 }), /schema_version/); assert.throws(() => R.readStore({ ...clone(PJS), updated_at: "yesterday" }), /updated_at/);
+  const b = clone(PJS); b.plans[0].tasks[0].assignees = ["x@contoso.example"]; b.plans[0].tasks[1].bucketId = "NOPE"; b.plans[0].tasks[2].checklist = [{ id: "c", title: "", done: false }];
+  const r = R.readStore(b); assert.strictEqual(r.rejects.length, 3, r.rejects.join(" | ")); });
+t("S3 no pricing or dollar figures: title, notes, checklist, labels, plan and bucket names", () => {
+  const t0 = clone(ST().plans[0].tasks[0]), ids = new Set(["B1"]);
+  for (const [k, v] of [["title", "Quote " + "$" + "12,500"], ["notes", "budget 40k USD"], ["labels", ["€" + "300"]], ["checklist", [{ id: "c1", title: "price 1,200 dollars", done: false }]]]) assert.match(R.taskProblem({ ...t0, [k]: v }, ids) || "", /pricing/, k);
+  assert.strictEqual(R.taskProblem(t0, ids), null); assert.match(R.namedProblem("Bid $5", "plan"), /pricing/); assert.strictEqual(R.namedProblem("Riser 3 rev 2", "bucket"), null); });
+t("S4 Planner CSV: Planner's export columns, BOM, US dates, Late, checklist columns, formula-safe, plan filter", () => {
+  const s = ST(); s.plans[1].tasks[0].title = "=CMD()"; const csv = R.plannerCSV(s, "PLAN-B", "2026-10-21"), L = csv.replace(/^\ufeff/, "").trim().split("\r\n");
+  assert.ok(csv.startsWith("\ufeff")); assert.strictEqual(L[0], R.PLANNER_COLS.map(c => `"${c}"`).join(",")); assert.strictEqual(L.length, 3);
+  assert.ok(L[1].startsWith(`"PT-9","'=CMD()","Design","In progress","Medium","Alex R.","10/5/2026","10/20/2026","True"`), L[1]);
+  const all = R.plannerCSV(ST(), null, "2026-10-19").replace(/^\ufeff/, "").trim().split("\r\n"); assert.ok(all[0].startsWith('"Plan Name","Task ID"')); assert.strictEqual(all.length, 11);
+  assert.ok(all.find(l => l.includes('"PT-1"')).includes('"Pull drawings","Pull drawings; Mark up risers; Send to team"')); });
+t("S5 Graph JSON: plannerPlan / plannerBucket / plannerTask / plannerTaskDetails shapes", () => {
+  const g = R.plannerGraph(ST(), "PLAN-A"), p = g.plans[0]; assert.strictEqual(g.plans.length, 1);
+  assert.strictEqual(p.plannerPlan["@odata.type"], "#microsoft.graph.plannerPlan"); assert.strictEqual(p.plannerPlan.title, "Accounts");
+  assert.ok(p.plannerBuckets.every(b => b["@odata.type"] === "#microsoft.graph.plannerBucket" && b.planId === "PLAN-A" && typeof b.orderHint === "string"));
+  const t1 = p.plannerTasks.find(t => t.id === "PT-1"); assert.strictEqual(t1["@odata.type"], "#microsoft.graph.plannerTask"); assert.strictEqual(t1.priority, 1); assert.strictEqual(t1.percentComplete, 50);
+  assert.strictEqual(t1.dueDateTime, "2026-10-16T00:00:00Z"); assert.deepStrictEqual(t1.assignments, {}); assert.deepStrictEqual(t1.x_ownerNames, ["Jordan P."]); assert.strictEqual(t1.activeChecklistItemCount, 2);
+  const d1 = p.plannerTaskDetails.find(d => d.id === "PT-1"); assert.strictEqual(d1["@odata.type"], "#microsoft.graph.plannerTaskDetails"); assert.strictEqual(d1.previewType, "checklist");
+  assert.deepStrictEqual(Object.values(d1.checklist).map(c => [c["@odata.type"], c.title, c.isChecked]), [["#microsoft.graph.plannerChecklistItem", "Pull drawings", true], ["#microsoft.graph.plannerChecklistItem", "Mark up risers", false], ["#microsoft.graph.plannerChecklistItem", "Send to team", false]]);
+  assert.strictEqual(p.plannerTasks.find(t => t.id === "PT-7").percentComplete, 100); assert.ok(!JSON.stringify(g).includes("@contoso")); });
+t("S6 xlsx: valid stored zip (CRC, central directory), one sheet per plan, inline strings, formula-safe", () => {
+  const s = ST(); s.plans[0].tasks[0].title = "=HYPERLINK(1)"; const x = R.plannerXlsx(s, null, "2026-10-19"), b = Buffer.from(x.bytes);
+  assert.deepStrictEqual(x.sheets, ["Accounts", "Example Retrofit"]); assert.strictEqual(b.readUInt32LE(0), 0x04034b50); assert.strictEqual(b.readUInt32LE(b.length - 22), 0x06054b50);
+  const n = b.readUInt16LE(b.length - 12), cdOff = b.readUInt32LE(b.length - 6); assert.strictEqual(n, 6);
+  let o = cdOff; const names = []; for (let i = 0; i < n; i++) { const nl = b.readUInt16LE(o + 28), lo = b.readUInt32LE(o + 42), crc = b.readUInt32LE(o + 16), sz = b.readUInt32LE(o + 20); const nm = b.slice(o + 46, o + 46 + nl).toString(); names.push(nm);
+    const lnl = b.readUInt16LE(lo + 26), data = b.slice(lo + 30 + lnl, lo + 30 + lnl + sz); assert.strictEqual(R.crc32(data), crc, nm); if (nm === "xl/worksheets/sheet1.xml") { const xml = data.toString(); assert.ok(xml.includes("<t xml:space=\"preserve\">Task ID</t>") && xml.includes("'=HYPERLINK(1)") && !xml.includes(">=HYPERLINK")); } o += 46 + nl; }
+  assert.deepStrictEqual(names, ["[Content_Types].xml", "_rels/.rels", "xl/workbook.xml", "xl/_rels/workbook.xml.rels", "xl/worksheets/sheet1.xml", "xl/worksheets/sheet2.xml"]);
+  assert.strictEqual(R.plannerXlsx(s, "PLAN-B").sheets.length, 1); });
+t("S7 optional import: Planner export feed into the store; existing ids kept; no duplicates", () => {
+  const f = R.readProjects(clone(PJX)), empty = R.storeFromFeed(f, null, "2026-10-20T08:00:00Z"); assert.strictEqual(empty.added, 10); assert.deepStrictEqual(R.readStore(empty.store).rejects, []);
+  const s = ST(); s.plans[0].tasks[0].title = "Mine"; const again = R.storeFromFeed(f, s, "2026-10-20T08:00:00Z"); assert.strictEqual(again.added, 0); assert.strictEqual(again.store.plans[0].tasks[0].title, "Mine"); });
 console.log(`\n${n - fail}/${n} passed`); process.exit(fail ? 1 : 0);

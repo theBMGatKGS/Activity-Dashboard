@@ -6,7 +6,7 @@
    vaultKey (00.03: only if "Remember on this computer": {keyId, key} with key a NON-extractable AES-GCM CryptoKey), legacyImported. Nothing ever leaves this browser except via File > Export local data. */
 (function (g) {
   "use strict";
-  const NAME = "activity-dashboard", STORE = "kv", KEYS = ["ownEvents", "migratedV2", "timeEntries", "calTombstones", "history", "audienceRules", "openedSnapshot", "prefs", "projectOwners"];
+  const NAME = "activity-dashboard", STORE = "kv", KEYS = ["ownEvents", "migratedV2", "timeEntries", "calTombstones", "history", "audienceRules", "openedSnapshot", "prefs", "projectsStore"];
   let dbp = null, mem = null;
   function open() {
     if (dbp) return dbp;
@@ -23,7 +23,7 @@
   // 00.03.001: cached data (SECRET keys) is encrypted with the Data folder's key once the folder is encrypted. cipher = {enc, dec}
   // (text <-> envelope text, AES-256-GCM via DASH.vault) is set by the app while unlocked. "cacheEncrypted" (plain flag) is set as
   // soon as a keyring is seen: from then on a SECRET key is never written in the clear, and while locked it isn't written at all.
-  const SECRET = new Set(["ownEvents", "timeEntries", "calTombstones", "history", "audienceRules", "openedSnapshot", "clearBase", "calendarSnap", "trips", "projectsFeed", "projectOwners"]);
+  const SECRET = new Set(["ownEvents", "timeEntries", "calTombstones", "history", "audienceRules", "openedSnapshot", "clearBase", "calendarSnap", "trips", "projectsFeed", "projectsStore"]);
   let cipher = null, mustEncrypt = false;
   const isEnv = v => !!(v && typeof v === "object" && v.dashCache === 1 && typeof v.env === "string");
   function getRaw(k) {

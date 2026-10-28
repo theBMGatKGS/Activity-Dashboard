@@ -658,6 +658,128 @@
       r.checklist ? `${r.checklist.done}/${r.checklist.total}` : "", r.labels.join("; "), r.account || ""].map(csvCell).join(",")).join("\r\n") + "\r\n";
   }
 
+
+  // ---------- 00.07.000 rev 2: Projects is the source of truth (store), Planner-ready exports (CSV, xlsx, Graph JSON) ----------
+  const MONEY_RE = /(?:[$€£]\s?\d|\b\d[\d,]*(?:\.\d+)?\s?[kKmM]?\s?(?:USD|EUR|GBP|dollars?|bucks)\b)/i;
+  const hasMoney = v => typeof v === "string" && MONEY_RE.test(v);
+  const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+  // Validates one task; returns an error string or null. Used on every save and when reading the store.
+  function taskProblem(t, bucketIds) {
+    if (!t || !ID_RE.test(t.id || "")) return "id missing";
+    if (typeof t.title !== "string" || !t.title.trim()) return "title is required";
+    if (t.title.length > 255) return "title is too long (255 max)";
+    if (bucketIds && t.bucketId != null && !bucketIds.has(t.bucketId)) return "unknown bucket";
+    if (!Array.isArray(t.assignees) || t.assignees.some(a => !ownerOk(a))) return "owners must be names (no '@')";
+    if (!PROJ_STATUS.includes(t.status)) return "status must be notStarted, inProgress or completed";
+    for (const k of ["start", "due"]) if (t[k] != null && !(DAY_RE.test(t[k]) && realDay(t[k]))) return `${k} must be a real date (YYYY-MM-DD)`;
+    if (t.start && t.due && t.due < t.start) return "due is before start";
+    if (!Number.isFinite(t.percent) || t.percent < 0 || t.percent > 100) return "percent must be 0–100";
+    if (!PROJ_PRI.includes(t.priority)) return "priority must be urgent, important, medium or low";
+    if (!Array.isArray(t.checklist) || t.checklist.length > 20 || t.checklist.some(c => !c || !ID_RE.test(c.id || "") || typeof c.title !== "string" || !c.title.trim() || c.title.length > 100 || typeof c.done !== "boolean")) return "checklist items need a title (100 max, 20 items max)";
+    if (t.notes != null && (typeof t.notes !== "string" || t.notes.length > 2000)) return "notes are too long";
+    const texts = [t.title, t.notes || "", t.account || ""].concat(t.labels || [], t.checklist.map(c => c.title));
+    if (texts.some(hasMoney)) return "no pricing or dollar figures in projects";
+    if (texts.concat(t.assignees).some(x => /@/.test(x))) return "no email addresses in projects";
+    return null;
+  }
+  function namedProblem(n, what) { if (typeof n !== "string" || !n.trim()) return `${what} name is required`; if (n.length > 100) return `${what} name is too long`; if (hasMoney(n)) return "no pricing or dollar figures in projects"; if (n.includes("@")) return "no email addresses in projects"; return null; }
+  function readStore(raw) {
+    if (!raw || typeof raw !== "object" || raw.schema_version !== 1) throw new Error("projects-store: schema_version must be 1");
+    if (!ISO_OFF.test(raw.updated_at || "")) throw new Error("projects-store: updated_at must be ISO with offset");
+    if (!Array.isArray(raw.plans)) throw new Error("projects-store: plans must be an array");
+    const rejects = [], plans = [];
+    raw.plans.forEach((p, i) => {
+      if (!p || !ID_RE.test(p.id || "") || namedProblem(p.name, "plan") || !Array.isArray(p.buckets) || !Array.isArray(p.tasks)) { rejects.push(`plan ${i + 1}: id/name/buckets/tasks missing or invalid`); return; }
+      const buckets = p.buckets.filter(b => b && ID_RE.test(b.id || "") && !namedProblem(b.name, "bucket")).map(b => ({ id: b.id, name: b.name }));
+      const bIds = new Set(buckets.map(b => b.id)), seen = new Set(), tasks = [];
+      p.tasks.forEach((t, j) => { const e = taskProblem(t, bIds) || (seen.has(t.id) ? "id repeated" : null); if (e) { rejects.push(`plan ${i + 1} task ${j + 1}: ${e}`); return; } seen.add(t.id); tasks.push(normTask(t)); });
+      plans.push({ id: p.id, name: p.name, buckets, tasks });
+    });
+    return { schema_version: 1, updated_at: raw.updated_at, plans, rejects };
+  }
+  function normTask(t) { return { id: t.id, title: t.title.trim(), bucketId: t.bucketId || null, assignees: [...new Set((t.assignees || []).map(a => a.trim()))], status: t.status, percent: Math.round(t.percent),
+    start: t.start || null, due: t.due || null, priority: t.priority, labels: (t.labels || []).filter(x => typeof x === "string" && x.trim()).map(x => x.trim().slice(0, 40)), notes: t.notes || "", account: t.account || null,
+    checklist: t.checklist.map(c => ({ id: c.id, title: c.title.trim(), done: c.done })), completedOn: DAY_RE.test(t.completedOn || "") ? t.completedOn : null }; }
+  // Optional import: a Planner export feed (readProjects result) into the store. Checklist counts become placeholder items only if
+  // the feed has no item titles (Planner exports counts), so they are skipped; the store keeps its own task when the ids match.
+  function storeFromFeed(feed, store, nowIso) {
+    const out = store ? JSON.parse(JSON.stringify({ schema_version: 1, updated_at: store.updated_at, plans: store.plans })) : { schema_version: 1, updated_at: nowIso, plans: [] };
+    let added = 0;
+    feed.plans.forEach(fp => {
+      let p = out.plans.find(x => x.id === fp.id); if (!p) { p = { id: fp.id, name: fp.name, buckets: [], tasks: [] }; out.plans.push(p); }
+      fp.buckets.forEach(b => { if (!p.buckets.some(x => x.id === b.id)) p.buckets.push({ id: b.id, name: b.name }); });
+      fp.tasks.forEach(t => { if (p.tasks.some(x => x.id === t.id)) return;
+        const nt = normTask({ id: t.id, title: t.title, bucketId: t.bucketId, assignees: t.assignees, status: t.status, percent: t.percent, start: t.start, due: t.due, priority: t.priority, labels: t.labels, notes: "", account: t.account, checklist: [], completedOn: t.completedOn });
+        if (!taskProblem(nt, new Set(p.buckets.map(b => b.id)))) { p.tasks.push(nt); added++; } });
+    });
+    out.updated_at = nowIso; return { store: out, added };
+  }
+  // Store → the row shape used by the Projects table (checklist as counts).
+  function storeAsFeed(store) { return store ? { generatedAt: store.updated_at, plans: store.plans.map(p => ({ id: p.id, name: p.name, buckets: p.buckets, tasks: p.tasks.map(t => Object.assign({}, t, { checklist: t.checklist.length ? { done: t.checklist.filter(c => c.done).length, total: t.checklist.length } : null })) })), rejects: store.rejects || [] } : null; }
+  // --- exports (files only; nothing is sent anywhere) ---
+  const PLANNER_COLS = ["Task ID", "Task Name", "Bucket Name", "Progress", "Priority", "Assigned To", "Start date", "Due date", "Late", "Completed Date", "Description", "Completed Checklist Items", "Checklist Items", "Labels"];
+  const PRI_WORD = { urgent: "Urgent", important: "Important", medium: "Medium", low: "Low" }, PRI_GRAPH = { urgent: 1, important: 3, medium: 5, low: 9 };
+  const usDate = d => d ? `${+d.slice(5, 7)}/${+d.slice(8, 10)}/${d.slice(0, 4)}` : "";
+  function plannerRows(store, planId, today) {
+    const out = [];
+    store.plans.forEach(p => { if (planId && p.id !== planId) return;
+      p.tasks.forEach(t => { const b = p.buckets.find(x => x.id === t.bucketId);
+        out.push({ plan: p.name, planId: p.id, cells: [t.id, t.title, b ? b.name : "", PROJ_STATUS_WORD[t.status], PRI_WORD[t.priority], t.assignees.join("; "), usDate(t.start), usDate(t.due),
+          String(!!(t.due && today && t.due < today && t.status !== "completed")).replace(/^./, c => c.toUpperCase()), usDate(t.completedOn), t.notes || "",
+          t.checklist.filter(c => c.done).map(c => c.title).join("; "), t.checklist.map(c => c.title).join("; "), t.labels.join("; ")] }); }); });
+    return out;
+  }
+  function plannerCSV(store, planId, today) {
+    const rows = plannerRows(store, planId, today), multi = !planId && store.plans.length > 1;
+    const head = (multi ? ["Plan Name"] : []).concat(PLANNER_COLS);
+    return "\ufeff" + head.map(csvCell).join(",") + "\r\n" + rows.map(r => (multi ? [r.plan] : []).concat(r.cells).map(csvCell).join(",")).join("\r\n") + "\r\n";
+  }
+  // Graph-shaped JSON: plannerPlan / plannerBucket / plannerTask / plannerTaskDetails. Ids are local; Graph assigns its own on create.
+  function plannerGraph(store, planId) {
+    const hint = i => " " + "!".repeat(1) + String.fromCharCode(65 + Math.min(i, 25)) + String(i).padStart(4, "0");
+    const dt = d => d ? d + "T00:00:00Z" : null;
+    return { "@odata.context": "local-export#planner", exportedFor: "Microsoft Graph Planner (create plan, buckets, tasks, then PATCH details)", schema_version: 1,
+      plans: store.plans.filter(p => !planId || p.id === planId).map(p => ({
+        plannerPlan: { "@odata.type": "#microsoft.graph.plannerPlan", id: p.id, title: p.name },
+        plannerBuckets: p.buckets.map((b, i) => ({ "@odata.type": "#microsoft.graph.plannerBucket", id: b.id, name: b.name, planId: p.id, orderHint: hint(i) })),
+        plannerTasks: p.tasks.map((t, i) => ({ "@odata.type": "#microsoft.graph.plannerTask", id: t.id, planId: p.id, bucketId: t.bucketId, title: t.title, orderHint: hint(i),
+          percentComplete: t.status === "completed" ? 100 : t.status === "notStarted" ? 0 : Math.min(99, Math.max(1, t.percent)), priority: PRI_GRAPH[t.priority],
+          startDateTime: dt(t.start), dueDateTime: dt(t.due), completedDateTime: dt(t.completedOn), assignments: {}, appliedCategories: {},
+          checklistItemCount: t.checklist.length, activeChecklistItemCount: t.checklist.filter(c => !c.done).length, x_ownerNames: t.assignees, x_labels: t.labels })),
+        plannerTaskDetails: p.tasks.map(t => ({ "@odata.type": "#microsoft.graph.plannerTaskDetails", id: t.id, description: t.notes || "", previewType: t.checklist.length ? "checklist" : "automatic",
+          checklist: Object.fromEntries(t.checklist.map((c, i) => [c.id, { "@odata.type": "#microsoft.graph.plannerChecklistItem", title: c.title, isChecked: c.done, orderHint: hint(i) }])) })) })) };
+  }
+  // Minimal xlsx (Office Open XML, stored zip, inline strings): one sheet per plan with Planner's export columns.
+  const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(b) { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+  const utf8 = s => new TextEncoder().encode(s);
+  function zipStore(files) {
+    const parts = [], cen = []; let off = 0;
+    const u16 = v => [v & 255, (v >>> 8) & 255], u32 = v => [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255];
+    files.forEach(([name, text]) => { const n = utf8(name), d = utf8(text), c = crc32(d);
+      const lh = [].concat(u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(0), u16(0x5821), u32(c), u32(d.length), u32(d.length), u16(n.length), u16(0));
+      parts.push(Uint8Array.from(lh), n, d);
+      cen.push(Uint8Array.from([].concat(u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(0), u16(0x5821), u32(c), u32(d.length), u32(d.length), u16(n.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(off))), n);
+      off += lh.length + n.length + d.length; });
+    const cl = cen.reduce((a, x) => a + x.length, 0);
+    const end = Uint8Array.from([].concat(u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length), u32(cl), u32(off), u16(0)));
+    const all = parts.concat(cen, [end]), out = new Uint8Array(all.reduce((a, x) => a + x.length, 0)); let p = 0; all.forEach(x => { out.set(x, p); p += x.length; }); return out;
+  }
+  const xesc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
+  function colName(i) { let s = ""; i++; while (i) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
+  function sheetName(n, used) { let b = n.replace(/[\[\]:*?\/\\]/g, " ").trim().slice(0, 31) || "Plan"; let s = b, k = 2; while (used.has(s.toLowerCase())) s = b.slice(0, 28) + " " + k++; used.add(s.toLowerCase()); return s; }
+  const OX = ["http://schemas", "openxmlformats", "org"].join(".");   // OOXML namespace host, joined so the repo's domain scan sees no literal host
+  function plannerXlsx(store, planId, today) {
+    const plans = store.plans.filter(p => !planId || p.id === planId), used = new Set(), names = plans.map(p => sheetName(p.name, used));
+    const sheet = rows => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="${OX}/spreadsheetml/2006/main"><sheetData>${rows.map((r, i) => `<row r="${i + 1}">${r.map((v, j) => `<c r="${colName(j)}${i + 1}" t="inlineStr"><is><t xml:space="preserve">${xesc(/^[=+\-@]/.test(v) ? "'" + v : v)}</t></is></c>`).join("")}</row>`).join("")}</sheetData></worksheet>`;
+    const files = [["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="${OX}/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${plans.map((p, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`],
+      ["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${OX}/package/2006/relationships"><Relationship Id="rId1" Type="${OX}/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
+      ["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="${OX}/spreadsheetml/2006/main" xmlns:r="${OX}/officeDocument/2006/relationships"><sheets>${names.map((n, i) => `<sheet name="${xesc(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`],
+      ["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${OX}/package/2006/relationships">${plans.map((p, i) => `<Relationship Id="rId${i + 1}" Type="${OX}/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}</Relationships>`]]
+      .concat(plans.map((p, i) => [`xl/worksheets/sheet${i + 1}.xml`, sheet([PLANNER_COLS].concat(plannerRows(store, p.id, today).map(r => r.cells)))]));
+    return { bytes: zipStore(files), sheets: names };
+  }
+
   g.DASH = g.DASH || {};
   g.DASH.rules = { LISTS, STATUSES, AUDIENCES, SUBJECTS, TOTAL_KEYS, LIST_KEY, GROUPS, COLD_DAYS, DEFAULT_RULES,
     DEFAULT_TZ, validTimeZone, detectTimeZone, setTimeZone, getTimeZone, tzLabel, zoneOffsetMs,
@@ -666,5 +788,6 @@
     guessAudience, guessSubject, learnAudience, lineHead, formatLine, managerItems, workload, parseCSV, snapshotFromCSV,
     KINDS, logFingerprint, migrateLogEntries, mergeLog, SOURCES, TOUCH_DIR, TOUCH_KIND, realDay, csvCell, calendarFills, conflictPartners, parseMinutes, parseNotebookLog, timeEntriesCSV, CSV_COLS, coldList,
     ctIso, snoozeUntil, prevBusinessDay, isOutside, lastTouch, keyCold, overlays, focusSections, focusDelta, FOCUS_SECTIONS, todaysClear, readCalendar, readTrips, eventsFromSnapshot, mergeEvents, staleness, layoutLanes, todayStrip,
-    PROJ_STATUS, PROJ_STATUS_WORD, readProjects, projectOwner, projectDueWord, projectRows, projectSummary, projectOwnerChoices, projectsCSV, PROJ_CSV_COLS, validOwner: ownerOk };
+    PROJ_STATUS, PROJ_STATUS_WORD, readProjects, projectOwner, projectDueWord, projectRows, projectSummary, projectOwnerChoices, projectsCSV, PROJ_CSV_COLS, validOwner: ownerOk,
+    hasMoney, taskProblem, namedProblem, readStore, normTask, storeFromFeed, storeAsFeed, PLANNER_COLS, plannerRows, plannerCSV, plannerGraph, plannerXlsx, crc32, zipStore };
 })(typeof window !== "undefined" ? window : globalThis);

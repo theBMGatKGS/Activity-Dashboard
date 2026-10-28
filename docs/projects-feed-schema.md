@@ -1,6 +1,17 @@
-# Projects feed: file contract (schema_version 1, Activity Dashboard 00.07.000)
+# Projects: file contracts (schema_version 1, Activity Dashboard 00.07.000)
 
-The Projects tab is a **read-only mirror of Microsoft Planner**. It reads one file, `projects.json`, **only when encrypted** (`projects.json.enc`, AES-256-GCM envelope with the Data folder's keyring, envelope `purpose` = `projects`; on the GitHub hub it travels as an opaque `blob-<32 hex>.enc`). A plaintext copy dropped into an *encrypted* Data folder is validated and encrypted in place; in an *unencrypted* folder it is ignored and reported. Never commit it to git. Nothing is ever written back to Planner.
+## 1. `projects-store.json` (the source of truth, written by the dashboard)
+Ruling Oct 27 2026: "Projects is the source of truth and exports Planner-ready CSV, xlsx and Graph JSON". The dashboard writes the store only as `projects-store.json.enc` (purpose `projstore`) when the Data folder is encrypted and unlocked, and keeps it in IndexedDB under SECRET key `projectsStore`. Never plaintext, never in git. Newest `updated_at` wins.
+
+`{schema_version: 1, updated_at, plans: [{id, name, buckets: [{id, name}], tasks: [{id, title, bucketId, assignees: [names], status, percent, start, due, priority, labels: [], notes, account, completedOn, checklist: [{id, title, done}]}]}]}`
+
+Rules: names only (no "@"); real YYYY-MM-DD dates, due ≥ start; percent 0–100; priority urgent/important/medium/low; checklist ≤ 20 items, titles ≤ 100; notes ≤ 2000; **no pricing or dollar figures** in any text.
+
+Exports (files only, nothing calls Planner or Graph): Planner CSV (Planner's "Export plan to Excel" columns), xlsx (same columns, one sheet per plan), Graph JSON (`plannerPlan`, `plannerBucket`, `plannerTask`, `plannerTaskDetails` shapes; owners in `x_ownerNames`).
+
+## 2. `projects.json` (optional Planner export feed, import only)
+
+The optional feed is read from one file, `projects.json`, **only when encrypted** (`projects.json.enc`, AES-256-GCM envelope with the Data folder's keyring, envelope `purpose` = `projects`; on the GitHub hub it travels as an opaque `blob-<32 hex>.enc`). A plaintext copy dropped into an *encrypted* Data folder is validated and encrypted in place; in an *unencrypted* folder it is ignored and reported. Never commit it to git. Nothing is ever written back to Planner.
 
 Writer: the executive assistant (Cadence) or a Power Automate flow with the same contract. Replace the whole file each run; the newest `generated_at` wins.
 
@@ -53,4 +64,4 @@ Writer: the executive assistant (Cadence) or a Power Automate flow with the same
 
 Rejected tasks are counted ("⚠ n task(s) skipped") and listed under **Skipped tasks**; the rest load.
 
-**Owners set in the dashboard** (picklist + free text) are a local layer: IndexedDB key `projectOwners` (`{taskId: name}`), encrypted with the Data folder key, included in File → Export local data, not synced and never sent to Planner. The picklist is `projectOwners` in `config.local.js` (git-ignored) + Planner assignees + names already typed.
+File → Import Planner export into Projects copies its plans, buckets and tasks into the store (tasks already in the store are kept).

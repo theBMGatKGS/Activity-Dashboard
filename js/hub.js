@@ -35,7 +35,7 @@
     return null;
   }
   const hubName = n => n === KEYRING || /\.enc$/i.test(n);
-  const DATA_RE = /^(time-[A-Za-z0-9][A-Za-z0-9_-]*\.json|inbox-snapshot\.json|notebook-log\.js|calendar-snapshot\.json|trips\.json|projects\.json)\.enc$/;
+  const DATA_RE = /^(time-[A-Za-z0-9][A-Za-z0-9_-]*\.json|inbox-snapshot\.json|notebook-log\.js|calendar-snapshot\.json|trips\.json|projects\.json|projects-store\.json)\.enc$/;
   const dataName = n => DATA_RE.test(n) && !/\.prev\.enc$/i.test(n);
 
   class HubError extends Error { constructor(msg, status, code) { super(msg); this.name = code || "HubError"; this.status = status; } }

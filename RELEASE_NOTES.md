@@ -1,12 +1,14 @@
 # Release notes — Activity Dashboard
 
 ## 00.07.000_261027 (Oct 27 2026)
-**Projects tab**: your Microsoft Planner plans in the dashboard, read-only.
-- Tasks grouped by plan and bucket, with owner, status, a progress bar, checklist count, due date (Overdue in red, Today, This week, Later, No date) and urgent/important flags. Squares on top count open, overdue, due today, in progress and unassigned.
-- **Owner**: pick a name from the list or type a new one. Names you set show "set here" and stay in this dashboard; ↺ Planner goes back to Planner's assignee. Planner itself is never changed.
-- Filter by plan and owner; tick Show completed to include finished tasks.
-- **Export CSV** saves what's on screen; **Print** prints it in the print colors.
-- Reads the new **encrypted** Planner export (`projects.json.enc`). Until it's set up, the tab says so.
+**Projects tab**: plan your projects in the dashboard and hand them to Planner as files.
+- Make plans, buckets and tasks, with checklists, owners (pick from the list or type a name), status, progress, priority, start and due dates, labels and notes.
+- Squares count open, overdue, due today, in progress and unassigned tasks. Filter by plan and owner; tick Show completed for finished tasks.
+- **Export** Planner-ready **CSV**, **Excel (xlsx)** (one sheet per plan) and **Graph JSON** (plan, buckets, tasks and task details). Nothing is sent to Planner or Microsoft Graph.
+- No pricing or dollar figures: a task, checklist item, plan or bucket containing an amount isn't saved.
+- Saved encrypted: in the browser, and in the Data folder as `projects-store.json.enc` once the folder is encrypted. Exports ask first because they are plain files.
+- Optional: File → Import Planner export into Projects copies an encrypted Planner export (`projects.json.enc`).
+- Prints in the print colors.
 
 ## 00.06.000_261024 (Oct 24 2026)
 **Today strip** on Daily Focus, under the squares.

@@ -1,8 +1,7 @@
-/* EXAMPLE DATA - fictional Planner export for the Projects page (schema_version 1). Placeholder names only. */
+/* EXAMPLE DATA - fictional Projects store (projects-store schema_version 1). Placeholder names only. */
 window.DASH_EXAMPLE_PROJECTS = {
  "schema_version": 1,
- "generated_at": "2026-10-19T06:45:00-05:00",
- "source": "planner-export",
+ "updated_at": "2026-10-19T06:45:00-05:00",
  "example": true,
  "plans": [
   {
@@ -42,10 +41,25 @@ window.DASH_EXAMPLE_PROJECTS = {
      ],
      "account": "Acme Fab",
      "percent": 50,
-     "checklist": {
-      "done": 1,
-      "total": 3
-     }
+     "start": null,
+     "checklist": [
+      {
+       "id": "PT-1-C1",
+       "title": "Pull drawings",
+       "done": true
+      },
+      {
+       "id": "PT-1-C2",
+       "title": "Mark up risers",
+       "done": false
+      },
+      {
+       "id": "PT-1-C3",
+       "title": "Send to team",
+       "done": false
+      }
+     ],
+     "notes": "Markup on sheet 3; confirm riser count."
     },
     {
      "id": "PT-2",
@@ -60,7 +74,11 @@ window.DASH_EXAMPLE_PROJECTS = {
      "labels": [
       "Northwind DC"
      ],
-     "account": "Northwind DC"
+     "account": "Northwind DC",
+     "percent": 0,
+     "start": null,
+     "checklist": [],
+     "notes": ""
     },
     {
      "id": "PT-3",
@@ -73,7 +91,11 @@ window.DASH_EXAMPLE_PROJECTS = {
      "labels": [
       "Contoso Labs"
      ],
-     "account": "Contoso Labs"
+     "account": "Contoso Labs",
+     "percent": 0,
+     "start": null,
+     "checklist": [],
+     "notes": ""
     },
     {
      "id": "PT-4",
@@ -89,7 +111,10 @@ window.DASH_EXAMPLE_PROJECTS = {
       "Acme Fab"
      ],
      "account": "Acme Fab",
-     "percent": 25
+     "percent": 25,
+     "start": null,
+     "checklist": [],
+     "notes": ""
     },
     {
      "id": "PT-5",
@@ -102,7 +127,11 @@ window.DASH_EXAMPLE_PROJECTS = {
      "due": null,
      "priority": "medium",
      "labels": [],
-     "account": "Fabrikam Campus"
+     "account": "Fabrikam Campus",
+     "percent": 0,
+     "start": null,
+     "checklist": [],
+     "notes": ""
     },
     {
      "id": "PT-6",
@@ -118,7 +147,11 @@ window.DASH_EXAMPLE_PROJECTS = {
      "labels": [
       "Northwind DC"
      ],
-     "account": "Northwind DC"
+     "account": "Northwind DC",
+     "percent": 0,
+     "start": null,
+     "checklist": [],
+     "notes": ""
     },
     {
      "id": "PT-7",
@@ -132,7 +165,10 @@ window.DASH_EXAMPLE_PROJECTS = {
      "priority": "medium",
      "labels": [],
      "account": null,
-     "percent": 100
+     "percent": 100,
+     "start": null,
+     "checklist": [],
+     "notes": ""
     },
     {
      "id": "PT-8",
@@ -148,10 +184,39 @@ window.DASH_EXAMPLE_PROJECTS = {
      "account": "Fabrikam Campus",
      "percent": 60,
      "start": "2026-10-12",
-     "checklist": {
-      "done": 4,
-      "total": 6
-     }
+     "checklist": [
+      {
+       "id": "PT-8-C1",
+       "title": "Step 1",
+       "done": true
+      },
+      {
+       "id": "PT-8-C2",
+       "title": "Step 2",
+       "done": true
+      },
+      {
+       "id": "PT-8-C3",
+       "title": "Step 3",
+       "done": true
+      },
+      {
+       "id": "PT-8-C4",
+       "title": "Step 4",
+       "done": true
+      },
+      {
+       "id": "PT-8-C5",
+       "title": "Step 5",
+       "done": false
+      },
+      {
+       "id": "PT-8-C6",
+       "title": "Step 6",
+       "done": false
+      }
+     ],
+     "notes": ""
     }
    ]
   },
@@ -182,7 +247,9 @@ window.DASH_EXAMPLE_PROJECTS = {
      "labels": [],
      "account": null,
      "percent": 70,
-     "start": "2026-10-05"
+     "start": "2026-10-05",
+     "checklist": [],
+     "notes": ""
     },
     {
      "id": "PT-10",
@@ -194,7 +261,10 @@ window.DASH_EXAMPLE_PROJECTS = {
      "priority": "medium",
      "labels": [],
      "account": null,
-     "start": "2026-10-28"
+     "start": "2026-10-28",
+     "percent": 0,
+     "checklist": [],
+     "notes": ""
     }
    ]
   }
