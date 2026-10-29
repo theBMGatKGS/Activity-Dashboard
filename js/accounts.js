@@ -25,7 +25,7 @@
   const cleanStr = s => String(s).replace(CTRL, "").trim().slice(0, MAX_STR);
   const normText = s => String(s || "").normalize("NFKC").replace(UNV, " ").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const fold = s => String(s || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const unvOf = s => { const u = /\(unverified\)/i.test(s); return { text: cleanStr(String(s).replace(UNV, " ").replace(/\s+/g, " ")), unverified: u }; };
+  const unvOf = s => { const u = /\(unverified\)/i.test(s); return { text: cleanStr(String(s).replace(UNV, " ").replace(/\s+/g, " ").replace(/\s+([.,;:!?)])/g, "$1")), unverified: u }; };   // (c) no space left before punctuation
   function hashId(s) { let h1 = 0x811c9dc5, h2 = 5381; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0; h2 = ((h2 << 5) + h2 + c) >>> 0; } return h1.toString(36) + h2.toString(36); }
 
   // ---------- YAML front-matter subset: scalars, quoted strings, flow maps and lists, block lists; no anchors, tags or block scalars ----------
@@ -162,7 +162,7 @@
     const enumCell = (v, list, line, rule, what) => { const u = unvOf(v), m = list.find(x => x.toLowerCase() === u.text.toLowerCase()); if (!m) P(line, rule, `${what} must be one of ${list.join(", ")}`); return m || u.text; };
     const stakeholders = table(HEADS[1], T2_COLS, "T2").map(r => { const c = r.cells, any = c.some(x => /\(unverified\)/i.test(x)), lt = unvOf(c[5]).text;
       if (lt !== "unknown" && !isDay(lt)) P(r.line, "T2-DATE", "Last touch must be a date YYYY-MM-DD or unknown");
-      return { name: unvOf(c[0]).text, org: unvOf(c[1]).text, role: unvOf(c[2]).text, influence: enumCell(c[3], INFLUENCE, r.line, "T2-INFLUENCE", "Influence"), sentiment: enumCell(c[4], SENTIMENT, r.line, "T2-SENTIMENT", "Sentiment"), last_touch: lt, notes: unvOf(c[6]).text, unverified: any }; });
+      return { name: unvOf(c[0]).text, orgName: unvOf(c[1]).text, role: unvOf(c[2]).text, influence: enumCell(c[3], INFLUENCE, r.line, "T2-INFLUENCE", "Influence"), sentiment: enumCell(c[4], SENTIMENT, r.line, "T2-SENTIMENT", "Sentiment"), last_touch: lt, notes: unvOf(c[6]).text, unverified: any }; });
     const opportunities = table(HEADS[3], T4_COLS, "T4").map(r => { const c = r.cells, d = unvOf(c[3]).text;
       if (!isDay(d)) P(r.line, "T4-DATE", "Next step date must be a real date YYYY-MM-DD");
       const nm = unvOf(c[0]).text; return { id: hashId((slug || base) + "|opp|" + normText(nm)), name: nm, stage: enumCell(c[1], STAGES, r.line, "T4-STAGE", "Stage"), next_step: unvOf(c[2]).text, next_step_date: d, unverified: c.some(x => /\(unverified\)/i.test(x)) }; });
@@ -381,7 +381,7 @@
     return String(st.name || "").split(/\s*\/\s*/).filter(Boolean).map(n => {
       const parts = n.trim().split(/\s+/), f = fold(parts[0]), l = fold(parts.slice(1).join(" "));
       let hits = list.filter(c => fold(c.first) === f && fold(c.last) === l && f);
-      if (hits.length > 1) { const o = fold(st["org"]); const nar = hits.filter(c => o && fold(c.company) && (fold(c.company).includes(o) || o.includes(fold(c.company)))); if (nar.length) hits = nar; }
+      if (hits.length > 1) { const o = fold(st.orgName); const nar = hits.filter(c => o && fold(c.company) && (fold(c.company).includes(o) || o.includes(fold(c.company)))); if (nar.length) hits = nar; }
       return { name: n, contact: hits.length === 1 ? hits[0] : null, candidates: hits.length }; });
   }
 

@@ -165,4 +165,9 @@ t("A30 RC1: Same task (reopen) and New task; re-imports are idempotent after eac
   assert.throws(() => A.resolveRename(l2, p1, q, "maybe", NOW)); });
 t("A31 N1: pendingPrompts counts the prompts waiting across accounts", () => { assert.strictEqual(A.pendingPrompts(null), 0);
   assert.strictEqual(A.pendingPrompts({ accounts: [{ pendingRenames: [{ kind: "recur" }, {}] }, { pendingRenames: [] }, {}, { pendingRenames: [{}] }] }), 3); });
+t("A32 (c) removing (unverified) leaves no space before punctuation; orgName holds the Org column", () => { const a = A.parseAccountMd(NAME, FX).account;
+  assert.strictEqual(a.happening[1].text, "The operations lead asked for a standard riser layout."); assert.ok(a.happening[1].unverified);
+  assert.strictEqual(a.unverified_items[0].text, "The riser layout request was seen once in meeting notes.");
+  const b = A.parseAccountMd(NAME, sub("Shared inbox", "Shared inbox (unverified), kept for now")).account; assert.strictEqual(b.stakeholders[1].notes, "Shared inbox, kept for now");
+  assert.deepStrictEqual(a.stakeholders.map(x => x.orgName), ["Acme Fab", "Acme Fab", "Example Engineers"]); assert.ok(a.stakeholders.every(x => !("org" in x))); });
 console.log(`\n${n - fail}/${n} passed (accounts 00.09.000)`); process.exit(fail ? 1 : 0);
