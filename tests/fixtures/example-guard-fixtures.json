@@ -87,7 +87,9 @@
   "jane&commat;contoso.example",
   "jane at contoso dot com",
   "a at b dot com",
-  "Jane At Contoso Dot Com"
+  "Jane At Contoso Dot Com",
+  "jane at contoso . COM",
+  "jane at contoso. example"
  ],
  "notEmail": [
   "Meet at 10",
@@ -101,7 +103,11 @@
   "Walk at noon dot plan",
   "Meet at 10.30",
   "Meet at site.",
-  "Look at the riser. Then dot it"
+  "Look at the riser. Then dot it",
+  "Jordan at Acme. He agreed",
+  "Sam K. at Northwind Labs. Then we met",
+  "Dana L. at Example Engineers. Notes follow",
+  "Priya M. at the site . Review done"
  ],
  "_tradeoffs": "Bare two-decimal numbers count as money only with a 2+ digit integer part and no version/step/floor-type word before or unit/AM-PM after: '12.50' and 'Total 48.00' are flagged, '1.00', 'Step 1.00', 'Zone 12.50', '10.00 AM' are not. A bare clock time like '10.30' with no AM/PM is flagged (write 10:30). Small prices with no marker ('price 1.00' is caught by the word; plain '1.00' is not).",
  "phone": [

@@ -689,8 +689,10 @@
   // Email guard (P2/P2b): @ (any width), &#64; / &commat;, %40, [at] (at) {at} <at>, "name at host.tld" (a real dot between
   // host parts, spaces allowed: "jane.doe at contoso . com"), and the spelled-out "jane at contoso dot com" form in any case, which must end in a
   // domain-ending word (com, net, org, io, uk, example…), so "Walk at noon dot plan" is not an address.
+  const TLDS = "com|net|org|edu|gov|mil|int|io|co|us|uk|ca|au|de|fr|es|it|nl|be|ch|se|no|dk|fi|ie|jp|cn|in|mx|br|biz|info|me|ai|app|dev|tech|cloud|example|test|local";
   const EMAIL_RES = [/@/, /&#0*64;|&#x0*40;|&commat;/i, /%40/i, /[\[({<]\s*at\s*[\])}>]/i,
-    /\b[\w.+-]+\s+at\s+[a-z][\w-]*(?:\s*\.\s*[a-z][\w-]*)*\s*\.\s*[a-z]{2,24}\b/i,
+    /\b[\w.+-]+\s+at\s+[a-z][\w-]*(?:\.[a-z][\w-]*)*\.[a-z]{2,24}\b/i,   // (b) "name at host.tld" with no spaces around the dot
+    new RegExp(String.raw`\b[\w.+-]+\s+[Aa][Tt]\s+[A-Za-z][\w-]*(?:\s*\.\s*[A-Za-z][\w-]*)*\s*\.\s*(?:${TLDS}|${TLDS.toUpperCase()})(?![A-Za-z-])`),   // (b) spaced dot: only a known domain ending (lower case or ALL CAPS), so "Jordan at Acme. He agreed" passes
     /\b[\w.+-]+\s+at\s+[a-z][\w-]*(?:\s+dot\s+[a-z][\w-]*)*\s+dot\s+(?:com|net|org|edu|gov|mil|int|io|co|us|uk|ca|au|de|fr|es|it|nl|be|ch|se|no|dk|fi|ie|jp|cn|in|mx|br|biz|info|me|ai|app|dev|tech|cloud|example|test|local)\b/i];   // E3: spelled-out form, any case, must end in a domain-ending word
   const hasEmail = v => typeof v === "string" && EMAIL_RES.some(r => r.test(clean(v)));
   const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
