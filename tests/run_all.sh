@@ -3,8 +3,9 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"; ROOT="$(dirname "$HERE")"
 cd "$ROOT"
-node --check js/frame.js && node --check js/hub.js && node --check js/vault.js && node --check sw.js && node --check js/rules.js && node --check js/sync.js && node --check js/db.js && node --check js/app.js
+node --check js/frame.js && node --check js/hub.js && node --check js/vault.js && node --check sw.js && node --check js/rules.js && node --check js/accounts.js && node --check js/sync.js && node --check js/db.js && node --check js/app.js
 node "$HERE/rules.test.js"
+node "$HERE/accounts.test.js"
 node "$HERE/sync.test.js"
 node "$HERE/vault.test.js"
 node "$HERE/hub.test.js"
@@ -23,5 +24,6 @@ python3 "$HERE/t26_clear.py"
 python3 "$HERE/t27_calendar.py"
 python3 "$HERE/t28_projects.py"
 python3 "$HERE/t29_pinned_import.py" "${SHOTS_DIR:-$(mktemp -d -t dash-t29-XXXX)}"
+python3 "$HERE/t30_accounts.py" "${SHOTS_DIR:-$(mktemp -d -t dash-t30-XXXX)}"
 python3 "$HERE/shots.py" "${SHOTS_DIR:-$(mktemp -d -t dash-shots-XXXX)}"
 echo "ALL TESTS PASSED"

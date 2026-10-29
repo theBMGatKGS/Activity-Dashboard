@@ -2,8 +2,8 @@
 (function () {
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
-  const R = DASH.rules, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.08.001_261028";
+  const R = DASH.rules, A = DASH.accounts, DB = DASH.db, CFG = window.DASH_CONFIG || {};
+  const REV = "00.09.000_261029";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -20,7 +20,7 @@
   const LABEL = { overdue: "Overdue", dueToday: "Due Today", thisWeek: "This Week", iOwe: "I Owe", owedToMe: "Owed to Me", goingCold: "Going Cold",
     followUps: "Follow-ups", waitingOn: "Waiting on", accountTouches: "Account touches", travel: "Travel" };
   // 00.05: Daily Focus is always the home view (Q9); ?view= opens another tab (deep links, tests).
-  const VIEWS = ["focus", "dashboard", "workload", "projects", "print", "manager"];
+  const VIEWS = ["focus", "dashboard", "workload", "projects", "accounts", "print", "manager"];
   const S = { snap: null, today: R.ymd(NOW), filter: null, open: {}, collapsed: {}, entries: [], removedCal: [], history: [], rules: R.DEFAULT_RULES, view: VIEWS.includes(qp.get("view")) ? qp.get("view") : "focus", wkOffset: 0, trends: false,
     flags: {}, focusExp: new Set(), laterOpen: false, noDateOpen: false, focusAnimated: false };
   // "now" for Snooze: the ?now= test clock if given, else the real clock.
@@ -267,11 +267,11 @@
   function innerName(n) { if (!/\.enc$/i.test(n)) return n; const b = n.slice(0, -4); return /\.(json|js)$/i.test(b) ? b : b.replace(/\.(json|js)([^.]*)$/i, "$2.$1"); }
   const isSnapName = n => SNAP_NAMES.includes(n) || /^inbox-snapshot(?:[^a-z0-9][^/]*)?\.jso?n?$/i.test(n);
   const isLogName = n => LOG_NAMES.includes(n) || /^notebook-log(?:[^a-z0-9][^/]*)?\.js$/i.test(n);
-  const CAL_NAME = "calendar-snapshot.json", TRIPS_NAME = "trips.json", PROJ_NAME = "projects.json", STORE_NAME = "projects-store.json";   // 00.07.000: optional Planner export feed + the Projects store (source of truth), both encrypted only
-  const FEED_READ = { calendar: raw => R.readCalendar(raw), trips: raw => R.readTrips(raw), projects: raw => R.readProjects(raw), projstore: raw => R.readStore(raw) };
+  const CAL_NAME = "calendar-snapshot.json", TRIPS_NAME = "trips.json", PROJ_NAME = "projects.json", STORE_NAME = "projects-store.json", ACC_NAME = "accounts-store.json", CONTACTS_NAME = "contacts.json";   // 00.09.000: account plans + contacts, encrypted only   // 00.07.000: optional Planner export feed + the Projects store (source of truth), both encrypted only
+  const FEED_READ = { calendar: raw => R.readCalendar(raw), trips: raw => R.readTrips(raw), projects: raw => R.readProjects(raw), projstore: raw => R.readStore(raw), accstore: raw => A.readAccStore(raw), contacts: raw => A.readContacts(raw) };
   const stampOf = raw => raw.generated_at || raw.updated_at;
     // 00.06.000: calendar / travel assistants feeds (encrypted only)
-  const purposeOf = n => R2.isTimeFile(n) ? "time" : n === CAL_NAME ? "calendar" : n === TRIPS_NAME ? "trips" : n === PROJ_NAME ? "projects" : n === STORE_NAME ? "projstore" : isSnapName(n) ? "snapshot" : isLogName(n) ? "log" : null;
+  const purposeOf = n => R2.isTimeFile(n) ? "time" : n === CAL_NAME ? "calendar" : n === TRIPS_NAME ? "trips" : n === PROJ_NAME ? "projects" : n === STORE_NAME ? "projstore" : n === ACC_NAME ? "accstore" : n === CONTACTS_NAME ? "contacts" : isSnapName(n) ? "snapshot" : isLogName(n) ? "log" : null;
   async function writeText(name, text) {
     const fh = await S.dir.getFileHandle(name, { create: true });
     const w = await fh.createWritable();            // Chromium writes to a temporary swap file; close() swaps it in (atomic)
@@ -764,6 +764,7 @@
     if (S.view === "dashboard") renderDashboard();
     if (S.view === "workload") renderWorkload();
     if (S.view === "projects") renderProjects();
+    if (S.view === "accounts") renderAccounts();
     // Both sheets are always rendered so Ctrl+P from any tab prints a real sheet (F11).
     $("#sheet-print").innerHTML = sheet(false); $("#sheet-manager").innerHTML = sheet(true);
   }
@@ -1019,8 +1020,18 @@
       S.projFeed = null; S.projStore = null; S.projStoreLoaded = false;   // 00.07.000: example projects; edits made here are kept only until reload
       if (await loadScript(CFG.exampleProjectsPath || "examples/example-projects.js") && window.DASH_EXAMPLE_PROJECTS) { try { S.projStore = R.readStore(window.DASH_EXAMPLE_PROJECTS); } catch (e) { S.projStore = null; } }
       S.projExample = !!S.projStore;
+      // 00.09.000: two fictional example accounts and contacts, in memory only (never cached, never synced into Projects)
+      S.accStore = null; S.contacts = null; S.accLoaded = false; S.accExample = false;
+      if (await loadScript(CFG.exampleAccountsPath || "examples/example-accounts.js") && window.DASH_EXAMPLE_ACCOUNTS) {
+        try { const ex = window.DASH_EXAMPLE_ACCOUNTS, r = A.importAccounts(ex.files, null, new Date().toISOString()); if (r.store) { S.accStore = Object.assign(r.store, { example: true }); S.contacts = A.parseContactsCSV(ex.contactsCSV, r.store.updated_at); S.accExample = true; } } catch (e) { S.accStore = S.contacts = null; }
+      }
       return;
     }
+    if (S.accExample) { S.accStore = null; S.contacts = null; S.accExample = false; }   // never carry example accounts into real data
+    if (!S.accLoaded) { const st = await DB.get("accountsStore"), ct = await DB.get("contacts");
+      try { if (st && st.schema_version && (!S.accStore || Date.parse(st.updated_at) > Date.parse(S.accStore.updated_at))) S.accStore = A.readAccStore(st); } catch (e) { /* ignore a bad cache */ }
+      try { if (ct && ct.schema_version && (!S.contacts || Date.parse(ct.updated_at) > Date.parse(S.contacts.updated_at))) S.contacts = A.readContacts(ct); } catch (e) { /* ignore a bad cache */ }
+      S.accLoaded = true; }
     if (S.projExample) { S.projFeed = null; S.projStore = null; S.projExample = false; }   // never carry example projects into real data
     if (!S.projFeed) { const pj = await DB.get("projectsFeed"); try { if (pj && pj.schema_version) S.projFeed = R.readProjects(pj); } catch (e) { /* ignore a bad cache */ } }
     if (!S.projStoreLoaded) { const st = await DB.get("projectsStore"); try { if (st && st.schema_version && (!S.projStore || Date.parse(st.updated_at) > Date.parse(S.projStore.updated_at))) S.projStore = R.readStore(st); } catch (e) { /* ignore a bad cache */ } S.projStoreLoaded = true; }
@@ -1209,12 +1220,153 @@
     S.projStore = R.readStore(r.store); S.projPlan = r.planIds.length === 1 ? r.planIds[0] : ""; saveStore();
     toast(`Imported ${r.added} task(s) from ${name}${r.skipped ? `; ${r.skipped} already here, kept as they are` : ""}. Saved encrypted. ${name} itself is not encrypted: delete it now.`);
   }
+  // ---------- 00.09.000 Accounts: strategic account plans (read-only), contacts, open loops into Projects ----------
+  // Plan rev 3 decisions: account plans are read-only here (they change in the notebook, then are imported again); open loops go into
+  // Projects automatically, never twice; contacts are imported encrypted and email and phone are never printed; one account first.
+  // Stored only as accounts-store.json.enc and contacts.json.enc (and the SECRET IndexedDB keys accountsStore and contacts).
+  Object.assign(S, { accStore: null, contacts: null, accLoaded: false, accExample: false, accSel: "", accTier: "", accQ: "", accRejects: [] });
+  const TIERW = { key: "Key", prospect: "Prospect", watch: "Watch" };
+  const tierChip = t => `<span class="tierchip t-${esc(t)}">${esc(TIERW[t] || t)}</span>`;
+  const unv = on => on ? ` <span class="unv" title="unverified">unverified</span>` : "";
+  const dd = d => d && d !== "unknown" ? esc(R.dayLabel(d)) : esc(d || "—");
+  async function saveAccounts(which) {
+    if (S.accExample) { render(); return; }
+    const o = which === "contacts" ? S.contacts : S.accStore; if (!o) return;
+    const key = which === "contacts" ? "contacts" : "accountsStore", name = which === "contacts" ? CONTACTS_NAME : ACC_NAME, purpose = which === "contacts" ? "contacts" : "accstore";
+    const body = which === "contacts" ? { schema_version: 1, updated_at: o.updated_at, contacts: o.contacts } : { schema_version: 1, updated_at: o.updated_at, accounts: o.accounts };
+    track(DB.set(key, body));
+    if (canSaveToFolder()) { const ct = await V.encrypt(S.vault.key, S.vault.kr, purpose, JSON.stringify(body)); await track(writeText(name + ".enc", ct)); }
+    render();
+  }
+  function importRefused(what) {
+    if (S.accExample || S.projExample || (S.snap && S.snap.example)) { toast(`⚠ Load your real data first: ${what} is never mixed with EXAMPLE DATA. Nothing was imported.`); return true; }
+    if (!canSaveToFolder()) { toast(`⚠ ${what} needs an encrypted, unlocked Data folder (File → Encryption…), so it is never kept unencrypted. Nothing was imported.`); return true; }
+    return false;
+  }
+  function importAccountFiles(files) {
+    if (importRefused("Importing account plans")) return null;
+    const now = new Date().toISOString(), r = A.importAccounts(files, S.accStore, now);
+    S.accRejects = r.rejects;
+    if (r.rejects.length) { toast(`⚠ Nothing imported, ${r.rejects.length} problem(s): ${r.rejects.slice(0, 3).join("; ")}${r.rejects.length > 3 ? "; …" : ""}`); render(); return r; }
+    let ps = S.projStore, created = 0, linked = 0, updated = 0, asks = 0;
+    // The previous import's loop links (plus prompts still waiting for a choice) tell which loops left in this import.
+    // Decision: ask first before treating a reworded loop as the same task, and before treating a repeated loop with a later date
+    // as the same (completed) task: both only come back as prompts (Possible rename, Repeated loop).
+    r.slugs.forEach(sl => { const a = r.store.accounts.find(x => x.slug === sl), old = S.accStore && S.accStore.accounts.find(x => x.slug === sl);
+      const prev = Object.assign({}, old && old.loopRefs); ((old && old.pendingRenames) || []).forEach(q => { prev[q.oldLoopId || "pending-" + q.taskId] = q.taskId; });
+      const s = A.syncLoops(a, ps, now, prev, { rename: "confirm" }); ps = s.projStore; created += s.created; linked += s.linked; updated += s.updated; a.loopRefs = s.refs; a.pendingRenames = s.renames; asks += s.renames.length; });
+    const chk = R.readStore(ps);
+    if (chk.rejects.length) { toast(`⚠ Nothing imported: an open loop would not save in Projects (${chk.rejects[0]}).`); return r; }
+    S.accStore = r.store; if (r.slugs.length === 1) S.accSel = r.slugs[0];
+    saveAccounts("accounts");
+    if (created || updated || linked || !S.projStore) { S.projStore = chk; saveStore(); }
+    toast(`Imported ${r.slugs.length} account plan(s) (${r.added} new, ${r.changed} changed, ${r.same} unchanged). Open loops: ${created} added to Projects, ${linked} already there${asks ? `, ${asks} possible rename(s) or repeated loop(s): choose Same task or New task on the Accounts tab` : ""}. Saved encrypted. Delete the plain .md copies you picked if they aren't in your notebook.`);
+    return r;
+  }
+  function importContactsFile(name, text) {
+    if (importRefused("Importing contacts")) return null;
+    let r; try { r = A.parseContactsCSV(text, new Date().toISOString()); } catch (e) { toast(`⚠ ${name}: ${e.message}. Nothing was imported.`); return null; }
+    S.contacts = { schema_version: 1, updated_at: r.updated_at, contacts: r.contacts }; saveAccounts("contacts");
+    toast(`Imported ${r.contacts.length} contact(s)${r.rejects.length ? `; ${r.rejects.length} row(s) skipped (pricing)` : ""}. Saved encrypted; email and phone show only on screen behind "contact" and are never printed. Delete the plain CSV you picked.`);
+    return r;
+  }
+  function accountsModel() {
+    const q = S.accQ.trim().toLowerCase();
+    const list = A.listOrder(S.accStore, S.today, S.projStore).filter(x => (!S.accTier || x.a.tier === S.accTier) && (!q || x.a.account.toLowerCase().includes(q)));
+    return { list, sel: list.find(x => x.a.slug === S.accSel) || list[0] || null };
+  }
+  function findTaskById(id) { return id && S.projStore ? S.projStore.plans.reduce((f, p) => f || p.tasks.find(q => q.id === id), null) : null; }
+  function accPage(x, print) {
+    const a = x.a, ts = x.ts, link = A.findNextMove(a, S.projStore);
+    const top = x.moveOver ? `<b class="c-over">Next move overdue</b>` : ts.overdue ? `<b class="c-over">Touch overdue ${ts.days} d</b>` : ts.due ? `Next touch ${dd(ts.due)}` : "";
+    const li = arr => arr.length ? `<ul>${arr.map(i => `<li${i.unverified ? ' class="unvli"' : ""}>${esc(i.text)}${unv(i.unverified)}</li>`).join("")}</ul>` : `<p class="faint">Nothing listed.</p>`;
+    const sec = (n, body) => `<section class="accsec"><h3>${esc(A.SECTION_TITLES[n - 1].replace(/^(\d)\./, "$1."))}</h3>${body}</section>`;
+    const people = a.stakeholders.map(s => { const m = A.matchContacts(s, S.contacts);
+      const ci = m.map(c => c.contact ? `<div class="faint ctl">${esc(c.name)} · ${esc(c.contact.title || "")}${c.contact.last_touch ? ` · contacts last touch ${dd(c.contact.last_touch)}` : ""}${print ? "" : ` <details class="ctd noprint"><summary>contact</summary><span class="mono">${esc(c.contact.email || "no email")}</span>${c.contact.phone ? ` · <span class="mono">${esc(c.contact.phone)}</span>` : ""}</details>`}</div>` : c.candidates > 1 ? `<div class="faint">${esc(c.name)}: ${c.candidates} possible matches</div>` : "").join("");
+      return `<tr${s.unverified ? ' class="unvrow"' : ""}><td><b>${esc(s.name)}</b>${unv(s.unverified)}${ci}</td><td>${esc(s["org"])}</td><td>${esc(s.role)}</td><td class="inf-${esc(s.influence.toLowerCase())}">${esc(s.influence)}</td><td class="sen-${esc(s.sentiment.toLowerCase())}">${esc(s.sentiment)}</td><td>${dd(s.last_touch)}</td><td>${esc(s.notes)}</td></tr>`; }).join("");
+    const opps = a.opportunities.map(o => `<tr${o.unverified ? ' class="unvrow"' : ""}><td>${esc(o.name)}${unv(o.unverified)}</td><td><span class="stage">${esc(o.stage)}</span></td><td>${esc(o.next_step)}</td><td>${dd(o.next_step_date)}</td></tr>`).join("");
+    const tt = o => o ? `${dd(o.date)} · ${esc(o.type)} · ${esc(o.with)}` : "—";
+    const nm = a.next_move, t = link && link.t;
+    const nmHtml = nm ? `<div class="kv"><span>Action</span><b>${esc(nm.action)}${unv(nm.unverified)}</b><span>Owner</span><span>${esc(t ? t.assignees.join(", ") || nm.owner : nm.owner)}</span><span>Due</span><span class="${(t ? t.due : nm.due) < S.today && !(t && t.status === "completed") ? "c-over" : ""}">${dd(t ? t.due : nm.due)}</span>
+      <span>Projects</span><span>${t ? `linked to task <span class="mono">${esc(t.id)}</span> · ${esc(R.PROJ_STATUS_WORD[t.status])}${t.due !== nm.due ? ` <span class="warnt">file says due ${esc(R.dayLabel(nm.due))}</span>` : ""}${print ? "" : ` <button class="linkbtn noprint" data-accgo-task="${esc(t.id)}">open in Projects</button>`}` : link && link.missing ? `<span class="warnt">task_id ${esc(link.missing)} is not in Projects</span>` : print ? "not in Projects yet" : `<button class="btn noprint" data-accmove="${esc(a.slug)}">Create Projects task</button>`}</span></div>` : "<p class='faint'>No next move.</p>";
+    const loops = a.open_loops.map(l => { const tk = findTaskById((a.loopRefs || {})[l.id]), pq = (a.pendingRenames || []).find(q => q.loopId === l.id);
+      return `<li>${esc(l.item)}${unv(l.unverified)} <span class="faint">· ${esc(l.bucket)} · ${dd(l.next_date)}</span> ${pq && pq.kind === "recur" ? `<span class="warnt">repeated loop: waiting for your choice</span>` : pq ? `<span class="warnt">possible rename: waiting for your choice</span>` : tk ? `<span class="faint">· Projects: ${esc(R.PROJ_STATUS_WORD[tk.status])}</span>` : `<span class="warnt">not in Projects</span>`}</li>`; }).join("");
+    const live = new Set(a.open_loops.map(l => "loop:" + l.id)), plan = S.projStore && S.projStore.plans.find(p => p.id === A.accPlanId(a.slug)), refd = new Set(Object.values(a.loopRefs || {}));
+    const gone = plan ? plan.tasks.filter(tk => tk.labels.some(lb => lb.startsWith("loop:")) && !tk.labels.some(lb => live.has(lb)) && !refd.has(tk.id)) : [];
+    const goneHtml = gone.length ? `<p class="faint">Tasks whose loop is no longer in the file (kept in Projects): ${gone.map(tk => `<span class="mono">${esc(tk.title)}</span> (${esc(R.PROJ_STATUS_WORD[tk.status])})`).join(", ")}</p>` : "";
+    return `<article class="accpage">
+      <header class="acchead"><div><h2>${esc(a.account)} ${tierChip(a.tier)} <span class="badge">${esc(a.status)}</span></h2><div class="faint">${esc(a.segment)} · ${esc(a.region)} · updated ${dd(a.last_updated)} · ${esc(a.confidential)}${a.unverified_found ? ` · <span class="unv">${a.unverified_found} unverified</span>` : ""}</div></div><div class="acctop">${top}</div></header>
+      ${sec(1, li(a.happening))}
+      ${sec(2, `<table class="acctab"><thead><tr><th>Name</th><th>Org</th><th>Role</th><th>Influence</th><th>Sentiment</th><th>Last touch</th><th>Notes</th></tr></thead><tbody>${people}</tbody></table>`)}
+      ${sec(3, li(a.goals))}
+      ${sec(4, a.opportunities.length ? `<table class="acctab"><thead><tr><th>Opportunity</th><th>Stage</th><th>Next step</th><th>Next step date</th></tr></thead><tbody>${opps}</tbody></table>` : `<p class="faint">No opportunities listed.</p>`)}
+      ${sec(5, `<div class="kv"><span>Last touch</span><span>${tt(a.last_touch)}</span><span>Next touch</span><span class="${ts.overdue ? "c-over" : ""}">${tt(a.next_touch)}${ts.overdue ? ` · ${ts.days} d overdue` : ""}</span><span>Cadence</span><span>${esc(a.touch_cadence)}${ts.byCadence ? ` · by cadence ${dd(ts.byCadence)}` : ""}</span></div>`)}
+      ${sec(6, nmHtml)}
+      <section class="accsec"><h3>Open loops <span class="faint">in Projects plan “Accounts – ${esc(a.account)}”</span></h3>${loops ? `<ul>${loops}</ul>` : `<p class="faint">No open loops.</p>`}${goneHtml}</section>
+      <section class="accsec"><h3>Sources &amp; unverified items</h3>${a.sources.length ? `<ul>${a.sources.map(s => `<li class="mono">${esc(s)}</li>`).join("")}</ul>` : ""}${li(a.unverified_items)}</section>
+      ${print ? `<footer class="accfoot"><b>Confidential: ${esc(a.confidential)}</b> · ${esc(a.account)} · account plan, read-only copy · Rev ${REV}</footer>` : ""}
+    </article>`;
+  }
+  function renderAccounts() {
+    const el = $("#view-accounts"); if (!el) return;
+    const where = S.accExample ? "EXAMPLE DATA · fictional accounts" : S.vault && S.vault.kr && !S.vault.key ? "🔒 locked" : canSaveToFolder() ? "saved encrypted" : "import needs an encrypted, unlocked Data folder";
+    const tools = `<button class="btn" data-act="importAccounts">Import account plans (.md)…</button> <button class="btn" data-act="importContacts">Import contacts (CSV)…</button> <button class="btn" data-act="printAccounts">Print</button>`;
+    const asks = [].concat(...(S.accStore ? S.accStore.accounts : []).map(a => (a.pendingRenames || []).map(q => [a, q])));
+    const btns = (a, q, same) => `<button class="btn" data-accren="${esc(a.slug)}" data-loop="${esc(q.loopId)}" data-ch="same">${same}</button> <button class="btn" data-accren="${esc(a.slug)}" data-loop="${esc(q.loopId)}" data-ch="new">New task</button>`;
+    const askRow = ([a, q]) => q.kind === "recur"
+      ? `<div class="askrow askrecur" data-askloop="${esc(q.loopId)}"><b>${esc(a.account)}</b> · ${esc(q.bucket)}<div>Completed task: <span class="mono">${esc(q.from)}</span> (${esc(q.taskDate || "no date")})</div><div>Loop again, dated <span class="mono">${esc(q.loopDate || "")}</span>: <span class="mono">${esc(q.to)}</span></div>${btns(a, q, "Same task (reopen)")}</div>`
+      : `<div class="askrow" data-askloop="${esc(q.loopId)}"><b>${esc(a.account)}</b> · ${esc(q.bucket)}<div>Old task: <span class="mono">${esc(q.from)}</span></div><div>New loop: <span class="mono">${esc(q.to)}</span></div>${btns(a, q, "Same task")}</div>`;
+    const asksR = asks.filter(x => x[1].kind !== "recur"), asksC = asks.filter(x => x[1].kind === "recur");
+    const ask = asks.length && !S.accExample ? `${asksR.length ? `<section class="accask" role="region" aria-labelledby="accask-h"><h3 id="accask-h">Possible rename <span class="badge">${asksR.length}</span> <span class="faint">a loop was reworded or moved; nothing is merged until you choose</span></h3>${asksR.map(askRow).join("")}</section>` : ""}${asksC.length ? `<section class="accask accrecur" role="region" aria-labelledby="accrec-h"><h3 id="accrec-h">Repeated loop <span class="badge">${asksC.length}</span> <span class="faint">a loop matches a completed task but has a later date; nothing is linked until you choose</span></h3>${asksC.map(askRow).join("")}</section>` : ""}` : "";
+    const rej = S.accRejects && S.accRejects.length ? `<div class="projrej" role="alert"><b>Last import refused:</b><ul>${S.accRejects.slice(0, 12).map(x => `<li class="mono">${esc(x)}</li>`).join("")}</ul></div>` : "";
+    if (!S.accStore || !S.accStore.accounts.length) { el.innerHTML = `<div class="projempty"><h2>Accounts</h2><p>No account plans yet. Account plans are Markdown files kept in the notebook (one per account, schema v1). They are read-only here: change them in the notebook, then import again. Open loops go into Projects automatically.</p>${tools}<p class="faint">${esc(where)}</p>${rej}</div>`; return; }
+    const m = accountsModel();
+    const counts = { all: S.accStore.accounts.length }; A.TIERS.forEach(t => counts[t] = S.accStore.accounts.filter(a => a.tier === t).length);
+    const list = m.list.map(x => `<button class="accli${m.sel && m.sel.a.slug === x.a.slug ? " sel" : ""}" data-accsel="${esc(x.a.slug)}" aria-pressed="${!!(m.sel && m.sel.a.slug === x.a.slug)}"><b>${esc(x.a.account)}</b> ${tierChip(x.a.tier)}${x.moveOver || x.ts.overdue ? ` <span class="c-over">● overdue</span>` : ""}${x.a.unverified_found ? ` <span class="unv">${x.a.unverified_found}</span>` : ""}</button>`).join("");
+    const all = A.listOrder(S.accStore, S.today, S.projStore);
+    el.innerHTML = `<div class="acctools projtools"><h2>Accounts</h2><label>Tier <select id="acc-tier"><option value="">All (${counts.all})</option>${A.TIERS.map(t => `<option value="${t}"${S.accTier === t ? " selected" : ""}>${TIERW[t]} (${counts[t]})</option>`).join("")}</select></label> <input id="acc-q" placeholder="Find account" value="${esc(S.accQ)}" aria-label="Find account"> ${tools} <span class="faint projasof">${esc(where)} · contacts: ${S.contacts ? S.contacts.contacts.length : 0}</span></div>${rej}
+${ask}
+      <div class="accwrap"><nav class="acclist" aria-label="Accounts">${list || `<p class="faint">No accounts match.</p>`}</nav><div class="accmain">${m.sel ? accPage(m.sel, false) : ""}</div></div>
+      <div class="accprint" aria-hidden="true">${all.map(x => accPage(x, true)).join("")}</div>
+      <div class="faint projfoot">Read-only: account plans change in the notebook, then File → Import account plans. No pricing or dollar figures. Rev ${REV}</div>`;
+  }
+  function accFocusHtml() {
+    const rows = A.focusTouches(S.accStore, S.today, S.projStore), np = S.accExample ? 0 : A.pendingPrompts(S.accStore); if (!rows.length && !np) return "";
+    const first = np ? (S.accStore.accounts.find(a => (a.pendingRenames || []).length) || {}).slug || "" : "";
+    const pend = np ? `<div class="accpend"><button class="linkbtn" data-accgo="${esc(first)}">${np} import prompt${np === 1 ? "" : "s"} waiting for your choice</button> <span class="faint">on the Accounts tab</span></div>` : "";
+    return `<section class="accfocus" aria-labelledby="accf-h"><h2 id="accf-h">🤝 Account touches <span class="badge">${rows.length}</span> <span class="faint fcnote">from account plans · cadence and next moves</span></h2>${pend}<div role="list">${rows.slice(0, 8).map(r => `<div role="listitem" class="accfrow"><button class="linkbtn" data-accgo="${esc(r.slug)}">${esc(r.account)}</button> ${tierChip(r.tier)} · ${esc(r.what)} · <span class="${r.due < S.today ? "c-over" : ""}">${r.due < S.today ? r.days + " d overdue" : "due today"}</span></div>`).join("")}${rows.length > 8 ? `<div class="faint">+${rows.length - 8} more on the Accounts tab</div>` : ""}</div></section>`;
+  }
+  function accountsClick(e) {
+    const go = e.target.closest && e.target.closest("[data-accgo]"); if (go) { S.accSel = go.dataset.accgo; setView("accounts"); return true; }
+    const s = e.target.closest && e.target.closest("[data-accsel]"); if (s) { S.accSel = s.dataset.accsel; render(); return true; }
+    const gt = e.target.closest && e.target.closest("[data-accgo-task]"); if (gt) { const f = findTask(gt.dataset.accgoTask); if (f) { S.projPlan = f.p.id; setView("projects"); taskEditor(f.p.id, f.t); } return true; }
+    const rn = e.target.closest && e.target.closest("[data-accren]"); if (rn) { renameChoice(rn.dataset.accren, rn.dataset.loop, rn.dataset.ch); return true; }
+    const mv = e.target.closest && e.target.closest("[data-accmove]"); if (mv) { const a = S.accStore && S.accStore.accounts.find(x => x.slug === mv.dataset.accmove); if (!a) return true;
+      const r = A.createNextMove(a, S.projStore, new Date().toISOString()); if (r.created) { const chk = R.readStore(r.projStore); if (chk.rejects.length) { toast("⚠ Could not create the task: " + chk.rejects[0]); return true; } S.projStore = chk; saveStore(); toast("Created the next move in Projects. Projects owns its owner, due date and status from now on."); } return true; }
+    return false;
+  }
+  function renameChoice(slug, loopId, choice) {
+    const a = S.accStore && S.accStore.accounts.find(x => x.slug === slug), q = a && (a.pendingRenames || []).find(x => x.loopId === loopId); if (!q) return false;
+    let r; try { r = A.resolveRename(a, S.projStore, q, choice, new Date().toISOString()); } catch (e) { toast("⚠ " + e.message); return false; }
+    const chk = R.readStore(r.projStore); if (chk.rejects.length) { toast("⚠ Could not save the task: " + chk.rejects[0]); return false; }
+    S.projStore = chk; a.loopRefs = Object.assign({}, a.loopRefs, { [loopId]: r.taskId }); a.pendingRenames = a.pendingRenames.filter(x => x !== q);
+    S.accStore.updated_at = new Date().toISOString(); saveStore(); saveAccounts("accounts");
+    if (q.kind === "recur") toast(choice === "same" ? "Same task: the completed task was reopened with the loop's new date." : "New task made for the repeated loop; the completed task is left as it is.");
+    else toast(choice === "same" ? "Same task: the title was updated; the old title is kept in the task's notes." : "New task made; the old task is left as it is.");
+    return true;
+  }
+  function accountsChange(e) {
+    const t = e.target; if (!t || t.id !== "acc-tier") return false;
+    S.accTier = t.value; render(); return true;
+  }
   function useFeeds(feeds) {
     if (S.projDirty && canSaveToFolder() && S.projStore && !S.projExample) { S.projDirty = false; saveStore(); }   // edits made while locked are saved once unlocked
     if (S.snap && S.snap.example) return;
     if (feeds.calendar && (!S.calFeed || S.calExample || Date.parse(feeds.calendar.generated_at) >= Date.parse(S.calFeed.generatedAt))) { S.calFeed = R.readCalendar(feeds.calendar); S.calExample = false; track(DB.set("calendarSnap", feeds.calendar)); }
     if (feeds.projects && (!S.projFeed || S.projExample || Date.parse(feeds.projects.generated_at) >= Date.parse(S.projFeed.generatedAt))) { S.projFeed = R.readProjects(feeds.projects); S.projExample = false; track(DB.set("projectsFeed", feeds.projects)); }
     if (feeds.projstore && (!S.projStore || S.projExample || Date.parse(feeds.projstore.updated_at) > Date.parse(S.projStore.updated_at))) { S.projStore = R.readStore(feeds.projstore); S.projExample = false; track(DB.set("projectsStore", feeds.projstore)); }
+    if (feeds.accstore && (!S.accStore || S.accExample || Date.parse(feeds.accstore.updated_at) > Date.parse(S.accStore.updated_at))) { S.accStore = A.readAccStore(feeds.accstore); S.accExample = false; track(DB.set("accountsStore", feeds.accstore)); }
+    if (feeds.contacts && (!S.contacts || S.accExample || Date.parse(feeds.contacts.updated_at) > Date.parse(S.contacts.updated_at))) { S.contacts = A.readContacts(feeds.contacts); track(DB.set("contacts", feeds.contacts)); }
     if (feeds.trips && (!S.tripsFeed || Date.parse(feeds.trips.generated_at) >= Date.parse(S.tripsFeed.generatedAt))) { S.tripsFeed = R.readTrips(feeds.trips); track(DB.set("trips", feeds.trips)); }
   }
   function stripModel(f) {
@@ -1370,7 +1522,7 @@
       <div class="t1list">${t1.map(a => `<label><input type="checkbox" data-t1="${esc(a.name)}" checked> ${esc(a.name)}</label>`).join("")}</div>
       <div class="vbtns"><button class="btn" id="t1o-no">Not now</button><button class="btn primary" id="t1o-yes">Star selected</button></div></div>` : "";
     const foc = document.activeElement && document.activeElement.closest && document.activeElement.closest(".frow"), keep = foc ? foc.dataset.row : null;
-    el.innerHTML = header + pinnedHtml("focus") + stripHtml(f) + offerHtml + sections + later + nd + `<div class="ffoot muted">Rows: ${f.sections.reduce((a, x) => a + x.rows.length, 0)} of ${f.sections.reduce((a, x) => a + x.total, 0)} (cap ${f.cap}) · keys: j/k move · d Done · s Snooze · t Log touch · Rev ${REV}</div>`;
+    el.innerHTML = header + pinnedHtml("focus") + accFocusHtml() + stripHtml(f) + offerHtml + sections + later + nd + `<div class="ffoot muted">Rows: ${f.sections.reduce((a, x) => a + x.rows.length, 0)} of ${f.sections.reduce((a, x) => a + x.total, 0)} (cap ${f.cap}) · keys: j/k move · d Done · s Snooze · t Log touch · Rev ${REV}</div>`;
     if (S.snap) S.focusAnimated = true;
     if (keep) { const r = el.querySelector(`.frow[data-row="${CSS.escape(keep)}"]`); if (r) r.focus(); }
   }
@@ -1508,7 +1660,7 @@
       </div></div>`;
   }
   function doPrint(which) { S.view = which; render(); document.querySelectorAll(".view").forEach(v => v.classList.toggle("printing", v.id === "view-" + which)); setTimeout(() => window.print(), 50); }
-  const printTarget = () => S.view === "manager" ? "manager" : S.view === "focus" ? "focus" : S.view === "projects" ? "projects" : "print";   // 00.05: Ctrl+P on Daily Focus prints Daily Focus
+  const printTarget = () => S.view === "manager" ? "manager" : S.view === "focus" ? "focus" : S.view === "projects" ? "projects" : S.view === "accounts" ? "accounts" : "print";   // 00.05: Ctrl+P on Daily Focus prints Daily Focus
 
   // ---------- help ----------
   function openHelp(sec) {
@@ -1537,7 +1689,8 @@
     openTimeFiles: () => pickFiles(".json", files => { files.forEach(([n, t]) => { const r = R2.parseTimeFile(t, n); S.fileEvents["picked:" + n] = r.events; if (r.bad) S.problems.push(r.bad); }); recompute(); render(); toast(`Merged ${files.length} time file(s).`); }),
     importLog: () => pickFile(".md,.txt", (n, t) => importLog(n, t)), logCall: () => logCall($("#asof")),
     print: () => doPrint("print"), printManager: () => doPrint("manager"), printFocus: () => doPrint("focus"), reload: () => reloadSafely(),
-    keyAccounts: () => keyAccountsDialog(), vFocus: () => setView("focus"), vDash: () => setView("dashboard"), vWork: () => setView("workload"), vPrint: () => setView("print"), vManager: () => setView("manager"), vProjects: () => setView("projects"),
+    keyAccounts: () => keyAccountsDialog(), vFocus: () => setView("focus"), vDash: () => setView("dashboard"), vWork: () => setView("workload"), vPrint: () => setView("print"), vManager: () => setView("manager"), vProjects: () => setView("projects"), vAccounts: () => setView("accounts"),
+    importAccounts: () => pickFiles(".md,text/markdown", files => importAccountFiles(files)), importContacts: () => pickFile(".csv,text/csv", (n, t) => importContactsFile(n, t)), printAccounts: () => doPrint("accounts"),
     printProjects: () => doPrint("projects"), exportProjects: () => exportProjects("csv"), exportProjectsXlsx: () => exportProjects("xlsx"), exportProjectsGraph: () => exportProjects("graph"), importPlanner: () => importPlanner(), importProjectJson: () => pickFile(".json,application/json", (n, t) => importProjectJson(n, t)),
     hHelp: () => openHelp("help"), hHow: () => openHelp("howdoi"), hFaq: () => openHelp("faq"), hQuick: () => openHelp("quick"), hRev: () => openHelp("rev"), hKeys: () => openHelp("keys"),
   };
@@ -1552,6 +1705,7 @@
       const pe = e.target.closest && e.target.closest("[data-pinedit]"); if (pe) { const f = findTask(pe.dataset.pinedit); if (f) taskEditor(f.p.id, f.t); return; }
       if (focusClick(e)) return;
       if (projectsClick(e)) return;
+      if (accountsClick(e)) return;
       const tl = e.target.closest("[data-filter]"); if (tl) { S.filter = S.filter === tl.dataset.filter ? null : tl.dataset.filter; render(); return; }
       if (e.target.id === "clearf") { S.filter = null; render(); return; }
       if (e.target.id === "trends-toggle") { S.trends = !S.trends; render(); return; }
@@ -1569,7 +1723,8 @@
       if (e.target.id === "wk-prev") { S.wkOffset++; render(); } if (e.target.id === "wk-next" && S.wkOffset > 0) { S.wkOffset--; render(); }
       if (e.target.id === "help-close" || e.target.id === "help") $("#help").classList.remove("open");
     });
-    document.addEventListener("change", e => { if (projectsChange(e)) return; const s = e.target.closest("[data-ed]"); if (!s) return; const ent = S.entries.find(x => x.id === s.dataset.ed); updateEntry(ent, { [s.dataset.k]: s.value }); saveEntries(); render(); });
+    document.addEventListener("input", e => { if (e.target && e.target.id === "acc-q") { S.accQ = e.target.value; const pos = e.target.selectionStart; renderAccounts(); const q = $("#acc-q"); if (q) { q.focus(); q.setSelectionRange(pos, pos); } } });
+    document.addEventListener("change", e => { if (projectsChange(e)) return; if (accountsChange(e)) return; const s = e.target.closest("[data-ed]"); if (!s) return; const ent = S.entries.find(x => x.id === s.dataset.ed); updateEntry(ent, { [s.dataset.k]: s.value }); saveEntries(); render(); });
     document.addEventListener("keydown", focusKeys);
     document.addEventListener("keydown", e => { if (e.key === "Escape") { closeTaskEditor(); closeSnooze(); closeMenus(); closePop(); const c = $("#cleardlg"); if (c) c.remove(); $("#help").classList.remove("open"); } });
     $("#howdoi-input").addEventListener("input", e => { const q = e.target.value.toLowerCase(); document.querySelectorAll("#help-howdoi details").forEach(d => d.classList.toggle("hidden", q && !d.textContent.toLowerCase().includes(q))); });
@@ -1581,7 +1736,7 @@
   }
   function closeMenus() { document.querySelectorAll(".mtop").forEach(b => { b.setAttribute("aria-expanded", "false"); b.nextElementSibling.classList.add("hidden"); }); }
 
-  window.DASH.app = { state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel, checkTz, setOwner, projectsModel, saveStore, projOps };
+  window.DASH.app = { state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel, checkTz, setOwner, projectsModel, saveStore, projOps, accountsModel, importAccountFiles, importContactsFile, renameChoice };
   window.addEventListener("beforeunload", e => { if (pending.size) { e.preventDefault(); e.returnValue = ""; } });
   boot();
 })();

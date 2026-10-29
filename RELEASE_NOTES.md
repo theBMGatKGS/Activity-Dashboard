@@ -1,5 +1,12 @@
 # Release notes — Activity Dashboard
 
+## 00.09.000_261029 (Oct 29 2026)
+**Accounts**: your strategic account plans, read-only, in six sections.
+- File → Import account plans (Markdown)… brings in the plans from the notebook.  Each plan's open loops go into Projects (plan "Accounts – <account>") automatically, never twice.
+- If a loop was reworded, or comes back with a later date after its task was completed, the Accounts tab asks first: Same task or New task.  Daily Focus shows how many questions are waiting.
+- File → Import contacts (CSV)… adds titles and last touches to the stakeholder map.  Email and phone show only on screen behind "contact" and are never printed.
+- Both imports need an encrypted, unlocked Data folder and are saved only encrypted.
+
 ## 00.08.001_261028 (Oct 28 2026)
 - Your GitHub profile picture now shows in the upper-left corner (on screen only, not on printed sheets).
 
