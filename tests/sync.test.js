@@ -400,4 +400,18 @@ const st = evs => JSON.stringify(Y.materialize(Y.fold(evs)));
     check(r.events.length === 1 && st.entries.length === 1 && st.entries[0].id === "t1" && /2 invalid event/.test(r.bad || ""), "F-V1 00.04.001 parseTimeFile keeps the time entry and ignores the 2 flag events");
   }
 }
+// O1 (00.09.001): clock reports carry "at" and expire after 24 h, or after the reporter's last write when "at" is missing
+{
+  const now = Date.parse("2026-10-30T14:00:00Z"), iso = h => new Date(now - h * 3.6e6).toISOString();
+  const file = Y.serialize("mac", [], iso(1), [{ about: "workpc", ahead_min: 40, at: iso(2) }]);
+  const r = Y.parseTimeFile(file, "time-mac.json");
+  check(r.reports.length === 1 && r.reports[0].at === iso(2), "O1a parseTimeFile keeps a valid report's at stamp");
+  const bad = Y.parseTimeFile(JSON.stringify({ app: "activity-dashboard", kind: "dash-time-log", version: 1, machine: "mac", updated_at: iso(1), events: [], clock_reports: [{ about: "workpc", ahead_min: 5, at: "not a date" }] }), "time-mac.json");
+  check(bad.reports.length === 1 && !("at" in bad.reports[0]), "O1b an unreadable at stamp is dropped (the report falls back to the file's updated_at)");
+  check(Y.liveReport({ at: iso(1) }, iso(1), now, 24) === true, "O1c a 1 h old report counts");
+  check(Y.liveReport({ at: iso(25) }, iso(1), now, 24) === false, "O1d a 25 h old report is ignored, even in a recently written file");
+  check(Y.liveReport({}, iso(25), now, 24) === false, "O1e no at: a report in a file last written 25 h ago is ignored (the 10/23 case)");
+  check(Y.liveReport({}, iso(3), now, 24) === true, "O1f no at: a report in a file written 3 h ago counts");
+  check(Y.liveReport({}, null, now, 24) === false, "O1g no at and no updated_at: ignored");
+}
 console.log(`\n${pass}/${pass + fail} passed`); if (fail) process.exit(1);

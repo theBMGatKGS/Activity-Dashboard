@@ -56,8 +56,15 @@
     if (events.length !== o.events.length) probs.push(`${o.events.length - events.length} invalid event(s) ignored`);
     if (!base) return { machine: null, events: [], bad: `${name}: machine name can't be read from the file name (a–z, 0–9, up to 20) — file ignored` };   // D6
     { const n = events.length; events = events.filter(e => e.machine === base); if (events.length !== n) probs.push(`${n - events.length} event(s) from another machine ignored (file belongs to "${base}")`); }
-    const reports = Array.isArray(o.clock_reports) ? o.clock_reports.filter(r => r && validMachine(r.about) && Number.isFinite(r.ahead_min)) : [];
+    const reports = Array.isArray(o.clock_reports) ? o.clock_reports.filter(r => r && validMachine(r.about) && Number.isFinite(r.ahead_min)).map(r => {
+      const x = { about: r.about, ahead_min: r.ahead_min }; if (typeof r.at === "string" && !isNaN(Date.parse(r.at))) x.at = new Date(Date.parse(r.at)).toISOString(); return x; }) : [];   // 00.09.001: optional "at"
     return { machine: base, events, reports, updated_at: typeof o.updated_at === "string" && !isNaN(Date.parse(o.updated_at)) ? new Date(Date.parse(o.updated_at)).toISOString() : null, bad: probs.length ? `${name}: ${probs.join("; ")}` : null };
+  }
+  // 00.09.001 (O1): a clock report counts for 24 h from when it was made ("at"), or, for an older file without "at",
+  // from the reporter's last write (the file's updated_at). Older reports are ignored, so a fixed clock stops being flagged.
+  function liveReport(r, fileUpdated, nowMs, hours) {
+    const t = Date.parse(r.at || fileUpdated || ""); if (isNaN(t)) return false;
+    return nowMs - t <= (hours || 24) * 3.6e6;
   }
   // reports: [{about, ahead_min}] — this machine telling the others their clock looks ahead (D5: the warning shows on both)
   function serialize(machine, events, nowIso, reports) {
@@ -197,5 +204,5 @@
     return out;
   }
   g.DASH = g.DASH || {};
-  g.DASH.sync = { MACHINE_RE, fileName, isTimeFile, validMachine, validEvent, parseTimeFile, fileMachine, clock, futureStamps, quarantine, restamp, clockLooksBehind, adjusted, normalize, canon, FUTURE_MS, serialize, dedupe, fold, materialize, diff, migrationEvents, cmp };
+  g.DASH.sync = { MACHINE_RE, fileName, isTimeFile, validMachine, validEvent, parseTimeFile, fileMachine, clock, futureStamps, quarantine, restamp, clockLooksBehind, adjusted, normalize, canon, FUTURE_MS, serialize, liveReport, dedupe, fold, materialize, diff, migrationEvents, cmp };
 })(typeof window !== "undefined" ? window : globalThis);

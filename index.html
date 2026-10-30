@@ -6,7 +6,7 @@
 <!-- 00.03.003 CSP: only this site's own scripts and connections (00.04: plus the GitHub API, for the encrypted data hub). style-src also allows inline style ATTRIBUTES, which the UI uses for layout (no script can run from them). -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; connect-src 'self' https://api.github.com; form-action 'none'">
 <title>Activity Dashboard</title>
-<meta name="description" content="Activity Dashboard 00.09.000_261029 — local-first app, encrypted Data folder, installable">
+<meta name="description" content="Activity Dashboard 00.09.001_261030 — local-first app, encrypted Data folder, installable">
 <link rel="icon" href="assets/icon-64.png">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0b0e12">
@@ -207,6 +207,7 @@
    <section id="help-keys"><h2>Keyboard shortcuts</h2><p>On Daily Focus (off while you type in a field or a dialog is open):</p><table><tr><th>Key</th><th>Does</th></tr>
     <tr><td><code>j</code> / <code>k</code></td><td>Next / previous row</td></tr><tr><td><code>d</code></td><td>✓ Done on the focused row</td></tr><tr><td><code>s</code></td><td>Snooze menu (arrow keys, Enter, Esc)</td></tr><tr><td><code>t</code></td><td>Log touch</td></tr><tr><td><code>Tab</code></td><td>Squares → meetings → sections; Enter on a square jumps to its section</td></tr></table></section>
    <section id="help-rev"><h2>Revision log</h2><table><tr><th>Revision</th><th>Date</th><th>Changes</th></tr>
+    <tr><td class="mono">00.09.001_261030</td><td>Oct 30 2026</td><td>New snapshots in an encrypted Data folder are no longer missed: when unlocked, a newer plain snapshot (including dated names) is encrypted, checked, loaded and the plain file deleted, with a notice.  When locked, the header says a new snapshot is waiting instead of Stale.  Clock-ahead reports expire after 24 hours.</td></tr>
     <tr><td class="mono">00.09.000_261029</td><td>Oct 29 2026</td><td>Accounts tab: strategic account plans (read-only, imported from the notebook's Markdown files) in six sections, with tier filter, unverified flags and print (one account per page). Open loops go into Projects automatically, never twice; reworded loops and repeated loops with a later date ask first. Contacts import (encrypted; email and phone never printed). Account touches on Daily Focus.</td></tr>
     <tr><td class="mono">00.08.001_261028</td><td>Oct 28 2026</td><td>Your GitHub profile picture in the upper-left corner, bundled with the app (no download when the page opens). Shown on screen only, never on printed sheets; "AD" initials if it can't load.</td></tr>
     <tr><td class="mono">00.08.000_261028</td><td>Oct 28 2026</td><td>Front and center: pin a plan (📌 on the Projects tab) and its open tasks show at the top of Daily Focus and Projects, urgent first, then overdue and by date, until every task is completed. File → Import project JSON… brings in plans with buckets, notes and named checklist items, checked by the same rules (no pricing, no email addresses); it needs an encrypted, unlocked Data folder and imports all or nothing.</td></tr>

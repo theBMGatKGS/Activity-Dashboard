@@ -3,7 +3,7 @@
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
   const R = DASH.rules, A = DASH.accounts, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.09.000_261029";
+  const REV = "00.09.001_261030";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -44,6 +44,7 @@
     S.own = (await DB.get("ownEvents")) || [];
     recompute();
     let raw = null, from = "";
+    if (S.dir && S.vault.kr && S.vault.key) await adoptPlainSnapshots();   // 00.09.001: newer plain deliveries are encrypted first, then read
     if (S.dir) { const r = await readDirSnapshot(); if (r) { raw = r; from = "Inbox Exporter snapshot"; } }
     if (!raw && !S.vault.kr && await loadScript(CFG.snapshotPath || "Data/inbox-snapshot.js") && window.DASH_SNAPSHOT) { raw = window.DASH_SNAPSHOT; from = "Inbox Exporter snapshot"; }
     const opened = await DB.get("openedSnapshot");
@@ -134,9 +135,13 @@
     const all = q.live, st = R2.fold(all), m = R2.materialize(st);
     S.clock.observe(all); S.held = R2.dedupe(q.held); S.future = R2.futureStamps(all, Date.now(), S.machine); S.removedIds = new Set(m.removedIds);
     const rep = {}; S.future.concat(S.held).forEach(e => { if (e.machine === S.machine) return; const a = Math.round((Date.parse(e.ts) - Date.now()) / 60000); rep[e.machine] = Math.max(rep[e.machine] || 0, a); });
-    const reports = Object.keys(rep).sort().map(k => ({ about: k, ahead_min: rep[k] }));
-    if (JSON.stringify(reports) !== JSON.stringify(S.myReports || [])) { S.myReports = reports; if (S.machine) setTimeout(() => scheduleWrite(), 0); }
-    S.aboutMe = [].concat(...Object.entries(S.fileReports || {}).map(([n, rs]) => (rs || []).filter(r => r.about === S.machine && R2.fileMachine(n) !== S.machine).map(r => Object.assign({ by: R2.fileMachine(n) }, r))));
+    const prevAt = {}; (S.myReports || []).forEach(r => { prevAt[r.about + ":" + r.ahead_min] = r.at; });   // 00.09.001: keep "at" while a report is unchanged
+    const fresh = t => t && Date.now() - Date.parse(t) < 12 * 3.6e6;   // a report that still holds is re-dated every 12 h, so it doesn't expire while the clock is still off
+    const reports = Object.keys(rep).sort().map(k => ({ about: k, ahead_min: rep[k], at: fresh(prevAt[k + ":" + rep[k]]) ? prevAt[k + ":" + rep[k]] : new Date().toISOString() }));
+    const sameR = (a, b) => JSON.stringify(a || []) === JSON.stringify(b || []);
+    if (!sameR(reports, S.myReports)) { S.myReports = reports; if (S.machine) setTimeout(() => scheduleWrite(), 0); }
+    const upd = S.fileUpdated || {}, nowMs = Date.now();   // O1: reports older than 24 h (or than the reporter's last write, for files without "at") are ignored
+    S.aboutMe = [].concat(...Object.entries(S.fileReports || {}).map(([n, rs]) => (rs || []).filter(r => r.about === S.machine && R2.fileMachine(n) !== S.machine && R2.liveReport(r, upd[n], nowMs, CFG.clockReportHours || 24)).map(r => Object.assign({ by: R2.fileMachine(n) }, r))));
     // Unattended time for a meeting that now overlaps another doesn't count (and isn't deleted): it returns if the overlap goes away.
     const conflicted = S.snap ? new Set(R.withConflicts(S.snap.calendar).filter(e => e.conflict).map(e => e.id)) : new Set();
     m.entries = m.entries.filter(e => !(e.source === "calendar" && !e.attended && conflicted.has(e.eventId)));
@@ -233,7 +238,7 @@
   }
   async function permOK(h) { try { return (await h.queryPermission({ mode: "readwrite" })) === "granted"; } catch (e) { return false; } }
   async function connectStored() {
-    if (window.DASH_TEST_FS) { S.dir = S.dirStored = window.DASH_TEST_FS; S.granted = true; return; }   // test harness only
+    if (window.DASH_TEST_FS) { S.dirStored = window.DASH_TEST_FS; if (!window.DASH_TEST_FS.denied) { S.dir = S.dirStored; S.granted = true; } return; }   // test harness only (denied: a folder whose permission lapsed)
     let h = null; try { h = await DB.get("dataDir"); } catch (e) { h = null; }
     if (!h || !h.queryPermission) return;
     S.dirStored = h; if (await permOK(h)) { S.dir = h; S.granted = true; }
@@ -261,7 +266,7 @@
   // found there are encrypted on the next sync and (if you agreed) deleted. Without keyring.json the folder works as in 00.02.
   const V = DASH.vault, ENC = ".enc", KEYRING = "keyring.json";
   const SNAP_NAMES = ["inbox-snapshot.json", "inbox-snapshot.js"].concat(CFG.snapshotNames || []), LOG_NAMES = ["notebook-log.js"].concat(CFG.notebookLogNames || []);
-  S.vault = { kr: null, key: null, locked: false, plainLeft: [], plainDone: {} };
+  S.vault = { kr: null, key: null, locked: false, plainLeft: [], plainDone: {}, adopted: [], snapUndeleted: {}, snapWaiting: null };
   const locked = () => !!(S.vault.kr && !S.vault.key);
   // "time-mac.json.enc" → "time-mac.json"; a OneDrive conflict copy "time-mac.json-WORKPC.enc" → "time-mac-WORKPC.json"
   function innerName(n) { if (!/\.enc$/i.test(n)) return n; const b = n.slice(0, -4); return /\.(json|js)$/i.test(b) ? b : b.replace(/\.(json|js)([^.]*)$/i, "$2.$1"); }
@@ -421,8 +426,9 @@
         } else if (purpose === "snapshot") {
           target = "inbox-snapshot.json" + ENC; const raw = parseSnapshotText(name, text);
           try { R.readSnapshot(raw); } catch (e) { throw new Error("snapshot rejected (" + e.message + "); not encrypted or uploaded, the previous one is kept"); }   // 00.04.001
+          if (raw && raw.example) throw new Error("example snapshot; example data is never encrypted into the Data folder");   // 00.09.001
           body = JSON.stringify(raw);
-          try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, "snapshot")); R.readSnapshot(old); if (new Date(old.generated_at) > new Date(raw.generated_at)) body = null; } catch (e) { /* none yet, or the old one is invalid: replace it */ }
+          try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, "snapshot")); R.readSnapshot(old); if (new Date(old.generated_at) >= new Date(raw.generated_at)) body = null; } catch (e) { /* none yet, or the old one is invalid: replace it */ }   // 00.09.001: same generated_at = same snapshot, no rewrite
         } else if (FEED_READ[purpose]) {   // 00.06.000 (00.07.000: + projects): validate, keep the newer copy
           target = name + ENC; const raw = JSON.parse(text); FEED_READ[purpose](raw); body = JSON.stringify(raw);
           try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, purpose)); if (Date.parse(stampOf(old)) > Date.parse(stampOf(raw))) body = null; } catch (e) { /* none yet */ }
@@ -432,6 +438,13 @@
           if (await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, purpose) !== body) throw new Error("read-back check failed");
         }
         n++;
+        if (purpose === "snapshot") {   // 00.09.001: a snapshot is a regenerated export: the plain file is always deleted once the encrypted copy checks out
+          const gen = parseSnapshotText(name, text).generated_at; let gone = false;
+          try { if (S.dir.removeEntry) { await S.dir.removeEntry(name); gone = true; } } catch (e) { /* reported below */ }
+          if (!gone) { S.vault.plainDone[name] = sig; S.vault.snapUndeleted[name] = true; S.fileProblems[name] = `${name}: encrypted, but the plain file couldn't be deleted; delete it by hand`; }
+          S.vault.adopted.push({ name, gen, used: body != null, gone });
+          continue;
+        }
         if (prefs.deletePlain && S.dir.removeEntry) await S.dir.removeEntry(name); else { S.vault.plainDone[name] = sig; left.push(name); }
       } catch (e) { S.fileProblems[name] = `${name}: plaintext file not encrypted (${e.message || e})`; left.push(name); }
     }
@@ -600,6 +613,46 @@
     toast(/^https?:$/.test(location.protocol) ? "In Edge: the ⋯ menu → Apps → Install this site as an app." : "Install works from the web address (https), not from a file opened on disk.");
   }
   async function readText(h) { const f = await h.getFile(); return { text: await f.text(), sig: f.lastModified + ":" + f.size }; }
+  // 00.09.001: plain snapshot deliveries (inbox-snapshot.js / .json, dated names) in an encrypted folder. Unlocked: encrypt the
+  // newest into inbox-snapshot.json.enc (encryptPlain keeps the newer of the two by generated_at), check it, delete the plain file.
+  // Only file names and generated_at are ever shown; snapshot contents are never logged.
+  const isPlainSnap = n => !/\.enc$/i.test(n) && !/\.csv$/i.test(n) && purposeOf(n) === "snapshot";
+  async function plainSnapList() {
+    const out = [];
+    for await (const [name, h] of S.dir.entries()) {
+      if (h.kind !== "file" || !isPlainSnap(name) || S.vault.snapUndeleted[name]) continue;
+      try { const f = await h.getFile(); out.push([name, f.lastModified + ":" + f.size, f.lastModified]); } catch (e) { /* unreadable: the sync reports it */ }
+    }
+    return out;
+  }
+  async function adoptPlainSnapshots() {
+    if (!S.dir || !S.vault.kr || !S.vault.key) return 0;
+    let list; try { list = await plainSnapList(); } catch (e) { return 0; }
+    if (!list.length) return 0;
+    const r = await encryptPlain(list.map(x => [x[0], x[1]])); snapNotice(); return r.n;
+  }
+  function snapNotice() {
+    const a = S.vault.adopted.splice(0); if (!a.length) return;
+    const used = a.filter(x => x.used).map(x => x.gen).filter(Boolean).sort().pop();
+    const when = g => { const d = new Date(g); return isNaN(d) ? "" : `${R.dayLabel(R.isoDay(g))}, ${R.hm(g)} ${R.tzLabel(g)}`; };
+    const gone = a.every(x => x.gone);
+    const msg = (used ? `New snapshot from ${when(used)} encrypted and loaded.` : `Plain snapshot was not newer than the encrypted copy, so it wasn't used.`)
+      + (gone ? ` The plain file${a.length > 1 ? "s were" : " was"} deleted.` : ` ⚠ A plain file couldn't be deleted; delete it by hand.`);
+    S.snapNoticeText = msg; toast(msg);
+  }
+  // Locked: names, sizes and dates only (no contents). A plain snapshot newer than the encrypted copy means one is waiting.
+  async function scanWaiting() {
+    S.vault.snapWaiting = null; if (!S.dir) return;
+    try {
+      let enc = 0; const plain = [];
+      for await (const [name, h] of S.dir.entries()) {
+        if (h.kind !== "file") continue;
+        if (name === "inbox-snapshot.json" + ENC) { try { enc = (await h.getFile()).lastModified; } catch (e) { /* none */ } }
+        else if (isPlainSnap(name)) { try { plain.push([name, (await h.getFile()).lastModified]); } catch (e) { /* skip */ } }
+      }
+      const newer = plain.filter(x => x[1] > enc); if (newer.length) S.vault.snapWaiting = { names: newer.map(x => x[0]) };
+    } catch (e) { /* folder unreadable: the chip says so */ }
+  }
   async function readDirSnapshot() {
     if (S.vault.kr) {
       if (!S.vault.key) return null; const n = "inbox-snapshot.json" + ENC;
@@ -627,9 +680,10 @@
   async function doSync(manual, again) {
     S.problems = S.problems.filter(p => p.startsWith("picked"));
     if (!S.dir) { await scriptPoll(); S.lastSync = new Date(); renderSync(); return; }
-    if (!window.DASH_TEST_FS && !(await permOK(S.dir))) { S.granted = false; renderSync(); return; }
+    if (!window.DASH_TEST_FS && !(await permOK(S.dir))) { S.granted = false; render(); return; }
     S.granted = true; let changed = false; const names = new Set(); let snapOk = false, snapRaw = null, logObj = null, feeds = {}, plain = [], kept = [], keyringSeen = false;
-    if (S.vault.kr && !S.vault.key) { S.lastSync = new Date(); renderSync(); return; }   // encrypted and locked: touch nothing
+    if (S.vault.kr && !S.vault.key) { await scanWaiting(); S.lastSync = new Date(); render(); return; }   // encrypted and locked: touch nothing (00.09.001: names and dates only)
+    S.vault.snapWaiting = null;
     // 00.05.002: GitHub sync is attached on any sync once the folder is unlocked, not only at start-up (a folder unlocked later,
     // e.g. after "Not now", a folder reconnect or a recovery-key reset, otherwise never synced with the hub). A saved set-up
     // that can't attach (different keyring, unreadable token) is reported in the chip as "⚠ GitHub not connected".
@@ -672,6 +726,7 @@
     if (S.vault.kr) {
       const r = plain.length && !again ? await encryptPlain(plain) : { n: 0, left: plain.map(x => x[0]) };
       S.vault.plainLeft = kept.concat(r.left);
+      snapNotice();
       if (r.n) { S.seen = {}; return doSync(manual, true); }
     }
     if (S.vault.plainLeft.length) S.problems.push(`${S.vault.plainLeft.length} plaintext file(s) still in the Data folder (File → Encryption… → Delete plaintext originals)`);
@@ -738,8 +793,8 @@
     let txt, warn = false, act = "syncNow", tip;
     if (!S.dir && !window.showDirectoryPicker && !window.DASH_TEST_FS) { warn = true; act = "hub"; txt = "⚠ Set up GitHub sync"; tip = "This browser can't connect a folder (e.g. iPad Safari). Click to sync through your private GitHub data repo instead. Other option: File → Save my time file… / Open time files…."; }
     else if (!S.dirStored) { warn = true; act = "connect"; txt = "⚠ Connect Data folder"; tip = "Click and pick the Dashboard/Data folder so time syncs between your machines."; }
-    else if (S.vault && S.vault.kr && !S.vault.key && S.granted) { warn = true; act = "encryption"; txt = "🔒 Data locked"; tip = "The Data folder is encrypted. Click to unlock with your passphrase."; }
-    else if (!S.granted) { warn = true; act = "connect"; txt = "⚠ Reconnect Data folder"; tip = "The browser needs your OK again to use the Data folder. Click, then Allow."; }
+    else if (S.vault && S.vault.kr && !S.vault.key && S.granted) { warn = true; act = "encryption"; txt = S.vault.snapWaiting ? "🔒 New snapshot waiting · Unlock to import" : "🔒 Data locked"; tip = S.vault.snapWaiting ? `A newer snapshot is in the Data folder (${S.vault.snapWaiting.names.join(", ")}). Click to unlock; it is then encrypted, loaded, and the plain file deleted.` : "The Data folder is encrypted. Click to unlock with your passphrase."; }
+    else if (!S.granted) { warn = true; act = "connect"; txt = "⚠ Reconnect Data folder"; tip = "The browser needs your OK again to use the Data folder. Click, then Allow. New snapshots are checked once it's reconnected."; }
     else if (S.aboutMe && S.aboutMe.length) { warn = true; const mx = Math.max(...S.aboutMe.map(r => r.ahead_min)), by = [...new Set(S.aboutMe.map(r => r.by))].join(", ");
       txt = "⚠ This computer's clock is ahead"; tip = `${by} sees time stamps from this computer up to ${mx} min in the future. Set this computer's clock to automatic, then Help → FAQ → "Repair clock stamps".`; }
     else if (S.held && S.held.length) { warn = true; const who = [...new Set(S.held.map(e => e.machine))].join(", ");
@@ -775,9 +830,17 @@
     return `As of ${day}, ${R.hm(S.snap.generatedAt)} ${R.tzLabel(S.snap.generatedAt)} · ${S.snap.from === "opened file" ? "opened snapshot" : "Inbox Exporter snapshot"}`;
   }
   function isStale() { return S.snap && (NOW - new Date(S.snap.generatedAt)) / 3.6e6 > (CFG.staleHours || 24); }
+  // 00.09.001: what the as-of stamp says instead of "Stale" when the reason is known
+  function staleState() {
+    if (!isStale()) return null;
+    if (S.vault && S.vault.kr && !S.vault.key && S.vault.snapWaiting) return { txt: "🔒 New snapshot waiting · Unlock to import · ", tip: "A newer snapshot is in the Data folder. Unlock to encrypt and load it." };
+    if (S.dirStored && !S.granted) return { txt: "⚠ Reconnect the Data folder to check for new snapshots · ", tip: "The browser needs your OK again to read the Data folder. Click the sync chip, then Allow." };
+    if (S.hubOnly) return { txt: "⚠ Stale · ", tip: "This snapshot is more than 24 hours old. Open the dashboard on a computer with the Data folder to bring in the latest snapshot." };
+    return { txt: "⚠ Stale · ", tip: "This snapshot is more than 24 hours old. Ask Inbox Exporter for a fresh one." };
+  }
   function renderHeader() {
-    const a = $("#asof"); a.textContent = (isStale() ? "⚠ Stale · " : "") + asOfText(); a.classList.toggle("stale", !!isStale());
-    a.title = isStale() ? "This snapshot is more than 24 hours old. Ask Inbox Exporter for a fresh one." : "Time the snapshot was made (Central Time).";
+    const a = $("#asof"), ss = staleState(); a.textContent = (ss ? ss.txt : "") + asOfText(); a.classList.toggle("stale", !!ss);
+    a.title = ss ? ss.tip : "Time the snapshot was made (Central Time).";
     $("#exbadge").classList.toggle("hidden", !(S.snap && S.snap.example));
     renderSync();
   }
@@ -1501,7 +1564,7 @@ ${ask}
       || '<div class="mt empty"><small>No more meetings today.</small></div>';
     const asof = `As of ${R.dayLabel(R.isoDay(S.snap.generatedAt))} · ${hhmm24(S.snap.generatedAt)} ${esc(R.tzLabel(S.snap.generatedAt))}`;
     const header = `<header class="fhead"><div class="fleft"><div class="tiles4" role="group" aria-label="Today at a glance">${squares}</div>${clearBar(f)}</div>
-      <div class="side"><div class="ttl"><h1>Daily Focus</h1><div class="asof${isStale() ? " stale" : ""}" title="${isStale() ? "This snapshot is more than 24 hours old." : "Time the snapshot was made (Central Time)."}">${isStale() ? "⚠ Stale · " : ""}${esc(asof)}${S.snap.example ? ' · <span class="exd">EXAMPLE DATA</span>' : ""}</div></div>
+      <div class="side"><div class="ttl"><h1>Daily Focus</h1><div class="asof${isStale() ? " stale" : ""}" title="${isStale() ? esc(staleState().tip) : "Time the snapshot was made (Central Time)."}">${isStale() ? esc(staleState().txt) : ""}${esc(asof)}${S.snap.example ? ' · <span class="exd">EXAMPLE DATA</span>' : ""}</div></div>
         ${f.doneHere ? `<div class="donehere" role="status">${f.doneHere} done here, not yet in To Do <span class="muted">· mark ${f.doneHere === 1 ? "it" : "them"} done in To Do</span></div>` : ""}
         <div class="meet" aria-label="Meetings today">${meet}${evs.length > 4 ? `<button class="lnk mmore" data-meetmore>+${evs.length - 4} more</button>` : ""}</div></div></header>`;
     let i = 0;

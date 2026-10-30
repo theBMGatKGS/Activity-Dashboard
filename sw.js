@@ -1,7 +1,7 @@
 /* Activity Dashboard service worker (00.03; 00.04: GitHub API calls are cross-origin and never touched or cached). Caches the app shell only, so the installed app opens offline.
    Never caches data: anything under Data/, config.local.js, keyring or .enc files always goes to the network (and data
    normally comes through the folder picker, which doesn't use fetch at all). Network first, so a new release shows on the next load. */
-const REV = "00.09.000_261029", CACHE = "dash-shell-" + REV;
+const REV = "00.09.001_261030", CACHE = "dash-shell-" + REV;
 const SHELL = ["./", "index.html", "app.css", "config.js", "manifest.webmanifest", "js/frame.js", "js/vault.js", "js/hub.js", "js/rules.js", "js/accounts.js", "js/sync.js", "js/db.js", "js/app.js",
   "assets/fonts/SpaceGrotesk-var-latin.woff2", "assets/fonts/IBMPlexMono-400-latin.woff2", "assets/fonts/IBMPlexMono-500-latin.woff2",
   "assets/avatar.png", "assets/icon-64.png", "assets/icon-192.png", "assets/icon-512.png", "assets/icon-maskable-512.png",

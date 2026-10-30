@@ -1,5 +1,10 @@
 # Release notes — Activity Dashboard
 
+## 00.09.001_261030 (Oct 30 2026)
+- New snapshots aren't missed in an encrypted Data folder.  When the folder is unlocked, a plain `inbox-snapshot.js` or `.json` (dated names too, such as `inbox-snapshot-261030.js`) that is newer than the encrypted copy is encrypted, checked, loaded and then deleted, and a notice says so.  This happens at start-up and on every sync.
+- When the folder is locked, the header says "New snapshot waiting · Unlock to import" instead of Stale.  Clicking the sync chip opens Unlock.  When the browser needs permission again, it says to reconnect the Data folder.
+- "This computer's clock is ahead" warnings now expire after 24 hours, so a fixed clock stops being flagged.
+
 ## 00.09.000_261029 (Oct 29 2026)
 **Accounts**: your strategic account plans, read-only, in six sections.
 - File → Import account plans (Markdown)… brings in the plans from the notebook.  Each plan's open loops go into Projects (plan "Accounts – <account>") automatically, never twice.
