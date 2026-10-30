@@ -75,6 +75,7 @@
     S.history = R.mergeHistory(R.mergeHistory(S.history, s.history), [cur]);
     if (!s.example) await DB.set("history", S.history);
     seedCalendarEntries();
+    S.snapDone = s.raw_generated_at;   // 00.09.001: set once the snapshot and its history merge are applied (tests wait on it)
     if (s.rejects.length) banner(`⚠ Incomplete: ${s.rejects.length} row(s) skipped — ${s.rejects.slice(0, 3).join("; ")}${s.rejects.length > 3 ? "; …" : ""}`);
     render(); return true;
   }
@@ -84,7 +85,8 @@
   async function cleanupExampleHistory() {
     if (!S.vault.kr || !S.vault.key) return;
     try {
-      if (await DB.get("historyCleanup0901")) return;
+      const mk = await DB.get("historyCleanup0901");
+      if (mk) { if (mk.at && Date.now() - Date.parse(mk.at) > 30 * 864e5 && await DB.get("historyBackup0901") !== undefined) { await DB.set("historyBackup0901", undefined); toast("The 30-day history backup was discarded."); } return; }   // L1
       window.DASH_EXAMPLE_SNAPSHOT || await loadScript(CFG.examplePath || "examples/example-snapshot.js");
       const ex = window.DASH_EXAMPLE_SNAPSHOT; if (!ex || !Array.isArray(ex.totals_history)) return;
       const known = new Set(ex.totals_history.map(h => h.generated_at + "|" + canon(h.totals)));
@@ -135,9 +137,15 @@
   function unmarkAttended(id) { S.entries = S.entries.filter(e => !(e.source === "calendar" && e.eventId === id)); saveEntries(); render(); }
   // Pending IndexedDB writes; reloads wait for them (DASH.app.flush) so a tombstone is never lost.
   const pending = new Set();
-  function track(p) { if (p && p.then) { pending.add(p); p.finally(() => pending.delete(p)).catch(() => {}); } return p; }   // the caller handles a rejection
+  // 00.09.001 (L2): a failed tracked write is recorded and shown as a problem line at once; reloads stop while one is outstanding.
+  const writeFails = [];
+  function track(p) { if (p && p.then) { pending.add(p); p.finally(() => pending.delete(p)).catch(e => { writeFails.push(e); S.saveProblems.write = `A save failed (${(e && e.message) || e}); not reloaded, so nothing in this window is lost`; renderSync(); }); } return p; }
   function flush() { return Promise.all([...pending].map(p => p.catch(() => {}))); }
-  async function reloadSafely() { await flush(); location.reload(); }
+  async function reloadSafely() {
+    await flush(); await new Promise(r => setTimeout(r, 0));
+    if (writeFails.length) { const n = writeFails.length; if (!S.problems.includes(S.saveProblems.write)) S.problems.push(S.saveProblems.write); banner(`⚠ ${n} save${n > 1 ? "s" : ""} failed, so the dashboard did not reload.  Check the sync chip, then try again.`, true); renderSync(); writeFails.length = 0; return false; }
+    location.reload(); return true;
+  }
   function saveRemoved() { return commit(); }
   async function removeEntry(id) {
     const e = S.entries.find(x => x.id === id); if (!e) return;
@@ -511,6 +519,7 @@
   async function encryptionDialog() {
     if (!S.vault.kr) { await turnOnEncryption(); return; }
     if (!S.vault.key) { if (await ensureUnlocked()) { await cleanupExampleHistory(); S.seen = {}; if (!S.hub) await hubBoot(); await syncNow(true); } return; }
+    S.vault.hasHistBackup = (await DB.get("historyBackup0901")) !== undefined;   // L1
     const act = await dialog("vaultmenu", `<b class="vt">🔐 Encryption</b>
       <p>This Data folder is encrypted (keyring <span class="mono">${esc(S.vault.kr.keyId)}</span>, created ${esc(new Date(S.vault.kr.created).toLocaleDateString())}). It's unlocked on this computer${S.vault.remembered ? " and remembered" : " for this session only"}.</p>
       ${S.vault.plainLeft.length ? `<p class="verr">⚠ ${S.vault.plainLeft.length} plaintext file(s) are still in the Data folder: ${esc(S.vault.plainLeft.join(", "))}</p>` : ""}
@@ -520,6 +529,7 @@
         <button class="btn" data-v="rem">${S.vault.remembered ? "Forget on this computer" : "Remember on this computer"}</button>
         ${S.vault.plainLeft.length ? `<button class="btn" data-v="del">Delete plaintext originals…</button>` : ""}
         ${Object.keys(S.vault.refused).map(n => `<button class="btn" data-v="ref:${esc(n)}">Delete refused file ${esc(n)}…</button>`).join("")}
+        ${S.vault.hasHistBackup ? `<button class="btn" data-v="discardHist">Discard history backup…</button>` : ""}
         <button class="btn" data-v="lock">Lock now</button>
       </div><div class="vbtns"><button class="btn primary" data-v="">Close</button></div>`,
     (d, done) => d.querySelectorAll("[data-v]").forEach(b => b.onclick = () => done(b.dataset.v)));
@@ -527,6 +537,7 @@
     // Lock: the hub client (and the token it holds) and the name codec leave memory too; unlocking attaches them again.
     if (act === "lock") { detachHub(); hubCodec = null; DB.setCipher(null); S.vault.key = null; await rememberKey(false); S.vault.locked = true; banner("🔒 Locked. File → Encryption… to unlock.", true); renderSync(); }
     if (act === "del") await deletePlainNow();
+    if (act === "discardHist" && confirm("Discard the backup of your trend history kept by the 00.09.001 cleanup?\n\nYour current history is not changed.  Without the backup, the removed example weeks can't be put back.\n\nOK = discard. Cancel = keep it (it is discarded on its own after 30 days).")) { await DB.set("historyBackup0901", undefined); S.vault.hasHistBackup = false; toast("History backup discarded."); }
     if (act && act.startsWith("ref:")) await deleteRefused(act.slice(4));
     if (act === "pass") {
       const r = await dialog("vaultpass", `<b class="vt">Change passphrase</b><label class="vlab">Current passphrase<input type="password" id="vc-old"></label>${passFields("New passphrase", "New passphrase again")}

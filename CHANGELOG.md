@@ -21,6 +21,10 @@
 - Checked write: when `move()` is missing or fails, the target is written in place, read back, and the previous bytes are put back if it doesn't check out.  New T32 shows that `move()` onto an existing `.enc` replaces it in Chromium (the origin-private file system; a local folder picker can't be automated).
 - `track()` and `flush()` no longer turn a handled save failure into an unhandled page error.
 - T23 runs at 11/2 again, so its -06:00 snapshots go through GitHub to the iPad as before.
+- Third QA review.  R1: `useSnapshot` sets `S.snapDone` once the snapshot and its history merge are applied, and t31's F2 check waits for it (30 s limit, and a timeout fails the check) instead of the raw stamp.
+- L1: the history backup is left out of Export local data (it is a cache-only key now), is discarded on its own 30 days after the cleanup, and File → Encryption… has Discard history backup… with a confirmation.  Discarding it doesn't change the history.
+- L2: a failed tracked save shows a problem line at once.  Reload snapshot (and the other reloads) stop when a save failed, and a banner says the dashboard did not reload.
+- The cleanup still removes only exact matches of the example fixture weeks.
 - Test harness: `DASH_TEST_FS.denied` mirrors a folder whose permission lapsed.  New `tests/t31_snapshot.py` (browser) and `tests/snap_vault_helper.js`; `sync.test.js` O1a–O1g.  REV 00.09.001_261030.
 
 ## 00.09.000_261029 (Oct 29 2026)

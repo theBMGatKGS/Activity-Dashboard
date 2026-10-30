@@ -197,7 +197,11 @@ with sync_playwright() as p:
     d = folder(OLD, [("inbox-snapshot.js", snap(NEW))]); ctx, pg = page(d, unlock=False)
     ex = pg.evaluate("DASH.app.state.history.map(h => h.generated_at)"); check(bool(EX_DATES & set(ex)), f"F2 locked start: example totals on screen ({len(ex)} weeks)")
     pg.click("#sync"); pg.wait_for_selector("#vaultunlock"); pg.fill("#vault-pass", PASS); pg.click("#vault-ok")
-    pg.wait_for_function(f"() => DASH.app.state.snap.raw_generated_at === {json.dumps(NEW)}", timeout=30000); pg.evaluate("DASH.app.flush()")
+    # R1: wait for the app's own signal that the snapshot and its history merge are applied (snapDone), not just the raw stamp
+    try: pg.wait_for_function(f"() => DASH.app.state.snapDone === {json.dumps(NEW)} && DASH.app.state.history.length > 0", timeout=30000); merged = True
+    except Exception: merged = False
+    check(merged, "F2 after unlock: the snapshot and history merge finished (snapDone) within 30 s")
+    pg.evaluate("DASH.app.flush()")
     h1 = pg.evaluate("DASH.app.state.history.map(h => h.generated_at)")
     check(not (EX_DATES & set(h1)) and h1, f"F2 after unlock: in-memory history and trend lines carry no example weeks ({h1})")
     pg.reload(); pg.wait_for_selector(".tile"); pg.evaluate("DASH.app.flush()"); h2 = pg.evaluate("DASH.app.state.history.map(h => h.generated_at)")
@@ -277,6 +281,35 @@ with sync_playwright() as p:
     pg.evaluate("h => DASH.db.set('history', h)", seeded); pg.evaluate("DASH.app.flush()"); pg.reload(); pg.wait_for_selector(".tile"); pg.evaluate("DASH.app.flush()")
     h2 = pg.evaluate("DASH.db.get('history')")
     check(len(h2) >= len(seeded) and not pg.evaluate("DASH.app.state.cleanupNotice || ''"), "cleanup runs only once (marker): re-seeded weeks are left alone, no notice"); ctx.close()
+    # L1: the history backup is never exported, can be discarded from File > Encryption (with a confirmation), and goes after 30 days
+    d = folder(NEW); ctx, pg = page(d); pg.on("dialog", on_dlg)
+    pg.evaluate("h => Promise.all([DASH.db.set('history', h), DASH.db.set('historyCleanup0901', undefined), DASH.db.set('historyBackup0901', undefined)])", seeded); pg.evaluate("DASH.app.flush()")
+    pg.reload(); pg.wait_for_selector(".tile"); pg.evaluate("DASH.app.flush()")
+    ex = pg.evaluate("DASH.db.exportAll().then(o => Object.keys(o))")
+    check(pg.evaluate("DASH.db.get('historyBackup0901').then(v => Array.isArray(v))") and "historyBackup0901" not in ex and "historyCleanup0901" not in ex, "L1 Export local data leaves the history backup out")
+    hist0 = pg.evaluate("DASH.db.get('history')")
+    DLG["accept"] = False; vault_menu(pg); pg.click('#vaultmenu [data-v="discardHist"]'); pg.wait_for_timeout(300)
+    check("Discard the backup" in DLG["msgs"][-1] and pg.evaluate("DASH.db.get('historyBackup0901').then(v => Array.isArray(v))"), "L1 Discard history backup asks first; Cancel keeps it")
+    DLG["accept"] = True; vault_menu(pg); pg.click('#vaultmenu [data-v="discardHist"]'); pg.wait_for_timeout(300)
+    check(pg.evaluate("DASH.db.get('historyBackup0901').then(v => v === undefined)") and pg.evaluate("DASH.db.get('history')") == hist0, "L1 OK discards the backup; history unchanged")
+    vault_menu(pg); check(not pg.query_selector('#vaultmenu [data-v="discardHist"]'), "L1 no Discard button once there is no backup"); pg.click('#vaultmenu [data-v=""]')
+    old = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 31 * 86400)); fresh = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 29 * 86400))
+    pg.evaluate("m => Promise.all([DASH.db.set('historyBackup0901', [{ generated_at: '2026-01-01T00:00:00-06:00', totals: {} }]), DASH.db.set('historyCleanup0901', { at: m, removed: 1 })])", fresh); pg.evaluate("DASH.app.flush()")
+    pg.reload(); pg.wait_for_selector(".tile")
+    check(pg.evaluate("DASH.db.get('historyBackup0901').then(v => Array.isArray(v))"), "L1 a 29-day-old backup is kept")
+    pg.evaluate("m => DASH.db.set('historyCleanup0901', { at: m, removed: 1 })", old); pg.evaluate("DASH.app.flush()"); pg.reload(); pg.wait_for_selector(".tile")
+    check(pg.evaluate("DASH.db.get('historyBackup0901').then(v => v === undefined)") and pg.evaluate("DASH.db.get('history')") == hist0, "L1 a 31-day-old backup is discarded on its own; history unchanged"); ctx.close()
+
+    # L2: a failed save shows a problem line at once, and Reload snapshot doesn't reload silently
+    d = folder(NEW); ctx, pg = page(d)
+    pg.evaluate("""(() => { const o = DASH.db.set; DASH.db.set = (k, v) => k === 'ownEvents' ? Promise.reject(new Error('disk full (test)')) : o(k, v); window.__noReload = 1;
+      const S = DASH.app.state; S.entries.push({ id: 'i-l2', date: '2026-10-30', minutes: 5, audience: 'Owner/operator', subject: 'Account strategy', source: 'manual', confirmed: true }); DASH.app.commit().catch(() => {}); })()""")
+    pg.wait_for_timeout(300); tip = pg.get_attribute("#sync", "title") or ""
+    pg.evaluate("DASH.app.syncNow()"); s = S(pg)
+    check(any("A save failed" in x for x in s["problems"]), f"L2 a failed save shows a problem line before any reload ({[x for x in s['problems'] if 'save' in x]})")
+    pg.click('.mtop:has-text("File")'); pg.click('[data-act="reload"]'); pg.wait_for_timeout(800)
+    check(pg.evaluate("window.__noReload === 1") and "did not reload" in pg.inner_text("#banner"), f"L2 Reload snapshot after a failed save: no reload, banner says why ({pg.inner_text('#banner')!r})")
+    pg.screenshot(path=str(SHOTS / "31h-failed-save-no-reload.png")); ctx.close()
     b.close()
 check(not errors, f"no page errors ({errors[:3]})")
 print("T31 " + ("OK" if ok else "FAIL")); sys.exit(0 if ok else 1)
