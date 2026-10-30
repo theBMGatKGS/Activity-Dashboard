@@ -2,8 +2,8 @@
 (function () {
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
-  const R = DASH.rules, A = DASH.accounts, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.09.001_261030";
+  const R = DASH.rules, A = DASH.accounts, E = DASH.events, DB = DASH.db, CFG = window.DASH_CONFIG || {};
+  const REV = "00.10.000_261030";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -20,7 +20,7 @@
   const LABEL = { overdue: "Overdue", dueToday: "Due Today", thisWeek: "This Week", iOwe: "I Owe", owedToMe: "Owed to Me", goingCold: "Going Cold",
     followUps: "Follow-ups", waitingOn: "Waiting on", accountTouches: "Account touches", travel: "Travel" };
   // 00.05: Daily Focus is always the home view (Q9); ?view= opens another tab (deep links, tests).
-  const VIEWS = ["focus", "dashboard", "workload", "projects", "accounts", "print", "manager"];
+  const VIEWS = ["focus", "dashboard", "workload", "projects", "accounts", "events", "print", "manager"];
   const S = { snap: null, today: R.ymd(NOW), filter: null, open: {}, collapsed: {}, entries: [], removedCal: [], history: [], rules: R.DEFAULT_RULES, view: VIEWS.includes(qp.get("view")) ? qp.get("view") : "focus", wkOffset: 0, trends: false,
     flags: {}, focusExp: new Set(), laterOpen: false, noDateOpen: false, focusAnimated: false };
   // "now" for Snooze: the ?now= test clock if given, else the real clock.
@@ -71,7 +71,7 @@
     s.from = from; s.raw_generated_at = raw.generated_at; S.snap = s; S.snapRaw = raw;
     // 00.09.001 (F2): leaving EXAMPLE DATA for a real snapshot drops the example's weekly totals; only the stored real history is kept
     if (wasExample && !s.example) { let h = []; try { h = (await DB.get("history")) || []; } catch (e) { h = []; } S.history = Array.isArray(h) ? h.filter(x => x && !x.example) : []; }
-    await calForSnapshot(s);
+    await calForSnapshot(s); await eventsForSnapshot(s); await loadLinks();
     const cur = { generated_at: s.generatedAt, totals: R.totals(s.items, ctx()) };
     S.history = R.mergeHistory(R.mergeHistory(S.history, s.history), [cur]);
     if (!s.example) await DB.set("history", S.history);
@@ -333,11 +333,11 @@
   function innerName(n) { if (!/\.enc$/i.test(n)) return n; const b = n.slice(0, -4); return /\.(json|js)$/i.test(b) ? b : b.replace(/\.(json|js)([^.]*)$/i, "$2.$1"); }
   const isSnapName = n => SNAP_NAMES.includes(n) || /^inbox-snapshot(?:[^a-z0-9][^/]*)?\.jso?n?$/i.test(n);
   const isLogName = n => LOG_NAMES.includes(n) || /^notebook-log(?:[^a-z0-9][^/]*)?\.js$/i.test(n);
-  const CAL_NAME = "calendar-snapshot.json", TRIPS_NAME = "trips.json", PROJ_NAME = "projects.json", STORE_NAME = "projects-store.json", ACC_NAME = "accounts-store.json", CONTACTS_NAME = "contacts.json";   // 00.09.000: account plans + contacts, encrypted only   // 00.07.000: optional Planner export feed + the Projects store (source of truth), both encrypted only
-  const FEED_READ = { calendar: raw => R.readCalendar(raw), trips: raw => R.readTrips(raw), projects: raw => R.readProjects(raw), projstore: raw => R.readStore(raw), accstore: raw => A.readAccStore(raw), contacts: raw => A.readContacts(raw) };
+  const CAL_NAME = "calendar-snapshot.json", TRIPS_NAME = "trips.json", PROJ_NAME = "projects.json", STORE_NAME = "projects-store.json", ACC_NAME = "accounts-store.json", CONTACTS_NAME = "contacts.json", EVENTS_NAME = "events-store.json";   // 00.09.000: account plans + contacts, encrypted only   // 00.07.000: optional Planner export feed + the Projects store (source of truth), both encrypted only
+  const FEED_READ = { calendar: raw => R.readCalendar(raw), trips: raw => R.readTrips(raw), projects: raw => R.readProjects(raw), projstore: raw => R.readStore(raw), accstore: raw => A.readAccStore(raw), contacts: raw => A.readContacts(raw), events: raw => E.readEventsStore(raw) };
   const stampOf = raw => raw.generated_at || raw.updated_at;
     // 00.06.000: calendar / travel assistants feeds (encrypted only)
-  const purposeOf = n => R2.isTimeFile(n) ? "time" : n === CAL_NAME ? "calendar" : n === TRIPS_NAME ? "trips" : n === PROJ_NAME ? "projects" : n === STORE_NAME ? "projstore" : n === ACC_NAME ? "accstore" : n === CONTACTS_NAME ? "contacts" : isSnapName(n) ? "snapshot" : isLogName(n) ? "log" : null;
+  const purposeOf = n => R2.isTimeFile(n) ? "time" : n === CAL_NAME ? "calendar" : n === TRIPS_NAME ? "trips" : n === PROJ_NAME ? "projects" : n === STORE_NAME ? "projstore" : n === ACC_NAME ? "accstore" : n === CONTACTS_NAME ? "contacts" : n === EVENTS_NAME ? "events" : isSnapName(n) ? "snapshot" : isLogName(n) ? "log" : null;
   async function writeText(name, text) {
     const fh = await S.dir.getFileHandle(name, { create: true });
     const w = await fh.createWritable();            // Chromium writes to a temporary swap file; close() swaps it in (atomic)
@@ -919,6 +919,7 @@
     if (S.view === "workload") renderWorkload();
     if (S.view === "projects") renderProjects();
     if (S.view === "accounts") renderAccounts();
+    if (S.view === "events") renderEvents();
     // Both sheets are always rendered so Ctrl+P from any tab prints a real sheet (F11).
     $("#sheet-print").innerHTML = sheet(false); $("#sheet-manager").innerHTML = sheet(true);
   }
@@ -1202,6 +1203,152 @@
     if (!S.tripsFeed) { const t = await DB.get("trips"); try { if (t && t.schema_version) S.tripsFeed = R.readTrips(t); } catch (e) { /* ignore */ } }
   }
 
+  // ---------- 00.10.000 Tradeshows & Events: Outlook calendar for dates (snapshot events[]), notebook events.md for details ----------
+  // Read-only here: events.md changes in the notebook, then File → Import events.  Kept only as events-store.json.enc (and the
+  // SECRET IndexedDB key eventsStore).  Example mode: two fictional events in memory, imports refused.
+  Object.assign(S, { evStore: null, evLoaded: false, evExample: false, evRejects: [], evOutlookEx: null, evPastOpen: false, links: null, linksLoaded: false });
+  const ZONE_LAB = { "America/New_York": "ET", "America/Chicago": "CT", "America/Denver": "MT", "America/Phoenix": "MST", "America/Los_Angeles": "PT" };
+  const wall = iso => iso ? iso.slice(11, 16) : "";
+  async function eventsForSnapshot(s) {
+    if (s.example) {
+      if (S.evExample) return;
+      S.evStore = null; S.evLoaded = false; S.evOutlookEx = null;
+      if (await loadScript(CFG.exampleEventsPath || "examples/example-events.js") && window.DASH_EXAMPLE_EVENTS) {
+        try { const ex = window.DASH_EXAMPLE_EVENTS.build(S.today, R.addDays), r = E.importEvents([["events.md", ex.markdown]], null, nowDate().toISOString());
+          if (r.store) { S.evStore = Object.assign(r.store, { example: true }); S.evOutlookEx = E.readSnapEvents(ex.outlook, []); S.evExample = true; } } catch (e) { S.evStore = null; }
+      }
+      return;
+    }
+    if (S.evExample) { S.evStore = null; S.evOutlookEx = null; S.evExample = false; }   // never carry example events into real data
+    if (!S.evLoaded) { const st = await DB.get("eventsStore"); try { if (st && st.schema_version && (!S.evStore || Date.parse(st.updated_at) > Date.parse(S.evStore.updated_at))) S.evStore = E.readEventsStore(st); } catch (e) { /* ignore a bad cache */ } S.evLoaded = true; }
+  }
+  const evOutlook = () => S.evExample ? (S.evOutlookEx || []) : (S.snap && S.snap.events) || [];
+  const evModel = () => E.model(evOutlook(), S.evStore, S.today, S.tripsFeed);
+  async function saveEvents() {
+    if (S.evExample || !S.evStore) { render(); return; }
+    const body = { schema_version: 1, updated_at: S.evStore.updated_at, events: S.evStore.events, answers: S.evStore.answers, source_sha256: S.evStore.source_sha256 };
+    track(DB.set("eventsStore", body));
+    if (canSaveToFolder()) await track(writeVerified(EVENTS_NAME + ".enc", "events", JSON.stringify(body)));
+    render();
+  }
+  function importEventsFiles(files) {
+    if (S.evExample || (S.snap && S.snap.example)) { toast("⚠ Load your real data first: events are never mixed with EXAMPLE DATA. Nothing was imported."); return null; }
+    if (importRefused("Importing events")) return null;
+    const r = E.importEvents(files, S.evStore, nowDate().toISOString()); S.evRejects = r.rejects;
+    if (r.rejects.length) { toast(`⚠ Nothing imported, ${r.rejects.length} problem(s): ${r.rejects.slice(0, 3).join("; ")}${r.rejects.length > 3 ? "; …" : ""}`); render(); return r; }
+    S.evStore = r.store; saveEvents();
+    toast(`Imported ${r.count} event row(s)${r.same ? " (unchanged)" : ""}. Saved encrypted. Delete the plain events.md copy you picked if it isn't in your notebook.`);
+    return r;
+  }
+  const evDates = x => {
+    if (!x.start_date || x.start_date === "?") return "Date ?";
+    const days = x.end_date && x.end_date !== "?" && x.end_date !== x.start_date ? `${R.dayLabel(x.start_date)}–${R.dayLabel(x.end_date)}` : R.dayLabel(x.start_date);
+    if (!x.o) return days;
+    if (x.o.all_day) return `${days} · all day`;
+    return `${days} · ${wall(x.o.start)}–${wall(x.o.end)} ${ZONE_LAB[x.o.zone] || x.o.zone || ""}`.trim();
+  };
+  function noteLink(path) {
+    const u = S.links ? E.notebookUrls(S.links, path + ".md") : {};
+    return u.obsidian ? `<a class="mono evnote" href="${esc(u.obsidian)}">${esc(path)}</a>` : `<span class="mono evnote">${esc(path)}</span>`;
+  }
+  function evRow(x, print) {
+    const d = x.d, fl = x.flags || [];
+    const chip = (on, l, t) => `<span class="evtc${on ? " on" : ""}" title="${esc(t)}">${l}</span>`;
+    const travel = d && d.travel.state ? `${esc(d.travel.state)}${["planned", "booked"].includes(d.travel.state) ? " " + chip(d.travel.state === "booked" && d.travel.flight, "F", "flight") + chip(d.travel.state === "booked" && d.travel.hotel, "H", "hotel") + chip(d.travel.state === "booked" && d.travel.car, "C", "car") : ""}${d.travel.note ? ` <span class="faint">${esc(d.travel.note)}</span>` : ""}` : "";
+    const accs = d ? d.accounts.map(sl => { const a = S.accStore && S.accStore.accounts.find(y => y.slug === sl); return a && !print ? `<button class="linkbtn" data-accgo="${esc(sl)}">${esc(a.account)}</button>` : `<span class="evacc">${esc(a ? a.account : sl)}</span>`; }).join(", ") + (d.accounts_text && d.accounts_text !== "?" ? ` <span class="faint">${esc(d.accounts_text)}</span>` : "") : "";
+    const trip = d && d.trip_ref && d.trip_ref !== "?" ? (() => { const t = S.tripsFeed && S.tripsFeed.trips.find(y => y.id === d.trip_ref); return `<span class="evtrip mono">✈ ${esc(d.trip_ref)}${t ? ` · ${esc(t.name)}` : " · trip not found"}</span>`; })() : "";
+    const dl = d ? [d.reg_deadline && d.reg_deadline !== "?" ? `<span class="evdl">Registration ${esc(R.dayLabel(d.reg_deadline))}</span>` : "", d.room_deadline && d.room_deadline !== "?" ? `<span class="evdl">Room block ${esc(R.dayLabel(d.room_deadline))}</span>` : ""].join(" ") : "";
+    const flags = fl.filter(f => f.level !== "unv").map(f => `<span class="evflag f-${f.level}">${f.level === "red" ? "● " : ""}${esc(f.text)}</span>`).join(" ");
+    const src = d ? [...d.source_note.map(noteLink), d.source_text && d.source_text !== "?" ? `<span class="faint">${esc(d.source_text)}</span>` : ""].filter(Boolean).join(", ") : "";
+    const fu = d ? [...d.follow_ups.map(noteLink), d.follow_ups_text && d.follow_ups_text !== "?" ? esc(d.follow_ups_text) : ""].filter(Boolean).join(", ") : "";
+    const ask = x.possible && !print ? (() => { const r = S.evStore.events.find(y => y.key === x.possible); return `<div class="askrow evask"><b>Possible match (title cut off)</b> <span class="faint">Outlook shows a shortened title; link it to the notebook row?</span><div>Outlook: <span class="mono">${esc(x.o.title)}</span></div><div>Notebook: <span class="mono">${esc(r ? r.event : "")}</span></div><button class="btn" data-evans="${esc(x.o.id)}" data-row="${esc(x.possible)}" data-ch="link">Link</button> <button class="btn" data-evans="${esc(x.o.id)}" data-row="${esc(x.possible)}" data-ch="no">Not this one</button></div>`; })() : "";
+    const unvd = fl.some(f => f.level === "unv");
+    const src2 = x.kind === "both" ? "Outlook + notebook" : x.kind === "outlook" ? "In Outlook, no details yet" : "Notebook only";
+    return `<div class="evrow${x.red ? " red" : ""}${unvd ? " unvrow" : ""}" role="listitem" data-ev="${esc(x.id)}">
+      <div class="evwhen">${esc(evDates(x))}</div>
+      <div class="evmain"><b>${esc(x.title)}</b>${d && d.unverified_title ? unv(true) : unvd ? unv(true) : ""} <span class="faint">· ${esc(x.location || "?")}</span> ${d ? `<span class="evst st-${esc(d.status.replace(/\s/g, "-").replace("?", "unknown"))}">${esc(d.status === "?" ? "status ?" : d.status)}</span>` : ""}${d && d.role && d.role !== "?" ? ` <span class="faint">${esc(d.role)}</span>` : ""}${d && d.series && d.series !== "?" ? ` <span class="faint">· ${esc(d.series)}</span>` : ""}
+        <div class="evmeta">${flags}${travel ? ` <span class="evtravel">Travel: ${travel}</span>` : ""} ${dl} ${trip}</div>
+        ${accs ? `<div class="evmeta">${x.section === "past" ? "Met at this event" : "Target accounts"}: ${accs}</div>` : ""}
+        ${fu ? `<div class="evmeta">Follow-ups: ${fu}</div>` : ""}${src ? `<div class="evmeta faint">Source: ${src} · ${src2}</div>` : `<div class="evmeta faint">${src2}</div>`}
+        ${d && d.notes.length && !print ? `<details class="evnotes noprint"><summary>notes</summary>${d.notes.map(n => `<p>${esc(n)}</p>`).join("")}</details>` : ""}${ask}</div></div>`;
+  }
+  function evStripHtml(m) {
+    const cells = E.strip(m.list, S.today, 120);
+    return `<div class="evstrip" role="img" aria-label="Next 120 days: ${m.list.filter(x => x.section !== "past" && x.start_date !== "?").length} dated event(s)">${cells.map(c => `<span class="evd${c.n ? " has" : ""}${c.red ? " red" : ""}${c.first ? " m1" : ""}" title="${esc(R.dayLabel(c.day) + (c.titles.length ? ": " + c.titles.join(", ") : ""))}">${c.first ? `<i>${esc(new Date(c.day + "T12:00:00Z").toLocaleString("en-US", { month: "short", timeZone: "UTC" }))}</i>` : ""}</span>`).join("")}</div>`;
+  }
+  function renderEvents() {
+    const el = $("#view-events"); if (!el) return;
+    const where = S.evExample ? "EXAMPLE DATA: two fictional events; importing is off until your real data is loaded" : canSaveToFolder() ? "Saved encrypted in the Data folder (events-store.json.enc)" : "Importing needs an encrypted, unlocked Data folder";
+    const tools = `<button class="btn" data-act="importEvents">Import events (events.md)…</button> <button class="btn" data-act="printEvents">Print</button> <button class="btn" data-act="samLink">SAM bullets…</button>`;
+    const rej = S.evRejects && S.evRejects.length ? `<div class="projrej" role="alert"><b>Last import refused:</b><ul>${S.evRejects.slice(0, 12).map(x => `<li class="mono">${esc(x)}</li>`).join("")}</ul></div>` : "";
+    const m = evModel(); S.evLast = m;
+    const noOutlook = !S.evExample && S.snap && !S.snap.hasEvents ? `<p class="faint">This snapshot has no Outlook “Tradeshows &amp; Events” section yet, so dates come from the notebook only.</p>` : "";
+    if (!m.list.length) { el.innerHTML = `<div class="projempty"><h2>Events</h2><p>No events yet. Dates come from Outlook's “Tradeshows &amp; Events” calendar (in the snapshot); details come from the notebook's events.md (File → Import events). Read-only here.</p>${tools}<p class="faint">${esc(where)}</p>${noOutlook}${rej}</div>`; return; }
+    const legend = `<div class="evlegend faint"><span class="evflag f-red">● red</span> needs action · <span class="evflag f-amber">amber</span> check · <span class="unv">unverified</span> not confirmed${m.tripData ? "" : " · Trip overlap: <i>Trip data not available</i>"}</div>`;
+    const secs = m.sections.filter(s => s.rows.length).map(s => s.id === "past" && !S.evPastOpen
+      ? `<section class="evsec" id="evs-past"><h3><button class="lnk" data-evpast aria-expanded="false">▸ Past · ${s.rows.length}</button></h3></section>`
+      : `<section class="evsec" id="evs-${s.id}"><h3>${s.id === "past" ? `<button class="lnk" data-evpast aria-expanded="true">▾ Past · ${s.rows.length}</button>` : `${esc(s.title)} <span class="badge">${s.rows.length}</span>`}</h3><div role="list">${s.rows.map(x => evRow(x, false)).join("")}</div></section>`).join("");
+    const printList = m.sections.filter(s => s.rows.length).map(s => `<h3>${esc(s.title)}</h3>${s.rows.map(x => evRow(x, true)).join("")}`).join("");
+    el.innerHTML = `<div class="acctools projtools"><h2>Events</h2> ${tools} <span class="faint projasof">${esc(where)}${S.evStore ? ` · events.md imported ${esc(R.dayLabel(R.isoDay(S.evStore.updated_at)))}` : " · events.md not imported yet"}</span></div>${rej}${noOutlook}
+      ${evStripHtml(m)}${legend}<div class="evlist">${secs}</div>
+      <div class="evprint" aria-hidden="true"><h2>Tradeshows &amp; Events · ${esc(R.dayLabel(S.today))}</h2>${printList}<footer class="accfoot"><b>Restricted - Internal Use Only</b> · Rev ${REV}</footer></div>
+      <div class="faint projfoot">Dates, times and location from Outlook; details from the notebook (read-only). Outlook's time is shown with its zone label. Rev ${REV}</div>`;
+  }
+  function evFocusHtml() {
+    if (!S.evStore && !evOutlook().length) return "";
+    const m = evModel(), rows = m.list.filter(x => x.red && x.section !== "past"); if (!rows.length) return "";
+    return `<section class="accfocus evfocus" aria-labelledby="evf-h"><h2 id="evf-h">🎪 Events <span class="badge">${rows.length}</span> <span class="faint fcnote">red flags only · <button class="linkbtn" data-evgo>open Events</button></span></h2><div role="list">${rows.slice(0, 5).map(x => `<div role="listitem" class="accfrow"><button class="linkbtn" data-evgo>${esc(x.title)}</button> · ${esc(evDates(x))} · ${x.flags.filter(f => f.level === "red").map(f => `<span class="c-over">${esc(f.text)}</span>`).join(", ")}</div>`).join("")}</div></section>`;
+  }
+  function accEventsHtml(slug) {
+    if (!S.evStore) return "";
+    const r = E.forAccount(slug, evModel().list, S.today); if (!r.upcoming.length && !r.met.length) return "";
+    const li = x => `<li>${esc(x.title)} <span class="faint">· ${esc(evDates(x))}${x.d && x.d.status !== "?" ? " · " + esc(x.d.status) : ""}</span></li>`;
+    return `<section class="accsec"><h3>Events</h3>${r.upcoming.length ? `<div class="faint">Upcoming, as a target account</div><ul>${r.upcoming.map(li).join("")}</ul>` : ""}${r.met.length ? `<div class="faint">Met at</div><ul>${r.met.map(li).join("")}</ul>` : ""}</section>`;
+  }
+  function eventsClick(e) {
+    const g1 = e.target.closest && e.target.closest("[data-evgo]"); if (g1) { setView("events"); return true; }
+    const p = e.target.closest && e.target.closest("[data-evpast]"); if (p) { S.evPastOpen = !S.evPastOpen; render(); return true; }
+    const a = e.target.closest && e.target.closest("[data-evans]"); if (a && S.evStore) {
+      S.evStore = Object.assign(E.answer(S.evStore, a.dataset.evans, a.dataset.row, a.dataset.ch), { updated_at: nowDate().toISOString(), example: S.evStore.example });
+      saveEvents(); toast(a.dataset.ch === "link" ? "Linked. The cut-off Outlook title now uses the notebook row's details." : "Kept apart. You won't be asked again for this pair."); return true; }
+    return false;
+  }
+  // ---------- 00.10.000 File → Links… (per computer, encrypted) and the SAM bullets link ----------
+  async function loadLinks() { if (S.linksLoaded) return S.links; const l = await DB.get("links"); S.links = l && typeof l === "object" && !E.linksProblem(l) ? l : null; S.linksLoaded = !!(S.vault && S.vault.key) || !(S.vault && S.vault.kr); return S.links; }
+  async function linksDialog() {
+    if (S.vault && S.vault.kr && !S.vault.key) { toast("⚠ Unlock the Data folder first: links are stored encrypted on this computer."); return; }
+    if (!canSaveToFolder()) { toast("⚠ Links need an encrypted, unlocked Data folder (File → Encryption…), so they are never kept unencrypted."); return; }
+    const l = (await loadLinks()) || {};
+    await dialog("linksdlg", `<b class="vt">🔗 Links on this computer</b>
+      <p>Where the notebook lives, for the SAM bullets link and note links.  Stored encrypted on this computer only; never exported or synced.</p>
+      <label class="vlab">Obsidian vault name<input id="lk-vault" value="${esc(l.vault || "")}" autocomplete="off" spellcheck="false"></label>
+      <label class="vlab">Notebook repo address<input id="lk-repo" value="${esc(l.repo || "")}" placeholder="https://github.com/owner/repo" autocomplete="off" spellcheck="false"></label>
+      <label class="vlab">Branch<input id="lk-branch" value="${esc(l.branch || "main")}" autocomplete="off" spellcheck="false"></label>
+      <label class="vlab">SAM sources file<input id="lk-src" value="${esc(l.sources || E.DEFAULT_SOURCES)}" autocomplete="off" spellcheck="false"></label>
+      <p class="faint">{month} becomes YYYY-MM.</p><p id="lk-err" class="err" role="alert"></p>
+      <div class="vbtns"><button class="btn" id="lk-cancel">Cancel</button><button class="btn primary" id="lk-save">Save</button></div>`, (d, done) => {
+      d.querySelector("#lk-cancel").onclick = () => done(false);
+      d.querySelector("#lk-save").onclick = async () => {
+        const v = { vault: d.querySelector("#lk-vault").value.trim(), repo: d.querySelector("#lk-repo").value.trim().replace(/\/+$/, "").replace(/\.git$/, ""), branch: d.querySelector("#lk-branch").value.trim() || "main", sources: d.querySelector("#lk-src").value.trim() || E.DEFAULT_SOURCES };
+        const p = E.linksProblem(v); if (p) { d.querySelector("#lk-err").textContent = p; return; }
+        if (!v.vault && !v.repo) { d.querySelector("#lk-err").textContent = "Set the vault name, the repo address, or both."; return; }
+        await DB.set("links", v); S.links = v; S.linksLoaded = true; done(true); toast("Links saved, encrypted, on this computer."); render(); };
+    });
+  }
+  async function samDialog() {
+    const l = await loadLinks(), s = E.samLinks(l, S.today);
+    const btn = (u, lab) => u ? `<a class="btn" href="${esc(u)}" target="_blank" rel="noopener noreferrer">${lab}</a>` : "";
+    const row = (t, x) => `<div class="samrow"><b>${t}</b> <span class="mono">${esc(x.path)}</span><div>${btn(x.urls.obsidian, "Open in Obsidian")} ${btn(x.urls.github, "Open on GitHub")}${!x.urls.obsidian && !x.urls.github ? `<span class="faint">Set the vault or repo in File → Links… first.</span>` : ""}</div></div>`;
+    const mname = new Date(s.month + "-15T12:00:00Z").toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+    await dialog("samdlg", `<b class="vt">📝 SAM bullets · ${esc(mname)}${s.toDate ? " (month to date)" : ""}</b>
+      <p>${s.toDate ? "From the 20th the link points at this month, to date." : "Until the 19th the link points at last month."}  The bullets live in the notebook; nothing is copied into the dashboard.</p>
+      ${row("Approved bullets", s.final)}${row("Sources", s.sources)}
+      <div class="vbtns"><button class="btn" id="sam-links">Links…</button><button class="btn primary" id="sam-close">Close</button></div>`, (d, done) => {
+      d.querySelector("#sam-close").onclick = () => done(true); d.querySelector("#sam-links").onclick = () => { done(true); linksDialog(); };
+      d.querySelectorAll("a.btn").forEach(a => a.addEventListener("click", () => setTimeout(() => done(true), 0)));
+    });
+  }
+
   // ---------- 00.07.000 Projects: the dashboard is the source of truth; Planner-ready exports (CSV, xlsx, Graph JSON) ----------
   // Ruling (Oct 27 2026): "Projects is the source of truth and exports Planner-ready CSV, xlsx and Graph JSON". No network calls.
   // The store lives in IndexedDB (SECRET key projectsStore, encrypted with the Data folder key) and in the Data folder / hub as
@@ -1465,6 +1612,7 @@
       ${sec(5, `<div class="kv"><span>Last touch</span><span>${tt(a.last_touch)}</span><span>Next touch</span><span class="${ts.overdue ? "c-over" : ""}">${tt(a.next_touch)}${ts.overdue ? ` · ${ts.days} d overdue` : ""}</span><span>Cadence</span><span>${esc(a.touch_cadence)}${ts.byCadence ? ` · by cadence ${dd(ts.byCadence)}` : ""}</span></div>`)}
       ${sec(6, nmHtml)}
       <section class="accsec"><h3>Open loops <span class="faint">in Projects plan “Accounts – ${esc(a.account)}”</span></h3>${loops ? `<ul>${loops}</ul>` : `<p class="faint">No open loops.</p>`}${goneHtml}</section>
+      ${accEventsHtml(a.slug)}
       <section class="accsec"><h3>Sources &amp; unverified items</h3>${a.sources.length ? `<ul>${a.sources.map(s => `<li class="mono">${esc(s)}</li>`).join("")}</ul>` : ""}${li(a.unverified_items)}</section>
       ${print ? `<footer class="accfoot"><b>Confidential: ${esc(a.confidential)}</b> · ${esc(a.account)} · account plan, read-only copy · Rev ${REV}</footer>` : ""}
     </article>`;
@@ -1529,6 +1677,7 @@ ${ask}
     if (feeds.projstore && (!S.projStore || S.projExample || Date.parse(feeds.projstore.updated_at) > Date.parse(S.projStore.updated_at))) { S.projStore = R.readStore(feeds.projstore); S.projExample = false; track(DB.set("projectsStore", feeds.projstore)); }
     if (feeds.accstore && (!S.accStore || S.accExample || Date.parse(feeds.accstore.updated_at) > Date.parse(S.accStore.updated_at))) { S.accStore = A.readAccStore(feeds.accstore); S.accExample = false; track(DB.set("accountsStore", feeds.accstore)); }
     if (feeds.contacts && (!S.contacts || S.accExample || Date.parse(feeds.contacts.updated_at) > Date.parse(S.contacts.updated_at))) { S.contacts = A.readContacts(feeds.contacts); track(DB.set("contacts", feeds.contacts)); }
+    if (feeds.events && (!S.evStore || S.evExample || Date.parse(feeds.events.updated_at) > Date.parse(S.evStore.updated_at))) { S.evStore = E.readEventsStore(feeds.events); S.evExample = false; track(DB.set("eventsStore", feeds.events)); }
     if (feeds.trips && (!S.tripsFeed || Date.parse(feeds.trips.generated_at) >= Date.parse(S.tripsFeed.generatedAt))) { S.tripsFeed = R.readTrips(feeds.trips); track(DB.set("trips", feeds.trips)); }
   }
   function stripModel(f) {
@@ -1684,7 +1833,7 @@ ${ask}
       <div class="t1list">${t1.map(a => `<label><input type="checkbox" data-t1="${esc(a.name)}" checked> ${esc(a.name)}</label>`).join("")}</div>
       <div class="vbtns"><button class="btn" id="t1o-no">Not now</button><button class="btn primary" id="t1o-yes">Star selected</button></div></div>` : "";
     const foc = document.activeElement && document.activeElement.closest && document.activeElement.closest(".frow"), keep = foc ? foc.dataset.row : null;
-    el.innerHTML = header + pinnedHtml("focus") + accFocusHtml() + stripHtml(f) + offerHtml + sections + later + nd + `<div class="ffoot muted">Rows: ${f.sections.reduce((a, x) => a + x.rows.length, 0)} of ${f.sections.reduce((a, x) => a + x.total, 0)} (cap ${f.cap}) · keys: j/k move · d Done · s Snooze · t Log touch · Rev ${REV}</div>`;
+    el.innerHTML = header + pinnedHtml("focus") + accFocusHtml() + evFocusHtml() + stripHtml(f) + offerHtml + sections + later + nd + `<div class="ffoot muted">Rows: ${f.sections.reduce((a, x) => a + x.rows.length, 0)} of ${f.sections.reduce((a, x) => a + x.total, 0)} (cap ${f.cap}) · keys: j/k move · d Done · s Snooze · t Log touch · Rev ${REV}</div>`;
     if (S.snap) S.focusAnimated = true;
     if (keep) { const r = el.querySelector(`.frow[data-row="${CSS.escape(keep)}"]`); if (r) r.focus(); }
   }
@@ -1822,7 +1971,7 @@ ${ask}
       </div></div>`;
   }
   function doPrint(which) { S.view = which; render(); document.querySelectorAll(".view").forEach(v => v.classList.toggle("printing", v.id === "view-" + which)); setTimeout(() => window.print(), 50); }
-  const printTarget = () => S.view === "manager" ? "manager" : S.view === "focus" ? "focus" : S.view === "projects" ? "projects" : S.view === "accounts" ? "accounts" : "print";   // 00.05: Ctrl+P on Daily Focus prints Daily Focus
+  const printTarget = () => S.view === "manager" ? "manager" : S.view === "focus" ? "focus" : S.view === "projects" ? "projects" : S.view === "accounts" ? "accounts" : S.view === "events" ? "events" : "print";   // 00.05: Ctrl+P on Daily Focus prints Daily Focus
 
   // ---------- help ----------
   function openHelp(sec) {
@@ -1851,7 +2000,8 @@ ${ask}
     openTimeFiles: () => pickFiles(".json", files => { files.forEach(([n, t]) => { const r = R2.parseTimeFile(t, n); S.fileEvents["picked:" + n] = r.events; if (r.bad) S.problems.push(r.bad); }); recompute(); render(); toast(`Merged ${files.length} time file(s).`); }),
     importLog: () => pickFile(".md,.txt", (n, t) => importLog(n, t)), logCall: () => logCall($("#asof")),
     print: () => doPrint("print"), printManager: () => doPrint("manager"), printFocus: () => doPrint("focus"), reload: () => reloadSafely(),
-    keyAccounts: () => keyAccountsDialog(), vFocus: () => setView("focus"), vDash: () => setView("dashboard"), vWork: () => setView("workload"), vPrint: () => setView("print"), vManager: () => setView("manager"), vProjects: () => setView("projects"), vAccounts: () => setView("accounts"),
+    keyAccounts: () => keyAccountsDialog(), vFocus: () => setView("focus"), vDash: () => setView("dashboard"), vWork: () => setView("workload"), vPrint: () => setView("print"), vManager: () => setView("manager"), vProjects: () => setView("projects"), vAccounts: () => setView("accounts"), vEvents: () => setView("events"),
+    importEvents: () => pickFiles(".md,text/markdown", files => importEventsFiles(files)), printEvents: () => doPrint("events"), links: () => linksDialog(), samLink: () => samDialog(),
     importAccounts: () => pickFiles(".md,text/markdown", files => importAccountFiles(files)), importContacts: () => pickFile(".csv,text/csv", (n, t) => importContactsFile(n, t)), printAccounts: () => doPrint("accounts"),
     printProjects: () => doPrint("projects"), exportProjects: () => exportProjects("csv"), exportProjectsXlsx: () => exportProjects("xlsx"), exportProjectsGraph: () => exportProjects("graph"), importPlanner: () => importPlanner(), importProjectJson: () => pickFile(".json,application/json", (n, t) => importProjectJson(n, t)),
     hHelp: () => openHelp("help"), hHow: () => openHelp("howdoi"), hFaq: () => openHelp("faq"), hQuick: () => openHelp("quick"), hRev: () => openHelp("rev"), hKeys: () => openHelp("keys"),
@@ -1868,6 +2018,7 @@ ${ask}
       if (focusClick(e)) return;
       if (projectsClick(e)) return;
       if (accountsClick(e)) return;
+      if (eventsClick(e)) return;
       const tl = e.target.closest("[data-filter]"); if (tl) { S.filter = S.filter === tl.dataset.filter ? null : tl.dataset.filter; render(); return; }
       if (e.target.id === "clearf") { S.filter = null; render(); return; }
       if (e.target.id === "trends-toggle") { S.trends = !S.trends; render(); return; }

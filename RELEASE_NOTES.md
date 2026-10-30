@@ -1,5 +1,15 @@
 # Release notes — Activity Dashboard
 
+## 00.10.000_261030 (Oct 30 2026)
+**Events**: tradeshows and events in their own tab, after Accounts.
+- Dates, times and location come from Outlook's "Tradeshows & Events" calendar (in the snapshot).  Details come from the notebook's events.md: File → Import events (events.md)….  It's read-only here and kept encrypted.
+- A 120-day month strip sits above the list.  The list has Needs action, Upcoming, Undated, On hold, Details only and Past.  Past events stay under Past with the accounts you met there.
+- Times are shown as Outlook shows them, with the zone label (for example ET or CT).
+- Red flags: registration or room-block deadline within 7 days, travel not booked within 14 days, and a trip overlap once trip data has cities and dates.  Until then the tab says "Trip data not available".
+- Daily Focus shows a 🎪 Events count of red-flag events only.  Each account in the Accounts tab lists its upcoming events and where you met them.
+- When Outlook cuts off a long title, the tab asks once whether to link it to the matching notebook row.
+- File → Links… stores the Obsidian vault name and the notebook repo address, encrypted, on this computer only.  File → SAM bullets… opens last month's `reports/sam-activity/YYYY-MM.md` (from the 20th, this month to date) or its sources file, in Obsidian or on GitHub.
+
 ## 00.09.001_261030 (Oct 30 2026)
 - New snapshots aren't missed in an encrypted Data folder.  When the folder is unlocked, a plain `inbox-snapshot.js` or `.json` (dated names too, such as `inbox-snapshot-261030.js`) that is newer than the encrypted copy is encrypted, checked, loaded and then deleted, and a notice says so.  This happens at start-up and on every sync.
 - When the folder is locked, the header says "New snapshot waiting · Unlock to import" instead of Stale.  Clicking the sync chip opens Unlock.  When the browser needs permission again, it says to reconnect the Data folder.

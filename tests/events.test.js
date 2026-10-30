@@ -1,0 +1,93 @@
+// node tests/events.test.js — unit tests for js/events.js and the 00.10.000 snapshot/trips additions in js/rules.js.  Fictional data only.
+const assert = require("assert"); const fs = require("fs"); const path = require("path");
+require(path.join(__dirname, "../js/rules.js")); require(path.join(__dirname, "../js/accounts.js")); require(path.join(__dirname, "../js/events.js"));
+const R = globalThis.DASH.rules, E = globalThis.DASH.events;
+const GF = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures/example-guard-fixtures.json"), "utf8"));   // literal guard fixtures
+const FX = fs.readFileSync(path.join(__dirname, "fixtures/example-events.md"), "utf8");
+let n = 0, fail = 0; function t(name, fn) { n++; try { fn(); console.log("PASS", name); } catch (e) { fail++; console.log("FAIL", name, "-", e.message); } }
+const parse = txt => E.parseEventsMd("events.md", txt);
+const rules = txt => parse(txt).problems.map(p => p.rule);
+const sub = (a, b, src) => { src = src || FX; assert.ok(src.includes(a), "fixture text missing: " + a); return src.replace(a, b); };
+const rows = parse(FX).rows, row = name => rows.find(r => r.event.startsWith(name));
+const OL = (title, s, e, extra) => Object.assign({ id: "o-" + title.length + s, title, title_truncated: false, start_date: s, end_date: e || s, all_day: true, start: null, end: null, zone: "America/Chicago", location: null, category: null, show_as: "busy" }, extra || {});
+const store = (rs, answers) => ({ schema_version: 1, updated_at: "2026-10-19T09:00:00-05:00", events: rs || rows, answers: answers || {} });
+
+// ---- parser ----
+t("P1 the 14-column header parses (two tables, Upcoming and Past)", () => { const r = parse(FX); assert.deepStrictEqual(r.problems, []); assert.strictEqual(r.rows.length, 5); assert.deepStrictEqual([...new Set(r.rows.map(x => x.section))], ["Upcoming", "Past"]); });
+t("P2 ? stays unknown, never blank", () => { const r = row("Example Chapter"); assert.strictEqual(r.start_date, "?"); assert.strictEqual(r.location, "?"); assert.strictEqual(r.role, "?"); assert.strictEqual(r.travel.state, "?"); });
+t("P3 [unverified] sets a per-cell flag and is stripped", () => { const r = row("Example Summit"); assert.strictEqual(r.location, "Riverton, ST"); assert.ok(r.unverified.location); });
+t("P4 [unverified title] is stripped from the title and flagged", () => { const r = row("Example Chapter"); assert.strictEqual(r.event, "Example Chapter Meeting"); assert.ok(r.unverified_title); });
+t("P5 footnote refs are stripped and their text kept as notes", () => { const r = row("Example Summit"); assert.strictEqual(r.series, "Example Society"); assert.deepStrictEqual(r.notes, ["Fictional footnote text."]); assert.strictEqual(r.source_text, "none in vault"); });
+t("P6 wikilinks with and without alias, and relative Markdown links", () => { const r = row("Example Expo"); assert.deepStrictEqual(r.accounts, ["acme-fab", "northwind-labs"]); assert.deepStrictEqual(r.follow_ups, ["projects/example-booth"]); assert.deepStrictEqual(r.source_note, ["trade-shows/example-expo"]); });
+t("P7 travel 'booked F H' parses to flags", () => { assert.deepStrictEqual(row("Example Expo").travel, { state: "booked", flight: true, hotel: true, car: false, note: "" }); assert.strictEqual(row("Example Summit").travel.state, "planned"); });
+t("P8 travel with a trailing note keeps the note", () => { const r = parse(sub("| none | ? | ? | ? |\n", "| ? (hotel discussed, unconfirmed) | ? | ? | ? |\n")).rows; assert.strictEqual(r.find(x => x.event === "Example Hold Fair").travel.note, "(hotel discussed, unconfirmed)"); });
+t("P9 a bad status rejects the whole file", () => { assert.ok(rules(sub("| registered | exhibitor |", "| maybe | exhibitor |")).includes("STATUS")); });
+t("P10 a renamed column rejects the file", () => { assert.ok(rules(FX.replace("| room-block deadline |", "| room deadline |")).includes("COL")); });
+t("P11 an extra column is a warning, not a problem", () => { const x = FX.split("\n").map(l => /^\|/.test(l) ? l + (l.startsWith("|---") ? "---|" : l.startsWith("| event") ? " extra |" : " x |") : l).join("\n"); const r = parse(x); assert.deepStrictEqual(r.problems, []); assert.ok(r.warnings.some(w => /extra column/.test(w))); });
+t("P12 guards: dollar figure, email, phone reject", () => { assert.ok(rules(sub("Example Association", "booth " + GF.money[0])).includes("PRICE")); assert.ok(rules(sub("Example Society", "ask " + GF.email[0])).includes("EMAIL")); assert.ok(rules(sub("Example Society", "call " + GF.phone[0])).includes("PHONE")); });
+t("P13 bad dates, end before start, front matter type", () => { assert.ok(rules(sub("| 2026-11-08 | 2026-11-10 |", "| 2026-11-31 | 2026-11-10 |")).includes("DATE")); assert.ok(rules(sub("| 2026-11-08 | 2026-11-10 |", "| 2026-11-10 | 2026-11-08 |")).includes("DATE")); assert.ok(rules(sub("type: data", "type: note")).includes("FM-TYPE")); assert.ok(rules(FX.replace(/^---\n/, "")).includes("FM-MISSING")); });
+t("P14 duplicate event + start date rejects", () => { const l = FX.split("\n").find(x => x.startsWith("| Example Hold Fair")); assert.ok(rules(sub(l, l + "\n" + l)).includes("DUP")); });
+t("P15 importEvents: one .md, all or nothing, answers kept across imports", () => { const a = E.importEvents([["events.md", FX]], { answers: { x: { row: "k", choice: "no" } }, source_sha256: "" }, "2026-10-19T09:00:00-05:00"); assert.strictEqual(a.count, 5); assert.deepStrictEqual(a.store.answers, { x: { row: "k", choice: "no" } });
+  assert.ok(E.importEvents([], null, "x").rejects.length); assert.ok(E.importEvents([["a.md", FX], ["b.md", FX]], null, "x").rejects.length); assert.strictEqual(E.importEvents([["events.md", sub("registered", "maybe")]], null, "x").store, null);
+  assert.ok(E.importEvents([["events.md", FX]], a.store, "y").same); });
+t("P16 readEventsStore drops bad answers and prototype keys", () => { const s = E.readEventsStore({ schema_version: 1, updated_at: "2026-10-19T09:00:00Z", events: rows, answers: JSON.parse('{"__proto__":{"row":"a","choice":"link"},"ok":{"row":"a","choice":"link"},"bad":{"row":"a","choice":"maybe"}}') }); assert.deepStrictEqual(Object.keys(s.answers), ["ok"]); assert.throws(() => E.readEventsStore({ schema_version: 2 })); });
+
+// ---- trip refs ----
+t("T1 valid trip ref", () => assert.strictEqual(E.tripRefProblem("TRIP-20261102-ROADSHOW"), null));
+t("T2 trip ref with a date that doesn't exist", () => assert.match(E.tripRefProblem("TRIP-20260230-ROADSHOW"), /does not exist/));
+t("T3 lower case is rejected", () => assert.match(E.tripRefProblem("trip-20261102-roadshow"), /TRIP-YYYYMMDD-SLUG/));
+t("T4 confirmation-number look-alikes are rejected", () => { ["K7QZ2M", "ABCDEF", "1234567890123"].forEach(v => assert.match(E.tripRefProblem(v), /confirmation number/)); });
+t("T5 ? and blank are allowed; the file rejects a bad trip ref", () => { assert.strictEqual(E.tripRefProblem("?"), null); assert.strictEqual(E.tripRefProblem(""), null); assert.ok(rules(sub("TRIP-20261107-EXPO", "K7QZ2M")).includes("TRIP")); });
+t("T6 trips.json without the optional fields still loads", () => { const r = R.readTrips({ schema_version: 1, generated_at: "2026-10-19T08:00:00-05:00", trips: [{ id: "TRIP-20261107-EXPO", segments: [] }] }); assert.strictEqual(r.trips.length, 1); assert.strictEqual(r.trips[0].start, null); assert.deepStrictEqual(r.trips[0].cities, []); });
+t("T7 trips.json with start/end/cities and segment city", () => { const r = R.readTrips({ schema_version: 1, generated_at: "2026-10-19T08:00:00-05:00", trips: [{ id: "T", start: "2026-11-07", end: "2026-11-11", cities: ["Springfield, ST"], segments: [{ kind: "hotel", start: "2026-11-07T15:00:00-06:00", end: "2026-11-11T11:00:00-06:00", city: "Springfield, ST" }, { kind: "flight", start: "2026-11-07T08:00:00-06:00", end: "2026-11-07T10:00:00-06:00", city: "X" }] }] });
+  assert.deepStrictEqual(r.trips[0].cities, ["Springfield, ST"]); assert.strictEqual(r.trips[0].segments.find(s => s.kind === "hotel").city, "Springfield, ST"); assert.strictEqual(r.trips[0].segments.find(s => s.kind === "flight").city, null); });
+t("T8 a bad optional field drops that trip only", () => { const r = R.readTrips({ schema_version: 1, generated_at: "2026-10-19T08:00:00-05:00", trips: [{ id: "A", start: "2026-13-01", segments: [] }, { id: "B", cities: [""], segments: [] }, { id: "C", segments: [] }] }); assert.deepStrictEqual(r.trips.map(x => x.id), ["C"]); assert.strictEqual(r.rejects.length, 2); });
+
+// ---- snapshot events[] ----
+const SNAP = ev => ({ schema_version: 1, generated_at: "2026-10-19T08:00:00-05:00", source: "inbox-export", tasks: [], accounts: [], calendar: [], events: ev });
+t("S1 snapshot events[] are read; a bad item is rejected and the rest kept", () => { const s = R.readSnapshot(SNAP([OL("Example Expo 2026", "2026-11-08", "2026-11-10"), { title: "Bad", start_date: "2026-11-31", end_date: "2026-11-31", all_day: true }, OL("Example Timed", "2026-11-09", null, { all_day: false, start: "2026-11-09T10:00:00-06:00", end: "2026-11-09T09:00:00-06:00" })]));
+  assert.strictEqual(s.events.length, 1); assert.strictEqual(s.rejects.length, 2); assert.ok(s.hasEvents); });
+t("S2 an older snapshot without events loads; unknown keys are ignored", () => { const raw = SNAP(); delete raw.events; raw.future_key = { x: 1 }; const s = R.readSnapshot(raw); assert.deepStrictEqual(s.events, []); assert.strictEqual(s.hasEvents, false); });
+t("S3 show_as and zone are checked", () => { const rj = []; E.readSnapEvents([OL("A", "2026-11-08", null, { show_as: "away" }), OL("B", "2026-11-08", null, { zone: "not a zone" })], rj); assert.strictEqual(rj.length, 2); });
+
+// ---- matching ----
+const T0 = "2026-10-19";
+t("M1 exact title + date links", () => { const m = E.match([OL("Example Expo 2026", "2026-11-08", "2026-11-10")], rows, {}); const x = m.find(y => y.o); assert.strictEqual(x.kind, "both"); assert.strictEqual(x.datesDiffer, false); });
+t("M2 case and spacing differences still link", () => { const m = E.match([OL("example  EXPO 2026", "2026-11-08", "2026-11-10")], rows, {}); assert.strictEqual(m.find(y => y.o).kind, "both"); });
+t("M3 same title, different date: linked with Dates differ; Outlook's date used", () => { const m = E.model([OL("Example Expo 2026", "2026-11-09", "2026-11-11")], store(), T0, null); const x = m.list.find(y => y.o); assert.strictEqual(x.kind, "both"); assert.ok(x.datesDiffer); assert.strictEqual(x.start_date, "2026-11-09"); assert.ok(x.flags.some(f => f.id === "differ")); });
+t("M4 an undated notebook row takes Outlook's date without Dates differ", () => { const m = E.match([OL("Example Chapter Meeting", "2026-12-01")], rows, {}); const x = m.find(y => y.o); assert.strictEqual(x.kind, "both"); assert.strictEqual(x.datesDiffer, false); });
+t("M5 a truncated title never links by itself; one prefix match on the same date is offered", () => { const o = OL("Example Summit Annual Conference and", "2026-11-20", "2026-11-21", { title_truncated: true }); const x = E.match([o], rows, {}).find(y => y.o); assert.strictEqual(x.kind, "outlook"); assert.strictEqual(x.possible, row("Example Summit").key); });
+t("M6 the answer is stored and asked once: Link links, Not this one keeps them apart", () => { const o = OL("Example Summit Annual Conference and", "2026-11-20", "2026-11-21", { title_truncated: true }), k = row("Example Summit").key;
+  const yes = E.answer(store(), o.id, k, "link"), no = E.answer(store(), o.id, k, "no");
+  const a = E.match([o], rows, yes.answers).find(y => y.o), b = E.match([o], rows, no.answers).find(y => y.o);
+  assert.strictEqual(a.kind, "both"); assert.ok(a.linkedByAnswer); assert.strictEqual(b.kind, "outlook"); assert.strictEqual(b.possible, null); assert.ok(b.declined); });
+t("M7 two Outlook events with the same title and different dates: no automatic link", () => { const m = E.match([OL("Example Hold Fair", "2026-12-05"), OL("Example Hold Fair", "2026-12-09")], rows, {}); assert.ok(m.filter(y => y.o).every(y => y.kind === "outlook")); assert.ok(m.some(y => y.kind === "details" && y.title === "Example Hold Fair")); });
+t("M8 unmatched both sides are listed", () => { const m = E.model([OL("Example Other Show", "2026-11-15")], store(), T0, null); assert.ok(m.list.some(y => y.kind === "outlook" && y.title === "Example Other Show")); assert.strictEqual(m.list.filter(y => y.kind === "details").length, 5); });
+t("M9 on hold shows under On hold, not as missing", () => { const m = E.model([], store(), T0, null); const h = m.sections.find(s => s.id === "hold"); assert.deepStrictEqual(h.rows.map(x => x.title), ["Example Hold Fair"]); assert.ok(h.rows[0].flags.some(f => f.id === "hold")); });
+t("M10 sections: past kept under Past with its accounts; undated under Undated", () => { const m = E.model([], store(), T0, null); assert.deepStrictEqual(m.sections.find(s => s.id === "past").rows.map(x => x.title), ["Example Fall Forum"]); assert.deepStrictEqual(m.sections.find(s => s.id === "undated").rows.map(x => x.title), ["Example Chapter Meeting"]);
+  const fa = E.forAccount("acme-fab", m.list, T0); assert.deepStrictEqual(fa.met.map(x => x.title), ["Example Fall Forum"]); assert.deepStrictEqual(fa.upcoming.map(x => x.title), ["Example Expo 2026"]); });
+
+// ---- flags ----
+const mk = (o, today) => { const s = store(rows.map(r => Object.assign({}, r, o.row || {}, { travel: Object.assign({}, r.travel, (o.row || {}).travel) }))); return E.model([], { ...s, events: s.events.filter(r => r.event.startsWith(o.name)) }, today, o.trips || null).list[0]; };
+const ids = x => x.flags.map(f => f.id + ":" + f.level);
+t("F1 travel not booked: amber at 30 days, none at 31, red at 14", () => { const base = { name: "Example Summit" };   // starts 11-20, planned F
+  assert.ok(ids(mk(base, "2026-10-21")).includes("travel:amber")); assert.ok(!ids(mk(base, "2026-10-20")).some(i => i.startsWith("travel"))); assert.ok(ids(mk(base, "2026-11-06")).includes("travel:red")); assert.ok(ids(mk(base, "2026-11-05")).includes("travel:amber")); });
+t("F2 booked flight and hotel: no travel flag; travel none: no flag", () => { assert.ok(!ids(mk({ name: "Example Expo" }, "2026-11-01")).some(i => i.startsWith("travel"))); assert.ok(!ids(mk({ name: "Example Expo", row: { travel: { state: "none" } } }, "2026-11-01")).some(i => i.startsWith("travel"))); });
+t("F3 registration deadline within 7 days (registered/considering): red; 8 days: none; attending: none", () => { assert.ok(ids(mk({ name: "Example Expo" }, "2026-10-17")).includes("reg:red")); assert.ok(!ids(mk({ name: "Example Expo" }, "2026-10-16")).includes("reg:red")); assert.ok(!ids(mk({ name: "Example Expo", row: { status: "attending" } }, "2026-10-19")).includes("reg:red")); });
+t("F4 room-block deadline within 7 days and hotel not booked: red", () => { assert.ok(!ids(mk({ name: "Example Expo" }, "2026-10-20")).includes("room:red")); assert.ok(ids(mk({ name: "Example Expo", row: { travel: { state: "planned" } } }, "2026-10-20")).includes("room:red")); });
+const TRIPS = cities => ({ trips: [{ id: "TRIP-20261107-EXPO", start: "2026-11-19", end: "2026-11-22", cities }] });
+t("F5 trip overlap: on when the city differs, off when it matches, hidden without trip fields", () => { assert.ok(ids(mk({ name: "Example Summit", trips: TRIPS(["Lakeside, ST"]) }, "2026-11-01")).includes("overlap:red")); assert.ok(!ids(mk({ name: "Example Summit", trips: TRIPS(["Riverton"]) }, "2026-11-01")).includes("overlap:red"));
+  assert.ok(!ids(mk({ name: "Example Summit", trips: { trips: [{ id: "X" }] } }, "2026-11-01")).includes("overlap:red")); assert.strictEqual(E.model([], store(), T0, null).tripData, false); assert.strictEqual(E.model([], store(), T0, TRIPS(["A, ST"])).tripData, true); });
+t("F6 details missing on a confirmed event within 30 days", () => { assert.ok(ids(mk({ name: "Example Summit" }, "2026-11-01")).includes("unknown:amber")); assert.ok(!ids(mk({ name: "Example Summit" }, "2026-10-20")).includes("unknown:amber")); });
+t("F7 the Focus count is red flags only and skips past events", () => { const m = E.model([], store(), "2026-11-06", null); assert.strictEqual(m.redCount, m.list.filter(x => x.red && x.section !== "past").length); assert.ok(m.redCount >= 1); assert.strictEqual(E.model([], store(), "2027-01-10", null).redCount, 0); });
+t("F8 DST weeks and both zones: day math is date-only", () => { ["America/Chicago", "America/New_York"].forEach(z => { R.setTimeZone(z); assert.ok(ids(mk({ name: "Example Expo", row: { start_date: "2026-11-30", end_date: "2026-11-30" } }, "2026-11-01")).includes("travel:amber") === false); assert.strictEqual(R.diffDays("2027-03-15", "2027-03-07"), 8); assert.strictEqual(R.diffDays("2026-11-02", "2026-10-31"), 2); }); });
+t("F9 strip: 120 cells from today, month marks, red dots", () => { const m = E.model([], store(), "2026-11-06", null); const c = E.strip(m.list, "2026-11-06", 120); assert.strictEqual(c.length, 120); assert.strictEqual(c[0].day, "2026-11-06"); assert.ok(c.find(x => x.day === "2026-12-01").first); assert.ok(c.some(x => x.n && x.red)); });
+
+// ---- SAM link and Links ----
+t("L1 SAM month: last month until the 19th, this month to date from the 20th", () => { assert.deepStrictEqual(E.samMonth("2026-11-19"), { month: "2026-10", toDate: false }); assert.deepStrictEqual(E.samMonth("2026-11-20"), { month: "2026-11", toDate: true }); assert.deepStrictEqual(E.samMonth("2027-01-05"), { month: "2026-12", toDate: false }); assert.deepStrictEqual(E.samMonth("2026-12-31"), { month: "2026-12", toDate: true }); });
+t("L2 SAM links: notebook file and sources file, Obsidian and GitHub forms", () => { const s = E.samLinks({ vault: "Example Vault", repo: "https://github.com/example-owner/example-notebook", branch: "main" }, "2026-11-03");
+  assert.strictEqual(s.final.path, "reports/sam-activity/2026-10.md"); assert.strictEqual(s.final.urls.obsidian, "obsidian://open?vault=Example%20Vault&file=reports%2Fsam-activity%2F2026-10");
+  assert.strictEqual(s.final.urls.github, "https://github.com/example-owner/example-notebook/blob/main/reports/sam-activity/2026-10.md"); assert.strictEqual(s.sources.path, "crm/outbox/sam-report/2026-10/sources.md"); assert.deepStrictEqual(E.samLinks(null, "2026-11-03").final.urls, {}); });
+t("L3 Links validation", () => { assert.strictEqual(E.linksProblem({ vault: "V", repo: "https://github.com/a/b" }), null); assert.ok(E.linksProblem({ repo: "javascript:alert(1)" })); assert.ok(E.linksProblem({ repo: "https://example.com/a/b" })); assert.ok(E.linksProblem({ vault: "a/b" })); assert.ok(E.linksProblem({ sources: "../x.md" })); assert.ok(E.linksProblem({ branch: "a b" })); });
+
+console.log(`${n - fail}/${n} passed`); if (fail) process.exit(1);

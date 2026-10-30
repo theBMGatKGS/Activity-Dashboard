@@ -92,7 +92,9 @@
       touches.push(x);
     });
     const history = (snap.totals_history || []).filter(h => h && RE_ISO.test(h.generated_at || "") && h.totals);
-    return { generatedAt: snap.generated_at, example: snap.example === true, source: snap.source || "inbox-export", items, accounts, calendar, touches, history, rejects };
+    // 00.10.000: Outlook "Tradeshows & Events" (optional; a bad item is rejected and the rest kept; older readers ignore the key)
+    const events = snap.events !== undefined && g.DASH && g.DASH.events ? g.DASH.events.readSnapEvents(snap.events, rejects) : [];
+    return { generatedAt: snap.generated_at, example: snap.example === true, source: snap.source || "inbox-export", items, accounts, calendar, touches, history, events, hasEvents: Array.isArray(snap.events), rejects };
   }
 
   // ---------- status / groups ----------
@@ -531,9 +533,13 @@
         if (Object.keys(g).some(k => NO_FIELDS.test(k))) return bad("confirmation / booking numbers are not accepted");
         if (!ISO_OFF.test(g.start || "") || !ISO_OFF.test(g.end || "") || !(Date.parse(g.end) >= Date.parse(g.start))) return bad("start/end must be ISO with offset");
         segs.push({ kind: g.kind, start: g.start, end: g.end, tz: str(g.tz, 64), from: str(g.from, 60), to: str(g.to, 60), airline: str(g.airline, 40), number: str(g.number, 12),
-          place: str(g.place, 120), mapUrl: MAP_OK(g.mapUrl) ? g.mapUrl : null, cancelBy: ISO_OFF.test(g.cancelBy || "") ? g.cancelBy : null, driveMin: Number.isInteger(g.driveMin) && g.driveMin >= 0 ? g.driveMin : null });
+          place: str(g.place, 120), city: (g.kind === "hotel" || g.kind === "event") ? str(g.city, 80) : null, mapUrl: MAP_OK(g.mapUrl) ? g.mapUrl : null, cancelBy: ISO_OFF.test(g.cancelBy || "") ? g.cancelBy : null, driveMin: Number.isInteger(g.driveMin) && g.driveMin >= 0 ? g.driveMin : null });
       });
-      trips.push({ id: t.id, name: str(t.name, 120) || "Trip", homeTz: str(t.homeTz, 64), segments: segs.sort((a, b) => Date.parse(a.start) - Date.parse(b.start)), openLoops: Array.isArray(t.openLoops) ? t.openLoops.filter(x => typeof x === "string") : [] });
+      // 00.10.000 (Travel, optional and backward compatible): trip-level start/end (YYYY-MM-DD) and cities[] ("City, ST"); a bad field drops this trip only
+      const tday = v => typeof v === "string" && /^\d{4}-\d\d-\d\d$/.test(v) && realDay(v);
+      if ((t.start !== undefined && !tday(t.start)) || (t.end !== undefined && !tday(t.end)) || (t.start && t.end && t.end < t.start)) { rejects.push(`trip ${i + 1}: start/end must be real dates YYYY-MM-DD, end not before start`); return; }
+      if (t.cities !== undefined && (!Array.isArray(t.cities) || t.cities.some(c => typeof c !== "string" || !c.trim() || c.length > 80 || hasMoney(c) || hasEmail(c)))) { rejects.push(`trip ${i + 1}: cities must be a list of "City, ST" names`); return; }
+      trips.push({ id: t.id, name: str(t.name, 120) || "Trip", homeTz: str(t.homeTz, 64), start: t.start || null, end: t.end || null, cities: (t.cities || []).map(c => c.trim()), segments: segs.sort((a, b) => Date.parse(a.start) - Date.parse(b.start)), openLoops: Array.isArray(t.openLoops) ? t.openLoops.filter(x => typeof x === "string") : [] });
     });
     return { generatedAt: raw.generated_at, trips, rejects };
   }
