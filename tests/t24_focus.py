@@ -90,7 +90,7 @@ with sync_playwright() as p:
     pg.keyboard.type("j"); check(pg.query_selector("#pop") is not None, "shortcuts are off while typing / in a dialog"); pg.keyboard.press("Escape")
     # Tab order: squares → meetings → sections
     pg.evaluate("document.querySelector('.tab[data-view=focus]').focus()"); seq = []
-    for _ in range(26):   # 00.06.000: the Today strip's meetings come between the header and the sections
+    for _ in range(28):   # 00.10.000 rev 3: one more tab (Calendar).  00.06.000: the Today strip's meetings come between the header and the sections
         pg.keyboard.press("Tab"); seq.append(pg.evaluate("(a => a.dataset.sq ? 'sq' : a.dataset.prep ? 'meet' : a.dataset.cal ? 'strip' : a.closest('section.blk') ? 'sec' : a.closest('.fhead') ? 'head' : 'other')(document.activeElement)"))
     f = [x for x in seq if x in ("sq", "meet", "strip", "sec")]; last = lambda k: max(i for i, x in enumerate(f) if x == k)
     check(f[:4] == ["sq"] * 4 and "meet" in f and "strip" in f and "sec" in f and f.index("strip") > last("meet") and f.index("sec") > last("strip"), f"Tab order squares → meetings → Today strip → sections ({f[:12]})")

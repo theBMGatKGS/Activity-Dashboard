@@ -8,7 +8,8 @@
 - Red flags: registration or room-block deadline within 7 days, travel not booked within 14 days, and a trip overlap once trip data has cities and dates.  Until then the tab says "Trip data not available".
 - Daily Focus shows a 🎪 Events count of red-flag events only.  Each account in the Accounts tab lists its upcoming events and where you met them.
 - When Outlook cuts off a long title, the tab asks once whether to link it to the matching notebook row.
-- File → Links… stores the Obsidian vault name and the notebook repo address, encrypted, on this computer only.  File → SAM bullets… opens last month's `reports/sam-activity/YYYY-MM.md` (from the 20th, this month to date) or its sources file, in Obsidian or on GitHub.
+- **Calendar** tab, after Accounts: your events at a glance.  It shows counts, the next 3 events, deadlines in the next 14 days, and four months with a red dot on days that need action.  Tap a day or card to open it in the Events list.  Meetings stay on Totals.
+- File → Links… stores the Obsidian vault name and the notebook repo address, encrypted, and syncs them to your other computers and the iPad.  The newest change to each link wins.  File → SAM bullets… opens last month's `reports/sam-activity/YYYY-MM.md` (from the 20th, this month to date) or its sources file, in Obsidian or on GitHub.
 
 ## 00.09.001_261030 (Oct 30 2026)
 - New snapshots aren't missed in an encrypted Data folder.  When the folder is unlocked, a plain `inbox-snapshot.js` or `.json` (dated names too, such as `inbox-snapshot-261030.js`) that is newer than the encrypted copy is encrypted, checked, loaded and then deleted, and a notice says so.  This happens at start-up and on every sync.

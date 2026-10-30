@@ -269,6 +269,64 @@
     return Object.assign(s, { final: { path: final, urls: notebookUrls(l, final) }, sources: { path: sources, urls: notebookUrls(l, sources) } });
   }
 
+
+  // ---------- 00.10.000 rev 3: Calendar tab summary (at a glance; Events stays the detail list) ----------
+  function summary(m, today, months) {
+    const live = m.list.filter(x => x.section !== "past");
+    const counts = { red: m.redCount, amber: live.filter(x => !x.red && x.flags.some(f => f.level === "amber")).length, undated: live.filter(x => x.start_date === "?").length };
+    const dated = live.filter(x => x.start_date !== "?" && x.status !== "skipped").sort((a, b) => a.start_date.localeCompare(b.start_date) || a.title.localeCompare(b.title));
+    const next = dated.filter(x => x.status !== "on hold").slice(0, 3);
+    const first = today.slice(0, 7) + "-01", grid = [];
+    for (let k = 0; k < (months || 4); k++) {
+      const [y, mo] = first.split("-").map(Number), yy = y + Math.floor((mo - 1 + k) / 12), mm = (mo - 1 + k) % 12 + 1;
+      const m1 = `${yy}-${String(mm).padStart(2, "0")}-01`, wd = (new Date(m1 + "T00:00:00Z").getUTCDay() + 6) % 7;   // Monday first
+      const days = []; let d = m1; while (d.slice(0, 7) === m1.slice(0, 7)) { days.push(d); d = R.addDays(d, 1); }
+      const cells = Array(wd).fill(null).concat(days.map(day => { const evs = dated.filter(x => x.start_date <= day && (x.end_date === "?" ? x.start_date : x.end_date) >= day);
+        return { day, n: evs.length, red: evs.some(x => x.red), ids: evs.map(x => x.id), titles: evs.map(x => x.title), today: day === today, past: day < today }; }));
+      while (cells.length % 7) cells.push(null);
+      const weeks = []; for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+      grid.push({ month: m1.slice(0, 7), weeks });
+    }
+    const deadlines = [];
+    live.forEach(x => { if (!x.d) return; [["reg_deadline", "Registration"], ["room_deadline", "Room block"]].forEach(([k, lab]) => { const v = x.d[k];
+      if (isDay(v) && R.diffDays(v, today) >= 0 && R.diffDays(v, today) <= 14) deadlines.push({ date: v, kind: lab, title: x.title, id: x.id, days: R.diffDays(v, today) }); }); });
+    deadlines.sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+    const nx = next[0];
+    return { counts, next, nextIn: nx ? Math.max(0, R.diffDays(nx.start_date, today)) : null, grid, deadlines, tripData: m.tripData };
+  }
+
+  // ---------- 00.10.000 rev 3: Links store (links.json.enc), synced across computers; newest change to each link wins ----------
+  const LINK_FIELDS = ["vault", "repo", "branch", "sources"];
+  const ISO = s => typeof s === "string" && ISO_OFF.test(s) && !isNaN(Date.parse(s));
+  function emptyLinks(nowIso) { return { schema_version: 1, updated_at: nowIso, links: {} }; }
+  function readLinksStore(raw) {
+    if (!raw || typeof raw !== "object" || raw.schema_version !== 1) throw new Error("links: schema_version must be 1");
+    if (!ISO(raw.updated_at)) throw new Error("links: updated_at must be a date-time with offset");
+    if (!raw.links || typeof raw.links !== "object" || Array.isArray(raw.links)) throw new Error("links: links must be an object");
+    const links = {};
+    LINK_FIELDS.forEach(k => { const f = raw.links[k]; if (!f || typeof f !== "object" || typeof f.v !== "string" || !ISO(f.at) || typeof f.by !== "string" || !/^[a-z0-9]{1,24}$/.test(f.by)) return;
+      if (linksProblem({ [k]: f.v })) return; links[k] = { v: f.v, at: f.at, by: f.by }; });
+    return { schema_version: 1, updated_at: raw.updated_at, links };
+  }
+  function mergeLinks(a, b) {   // per link: later "at" wins; tie: the store with the later updated_at; tie: machine name, alphabetical first
+    if (!a) return b; if (!b) return a;
+    const out = { schema_version: 1, updated_at: a.updated_at, links: {} };
+    LINK_FIELDS.forEach(k => { const x = a.links[k], y = b.links[k]; if (!x && !y) return; if (!x || !y) { out.links[k] = x || y; return; }
+      const dx = Date.parse(x.at), dy = Date.parse(y.at);
+      out.links[k] = dx !== dy ? (dx > dy ? x : y) : Date.parse(a.updated_at) !== Date.parse(b.updated_at) ? (Date.parse(a.updated_at) > Date.parse(b.updated_at) ? x : y) : (x.by <= y.by ? x : y); });
+    const ats = Object.values(out.links).map(f => Date.parse(f.at)).concat([Date.parse(a.updated_at), Date.parse(b.updated_at)]);
+    const mx = Math.max(...ats); out.updated_at = [a.updated_at, b.updated_at].concat(Object.values(out.links).map(f => f.at)).find(v => Date.parse(v) === mx);
+    return out;
+  }
+  const sameLinks = (a, b) => JSON.stringify(a && a.links || {}) === JSON.stringify(b && b.links || {}) || (!!a && !!b && LINK_FIELDS.every(k => JSON.stringify(a.links[k] || null) === JSON.stringify(b.links[k] || null)));
+  function setLinks(store, values, nowIso, machine) {
+    const out = { schema_version: 1, updated_at: nowIso, links: Object.assign({}, store ? store.links : {}) };
+    LINK_FIELDS.forEach(k => { if (!(k in values)) return; const v = String(values[k] == null ? "" : values[k]); const cur = out.links[k];
+      if (!cur || cur.v !== v) out.links[k] = { v, at: nowIso, by: machine }; });
+    return out;
+  }
+  function linksValues(store) { const o = {}; if (store) LINK_FIELDS.forEach(k => { if (store.links[k]) o[k] = store.links[k].v; }); return o; }
+
   g.DASH.events = { COLS, STATUSES, CONFIRMED, SHOW_AS, SECTIONS, DEFAULT_SOURCES, normTitle, keyOf, tripRefProblem, splitRow, links, parseEventsMd, emptyStore, readEventsStore, importEvents,
-    readSnapEvents, match, flags, tripData, model, strip, forAccount, answer, samMonth, linksProblem, notebookUrls, samLinks, cityOf };
+    readSnapEvents, match, flags, tripData, model, strip, forAccount, answer, samMonth, linksProblem, notebookUrls, samLinks, cityOf, summary, LINK_FIELDS, emptyLinks, readLinksStore, mergeLinks, sameLinks, setLinks, linksValues };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -147,6 +147,16 @@ function memDir(init) { const m = new Map(Object.entries(init || {})), mt = new 
     q = await H.mirror(d13, c13, O); const upn = q.up.slice().sort().join();
     check(upn === "inbox-snapshot.json.enc,keyring.json,time-mac.json.enc" && g13.files.size === 3, "R11 only known data files are uploaded: .bad-copy.enc, .prev.enc, conflict copies and other *.enc stay local (" + upn + ")");
     check(H.dataName("time-workpc.json.enc") && H.dataName("notebook-log.js.enc") && !H.dataName("inbox-snapshot.json.bad-copy.enc") && !H.dataName("time-pc.json.prev.enc") && !H.dataName("x.enc") && H.dataName("calendar-snapshot.json.enc") && H.dataName("trips.json.enc") && !H.dataName("calendar-snapshot.json") && !H.dataName("trips.json.prev.enc") && H.dataName("projects.json.enc") && !H.dataName("projects.json"), "R12 data file name allowlist (00.06.000: calendar-snapshot, trips; 00.07.000: projects; encrypted only)");
+    // rev 3: links.json.enc syncs like the other data files, under an opaque blob name; example mode passes isData without it
+    check(H.dataName("links.json.enc") && !H.dataName("links.json") && !H.dataName("links.json.prev.enc") && H.dataName("events-store.json.enc"), "R13 links.json.enc is a data file (encrypted only)");
+    const lenv = await V.encrypt(key, keyring, "links", JSON.stringify({ schema_version: 1, updated_at: "2026-11-02T09:00:00-06:00", links: {} }));
+    const OL = Object.assign({}, O, { inspect: async (n, text) => /^links\./.test(n) ? (JSON.parse(await V.decrypt(key, keyring, text, "links")) && { ok: true, stamp: null }) : inspect(n, text) });
+    const g14 = fakeGitHub(), c14 = H.opaque(H.client({ repo: REPO, token: TOK, fetch: g14.fetch }), getCd);
+    q = await H.mirror(memDir({ "keyring.json": KR, "links.json.enc": lenv }), c14, OL);
+    check(q.up.includes("links.json.enc") && [...g14.files.keys()].every(n => !/links|events/.test(n)), "R14 links.json.enc goes up under an opaque name (" + [...g14.files.keys()].length + " blobs)");
+    const g15 = fakeGitHub(), c15 = H.opaque(H.client({ repo: REPO, token: TOK, fetch: g15.fetch }), getCd);
+    q = await H.mirror(memDir({ "keyring.json": KR, "links.json.enc": lenv, "events-store.json.enc": lenv }), c15, Object.assign({}, OL, { isData: n => H.dataName(n) && !/^(links|events-store)\.json\.enc$/.test(n) }));
+    check(!q.up.includes("links.json.enc") && !q.up.includes("events-store.json.enc"), "R15 isData filter (example mode): links and events are not mirrored");
   }
   console.log(`\n${pass}/${pass + fail} passed`); process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

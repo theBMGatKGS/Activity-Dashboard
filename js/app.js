@@ -20,7 +20,7 @@
   const LABEL = { overdue: "Overdue", dueToday: "Due Today", thisWeek: "This Week", iOwe: "I Owe", owedToMe: "Owed to Me", goingCold: "Going Cold",
     followUps: "Follow-ups", waitingOn: "Waiting on", accountTouches: "Account touches", travel: "Travel" };
   // 00.05: Daily Focus is always the home view (Q9); ?view= opens another tab (deep links, tests).
-  const VIEWS = ["focus", "dashboard", "workload", "projects", "accounts", "events", "print", "manager"];
+  const VIEWS = ["focus", "dashboard", "workload", "projects", "accounts", "calendar", "events", "print", "manager"];
   const S = { snap: null, today: R.ymd(NOW), filter: null, open: {}, collapsed: {}, entries: [], removedCal: [], history: [], rules: R.DEFAULT_RULES, view: VIEWS.includes(qp.get("view")) ? qp.get("view") : "focus", wkOffset: 0, trends: false,
     flags: {}, focusExp: new Set(), laterOpen: false, noDateOpen: false, focusAnimated: false };
   // "now" for Snooze: the ?now= test clock if given, else the real clock.
@@ -333,11 +333,11 @@
   function innerName(n) { if (!/\.enc$/i.test(n)) return n; const b = n.slice(0, -4); return /\.(json|js)$/i.test(b) ? b : b.replace(/\.(json|js)([^.]*)$/i, "$2.$1"); }
   const isSnapName = n => SNAP_NAMES.includes(n) || /^inbox-snapshot(?:[^a-z0-9][^/]*)?\.jso?n?$/i.test(n);
   const isLogName = n => LOG_NAMES.includes(n) || /^notebook-log(?:[^a-z0-9][^/]*)?\.js$/i.test(n);
-  const CAL_NAME = "calendar-snapshot.json", TRIPS_NAME = "trips.json", PROJ_NAME = "projects.json", STORE_NAME = "projects-store.json", ACC_NAME = "accounts-store.json", CONTACTS_NAME = "contacts.json", EVENTS_NAME = "events-store.json";   // 00.09.000: account plans + contacts, encrypted only   // 00.07.000: optional Planner export feed + the Projects store (source of truth), both encrypted only
-  const FEED_READ = { calendar: raw => R.readCalendar(raw), trips: raw => R.readTrips(raw), projects: raw => R.readProjects(raw), projstore: raw => R.readStore(raw), accstore: raw => A.readAccStore(raw), contacts: raw => A.readContacts(raw), events: raw => E.readEventsStore(raw) };
+  const CAL_NAME = "calendar-snapshot.json", TRIPS_NAME = "trips.json", PROJ_NAME = "projects.json", STORE_NAME = "projects-store.json", ACC_NAME = "accounts-store.json", CONTACTS_NAME = "contacts.json", EVENTS_NAME = "events-store.json", LINKS_NAME = "links.json";   // 00.09.000: account plans + contacts, encrypted only   // 00.07.000: optional Planner export feed + the Projects store (source of truth), both encrypted only
+  const FEED_READ = { calendar: raw => R.readCalendar(raw), trips: raw => R.readTrips(raw), projects: raw => R.readProjects(raw), projstore: raw => R.readStore(raw), accstore: raw => A.readAccStore(raw), contacts: raw => A.readContacts(raw), events: raw => E.readEventsStore(raw), links: raw => E.readLinksStore(raw) };
   const stampOf = raw => raw.generated_at || raw.updated_at;
     // 00.06.000: calendar / travel assistants feeds (encrypted only)
-  const purposeOf = n => R2.isTimeFile(n) ? "time" : n === CAL_NAME ? "calendar" : n === TRIPS_NAME ? "trips" : n === PROJ_NAME ? "projects" : n === STORE_NAME ? "projstore" : n === ACC_NAME ? "accstore" : n === CONTACTS_NAME ? "contacts" : n === EVENTS_NAME ? "events" : isSnapName(n) ? "snapshot" : isLogName(n) ? "log" : null;
+  const purposeOf = n => R2.isTimeFile(n) ? "time" : n === CAL_NAME ? "calendar" : n === TRIPS_NAME ? "trips" : n === PROJ_NAME ? "projects" : n === STORE_NAME ? "projstore" : n === ACC_NAME ? "accstore" : n === CONTACTS_NAME ? "contacts" : n === EVENTS_NAME ? "events" : n === LINKS_NAME ? "links" : isSnapName(n) ? "snapshot" : isLogName(n) ? "log" : null;
   async function writeText(name, text) {
     const fh = await S.dir.getFileHandle(name, { create: true });
     const w = await fh.createWritable();            // Chromium writes to a temporary swap file; close() swaps it in (atomic)
@@ -629,7 +629,9 @@
   async function hubMirror() {
     if (S.hubOnly || !S.hub || !S.dir || !S.granted || !S.vault.key) return;
     try {
-      const r = await H.mirror(S.dir, S.hub, { ownFile: R2.fileName(S.machine) + ENC, message: "sync", inspect: hubInspect });
+      // rev 3: while EXAMPLE DATA is shown, the events store and Links are neither uploaded nor downloaded
+      const r = await H.mirror(S.dir, S.hub, { ownFile: R2.fileName(S.machine) + ENC, message: "sync", inspect: hubInspect, isData: n => H.dataName(n) && !(linksExample() && /^(events-store|links)\.json\.enc$/i.test(n)) });
+      if (r.down.includes(LINKS_NAME + ENC)) { try { const h = await S.dir.getFileHandle(LINKS_NAME + ".prev.enc"); S.linksPrev = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, await (await h.getFile()).text(), "links")); } catch (e) { S.linksPrev = null; } }   // the copy the hub replaced: merged per link
       S.hubState.last = new Date(); S.hubState.error = r.problems.length ? r.problems.join(" ") : null; S.hubState.up = r.up.length; S.hubState.down = r.down.length;
       if (r.down.includes(KEYRING)) await loadKeyring();
     } catch (e) { S.hubState.error = e.message || String(e); }
@@ -794,6 +796,7 @@
         const isEnc = /\.enc$/i.test(name), inner = innerName(name), purpose = purposeOf(inner);
         if (!purpose || (purpose === "snapshot" && /\.csv$/i.test(inner))) continue;
         names.add(inner);
+        if (purpose === "links" && !isEnc) { S.fileProblems[name] = `${name}: plaintext; Links are only read encrypted (links.json.enc).  Delete this file.`; continue; }   // rev 3: never read, never adopted
         if (S.vault.kr && !isEnc) {                                        // plaintext in an encrypted folder: encrypted below (once per version)
           try { const f = await h.getFile(), sig = f.lastModified + ":" + f.size; if (S.vault.plainDone[name] === sig) kept.push(name); else plain.push([name, sig]); } catch (e) { kept.push(name); }
           continue; }
@@ -919,7 +922,8 @@
     if (S.view === "workload") renderWorkload();
     if (S.view === "projects") renderProjects();
     if (S.view === "accounts") renderAccounts();
-    if (S.view === "events") renderEvents();
+    if (S.view === "calendar") renderEvCalendar();
+    if (S.view === "events") { renderEvents(); afterEventsRender(); }
     // Both sheets are always rendered so Ctrl+P from any tab prints a real sheet (F11).
     $("#sheet-print").innerHTML = sheet(false); $("#sheet-manager").innerHTML = sheet(true);
   }
@@ -1225,14 +1229,14 @@
   const evOutlook = () => S.evExample ? (S.evOutlookEx || []) : (S.snap && S.snap.events) || [];
   const evModel = () => E.model(evOutlook(), S.evStore, S.today, S.tripsFeed);
   async function saveEvents() {
-    if (S.evExample || !S.evStore) { render(); return; }
+    if (S.evExample || (S.snap && S.snap.example) || !S.evStore) { render(); return; }   // rev 3: never written while EXAMPLE DATA is shown
     const body = { schema_version: 1, updated_at: S.evStore.updated_at, events: S.evStore.events, answers: S.evStore.answers, source_sha256: S.evStore.source_sha256 };
     track(DB.set("eventsStore", body));
     if (canSaveToFolder()) await track(writeVerified(EVENTS_NAME + ".enc", "events", JSON.stringify(body)));
     render();
   }
   function importEventsFiles(files) {
-    if (S.evExample || (S.snap && S.snap.example)) { toast("⚠ Load your real data first: events are never mixed with EXAMPLE DATA. Nothing was imported."); return null; }
+    if (linksExample()) { toast("⚠ Load your real data first: events are never mixed with EXAMPLE DATA. Nothing was imported."); return null; }
     if (importRefused("Importing events")) return null;
     const r = E.importEvents(files, S.evStore, nowDate().toISOString()); S.evRejects = r.rejects;
     if (r.rejects.length) { toast(`⚠ Nothing imported, ${r.rejects.length} problem(s): ${r.rejects.slice(0, 3).join("; ")}${r.rejects.length > 3 ? "; …" : ""}`); render(); return r; }
@@ -1306,21 +1310,99 @@
     return `<section class="accsec"><h3>Events</h3>${r.upcoming.length ? `<div class="faint">Upcoming, as a target account</div><ul>${r.upcoming.map(li).join("")}</ul>` : ""}${r.met.length ? `<div class="faint">Met at</div><ul>${r.met.map(li).join("")}</ul>` : ""}</section>`;
   }
   function eventsClick(e) {
-    const g1 = e.target.closest && e.target.closest("[data-evgo]"); if (g1) { setView("events"); return true; }
+    const g1 = e.target.closest && e.target.closest("[data-evgo]"); if (g1) { if (g1.dataset.evgo) goEvent(g1.dataset.evgo); else setView("events"); return true; }
+    if (calendarClick(e)) return true;
     const p = e.target.closest && e.target.closest("[data-evpast]"); if (p) { S.evPastOpen = !S.evPastOpen; render(); return true; }
     const a = e.target.closest && e.target.closest("[data-evans]"); if (a && S.evStore) {
       S.evStore = Object.assign(E.answer(S.evStore, a.dataset.evans, a.dataset.row, a.dataset.ch), { updated_at: nowDate().toISOString(), example: S.evStore.example });
       saveEvents(); toast(a.dataset.ch === "link" ? "Linked. The cut-off Outlook title now uses the notebook row's details." : "Kept apart. You won't be asked again for this pair."); return true; }
     return false;
   }
+  // ---------- rev 3: Calendar tab, an at-a-glance Events summary (events only; meetings stay on Totals) ----------
+  Object.assign(S, { evScroll: null, evDay: null });
+  if (/^#ev=/.test(location.hash)) { try { S.evScroll = decodeURIComponent(location.hash.slice(4)).slice(0, 300); S.view = "events"; S.evPastOpen = true; } catch (e) { S.evScroll = null; } }   // deep link ?view=events#ev=<id> (hash only)
+  function goEvent(id, day) {
+    S.evScroll = id || null; S.evDay = day || null;
+    const m = evModel(), hit = m.list.find(x => x.id === id) || (day && m.list.find(x => x.start_date !== "?" && x.start_date <= day && (x.end_date === "?" ? x.start_date : x.end_date) >= day));
+    if (hit && hit.section === "past") S.evPastOpen = true;
+    if (!id && hit) S.evScroll = hit.id;
+    setView("events");
+  }
+  function afterEventsRender() {
+    if (!S.evScroll && !S.evDay) return;
+    const el = $("#view-events"), rows = [...el.querySelectorAll(".evlist .evrow")];
+    rows.forEach(r => r.classList.remove("flash", "dayhit"));
+    if (S.evDay) { const m = S.evLast; rows.forEach(r => { const x = m && m.list.find(y => y.id === r.dataset.ev); if (x && x.start_date !== "?" && x.start_date <= S.evDay && (x.end_date === "?" ? x.start_date : x.end_date) >= S.evDay) r.classList.add("dayhit"); }); }
+    const t = S.evScroll && el.querySelector(`.evlist .evrow[data-ev="${CSS.escape(S.evScroll)}"]`);
+    if (t) { t.classList.add("flash"); t.scrollIntoView({ block: "center" }); t.setAttribute("tabindex", "-1"); t.focus({ preventScroll: true }); }
+    S.evScroll = null; S.evDay = null;
+  }
+  function renderEvCalendar() {
+    const el = $("#view-calendar"); if (!el) return;
+    const m = evModel(), s = E.summary(m, S.today, 4);
+    const monthName = ym => new Date(ym + "-15T12:00:00Z").toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+    const chip = f => `<span class="evflag f-${f.level === "unv" ? "amber" : f.level}">${f.level === "red" ? "● " : ""}${esc(f.text)}</span>`;
+    const card = x => { const d = x.d, tr = d && ["planned", "booked"].includes(d.travel.state) ? ["F", "H", "C"].map(k => `<span class="evtc${d.travel.state === "booked" && d.travel[{ F: "flight", H: "hotel", C: "car" }[k]] ? " on" : ""}">${k}</span>`).join("") : "";
+      return `<button class="calcard${x.red ? " red" : ""}" data-evgo="${esc(x.id)}"><span class="cwhen">${esc(evDates(x))}</span><b>${esc(x.title)}</b><span class="faint">${esc(x.location || "?")}${d && d.status !== "?" ? " · " + esc(d.status) : ""}</span><span class="cflags">${tr}${x.flags.filter(f => f.id !== "hold").map(chip).join(" ")}</span></button>`; };
+    const counts = `<div class="calcounts" role="group" aria-label="At a glance">
+      <button class="calcount red" data-evsec="action"><b>${s.counts.red}</b> need action</button>
+      <button class="calcount amber" data-evsec="upcoming"><b>${s.counts.amber}</b> to check</button>
+      <button class="calcount" data-evsec="undated"><b>${s.counts.undated}</b> undated</button>
+      <span class="calnext">${s.next.length ? `Next: <button class="linkbtn" data-evgo="${esc(s.next[0].id)}">${esc(s.next[0].title)}</button> ${s.nextIn === 0 ? "today" : `in ${s.nextIn} day${s.nextIn === 1 ? "" : "s"}`}` : "No dated events ahead."}</span></div>`;
+    const grid = s.grid.map(g => `<div class="calmonth"><h3>${esc(monthName(g.month))}</h3><table class="calgrid" role="grid"><thead><tr>${["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map(w => `<th>${w}</th>`).join("")}</tr></thead><tbody>${g.weeks.map(w => `<tr>${w.map(c => !c ? "<td></td>" : `<td>${c.n ? `<button class="calday has${c.red ? " red" : ""}${c.today ? " today" : ""}${c.past ? " past" : ""}" data-evday="${c.day}" aria-label="${esc(R.dayLabel(c.day) + ": " + c.titles.join(", "))}" title="${esc(c.titles.join(", "))}">${Number(c.day.slice(8))}${c.red ? '<i class="dot"></i>' : ""}</button>` : `<span class="calday${c.today ? " today" : ""}${c.past ? " past" : ""}">${Number(c.day.slice(8))}</span>`}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`).join("");
+    const dl = s.deadlines.length ? `<ul class="caldl">${s.deadlines.map(x => `<li><button class="linkbtn" data-evgo="${esc(x.id)}">${esc(R.dayLabel(x.date))}</button> · ${esc(x.kind)} · ${esc(x.title)} <span class="faint">${x.days === 0 ? "today" : `in ${x.days} d`}</span></li>`).join("")}</ul>` : `<p class="faint">No deadlines in the next 14 days.</p>`;
+    el.innerHTML = `<div class="acctools projtools"><h2>Calendar</h2><span class="faint">Events at a glance${S.evExample ? " · EXAMPLE DATA" : ""} · meetings stay on Totals · <button class="linkbtn" data-evgo="">open the Events list</button></span></div>
+      ${counts}
+      <div class="calbody"><section class="calnext3" aria-labelledby="caln-h"><h3 id="caln-h">Next 3</h3>${s.next.map(card).join("") || `<p class="faint">Nothing dated ahead.</p>`}
+        <h3>Deadlines, next 14 days</h3>${dl}</section>
+        <section class="calmonths" aria-label="Four months">${grid}</section></div>
+      <div class="faint projfoot">${s.tripData ? "" : "Trip overlap: Trip data not available · "}Red dot = a day with an event that needs action.  Tap a day or card to open it in the Events list.  Rev ${REV}</div>
+      <div class="calprintfoot"><b>Restricted - Internal Use Only</b> · Rev ${REV}</div>`;
+  }
+  function calendarClick(e) {
+    const c = e.target.closest && e.target.closest("[data-evsec]"); if (c) { const id = c.dataset.evsec; S.evPastOpen = S.evPastOpen || id === "past"; setView("events"); const sec = document.getElementById("evs-" + id); if (sec) sec.scrollIntoView({ block: "start" }); return true; }
+    const d = e.target.closest && e.target.closest("[data-evday]"); if (d) { goEvent(null, d.dataset.evday); return true; }
+    return false;
+  }
   // ---------- 00.10.000 File → Links… (per computer, encrypted) and the SAM bullets link ----------
-  async function loadLinks() { if (S.linksLoaded) return S.links; const l = await DB.get("links"); S.links = l && typeof l === "object" && !E.linksProblem(l) ? l : null; S.linksLoaded = !!(S.vault && S.vault.key) || !(S.vault && S.vault.kr); return S.links; }
+  // rev 3: Links live in links.json.enc (purpose "links", the folder's keyring), synced by the folder and the hub like any data file.
+  // Newest change to each link wins (E.mergeLinks).  IndexedDB "links" is the encrypted cache: cache-only, never exported.
+  Object.assign(S, { linksStore: null, linksPrev: null, linksDirty: false });
+  const linksExample = () => !!(S.snap && S.snap.example) || !!S.evExample;
+  const machineTag = () => String(S.machine || "local").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 24) || "local";
+  async function loadLinks() {
+    if (S.linksLoaded) return S.links;
+    if (S.vault && S.vault.kr && !S.vault.key) return S.links;   // locked: nothing is read
+    const l = await DB.get("links");
+    try {
+      if (l && l.schema_version === 1) S.linksStore = E.mergeLinks(S.linksStore, E.readLinksStore(l));
+      else if (l && typeof l === "object" && !E.linksProblem(l)) { S.linksStore = E.mergeLinks(S.linksStore, E.setLinks(null, l, nowDate().toISOString(), machineTag())); S.linksDirty = true; }   // 651b0b8 cache, migrated once
+    } catch (e) { /* ignore a bad cache */ }
+    S.links = S.linksStore && Object.keys(S.linksStore.links).length ? E.linksValues(S.linksStore) : null;
+    S.linksLoaded = true; return S.links;
+  }
+  async function saveLinks(fileToo) {
+    if (!S.linksStore || linksExample() || !(S.vault && (!S.vault.kr || S.vault.key))) return;
+    track(DB.set("links", S.linksStore));
+    if (fileToo && canSaveToFolder()) { S.linksDirty = false; await track(writeVerified(LINKS_NAME + ".enc", "links", JSON.stringify(S.linksStore))); }
+  }
+  function useLinksFeed(raw) {
+    if (linksExample() || !(S.vault && S.vault.key)) return;
+    let inc; try { inc = E.readLinksStore(raw); } catch (e) { return; }
+    let m = E.mergeLinks(S.linksStore, inc);
+    if (S.linksPrev) { try { m = E.mergeLinks(m, E.readLinksStore(S.linksPrev)); } catch (e) { /* ignore */ } S.linksPrev = null; }
+    const local = !E.sameLinks(m, S.linksStore), stale = !E.sameLinks(m, inc);
+    S.linksStore = m; S.links = Object.keys(m.links).length ? E.linksValues(m) : null; S.linksLoaded = true;
+    if (local || stale || S.linksDirty) saveLinks(stale || S.linksDirty);
+  }
   async function linksDialog() {
-    if (S.vault && S.vault.kr && !S.vault.key) { toast("⚠ Unlock the Data folder first: links are stored encrypted on this computer."); return; }
+    if (linksExample()) { toast("⚠ Load your real data first: Links are never saved while EXAMPLE DATA is shown."); return; }
+    if (S.vault && S.vault.kr && !S.vault.key) { toast("⚠ Unlock the Data folder first: Links are stored encrypted."); return; }
     if (!canSaveToFolder()) { toast("⚠ Links need an encrypted, unlocked Data folder (File → Encryption…), so they are never kept unencrypted."); return; }
     const l = (await loadLinks()) || {};
     await dialog("linksdlg", `<b class="vt">🔗 Links on this computer</b>
-      <p>Where the notebook lives, for the SAM bullets link and note links.  Stored encrypted on this computer only; never exported or synced.</p>
+      <p>Where the notebook lives, for the SAM bullets link and note links.  Stored encrypted (links.json.enc) and synced to your other computers; never exported.  The newest change to each link wins.</p>
+      ${S.linksStore && Object.keys(S.linksStore.links).length ? `<p class="faint" id="lk-sync">${E.LINK_FIELDS.filter(k => S.linksStore.links[k]).map(k => `${k}: changed ${esc(R.dayLabel(R.isoDay(S.linksStore.links[k].at)))} ${esc(R.hm(S.linksStore.links[k].at))} on ${esc(S.linksStore.links[k].by)}`).join(" · ")}</p>` : ""}
       <label class="vlab">Obsidian vault name<input id="lk-vault" value="${esc(l.vault || "")}" autocomplete="off" spellcheck="false"></label>
       <label class="vlab">Notebook repo address<input id="lk-repo" value="${esc(l.repo || "")}" placeholder="https://github.com/owner/repo" autocomplete="off" spellcheck="false"></label>
       <label class="vlab">Branch<input id="lk-branch" value="${esc(l.branch || "main")}" autocomplete="off" spellcheck="false"></label>
@@ -1332,7 +1414,8 @@
         const v = { vault: d.querySelector("#lk-vault").value.trim(), repo: d.querySelector("#lk-repo").value.trim().replace(/\/+$/, "").replace(/\.git$/, ""), branch: d.querySelector("#lk-branch").value.trim() || "main", sources: d.querySelector("#lk-src").value.trim() || E.DEFAULT_SOURCES };
         const p = E.linksProblem(v); if (p) { d.querySelector("#lk-err").textContent = p; return; }
         if (!v.vault && !v.repo) { d.querySelector("#lk-err").textContent = "Set the vault name, the repo address, or both."; return; }
-        await DB.set("links", v); S.links = v; S.linksLoaded = true; done(true); toast("Links saved, encrypted, on this computer."); render(); };
+        await loadLinks(); S.linksStore = E.setLinks(S.linksStore, v, nowDate().toISOString(), machineTag()); S.links = E.linksValues(S.linksStore); S.linksLoaded = true;
+        await saveLinks(true); done(true); toast("Links saved, encrypted, in links.json.enc.  They sync to your other computers."); render(); };
     });
   }
   async function samDialog() {
@@ -1677,7 +1760,8 @@ ${ask}
     if (feeds.projstore && (!S.projStore || S.projExample || Date.parse(feeds.projstore.updated_at) > Date.parse(S.projStore.updated_at))) { S.projStore = R.readStore(feeds.projstore); S.projExample = false; track(DB.set("projectsStore", feeds.projstore)); }
     if (feeds.accstore && (!S.accStore || S.accExample || Date.parse(feeds.accstore.updated_at) > Date.parse(S.accStore.updated_at))) { S.accStore = A.readAccStore(feeds.accstore); S.accExample = false; track(DB.set("accountsStore", feeds.accstore)); }
     if (feeds.contacts && (!S.contacts || S.accExample || Date.parse(feeds.contacts.updated_at) > Date.parse(S.contacts.updated_at))) { S.contacts = A.readContacts(feeds.contacts); track(DB.set("contacts", feeds.contacts)); }
-    if (feeds.events && (!S.evStore || S.evExample || Date.parse(feeds.events.updated_at) > Date.parse(S.evStore.updated_at))) { S.evStore = E.readEventsStore(feeds.events); S.evExample = false; track(DB.set("eventsStore", feeds.events)); }
+    if (feeds.links) useLinksFeed(feeds.links); else if (S.linksDirty && !linksExample()) saveLinks(true);   // rev 3: Links merge per link
+    if (feeds.events && !S.evExample && (!S.evStore || S.evExample || Date.parse(feeds.events.updated_at) > Date.parse(S.evStore.updated_at))) { S.evStore = E.readEventsStore(feeds.events); S.evExample = false; track(DB.set("eventsStore", feeds.events)); }
     if (feeds.trips && (!S.tripsFeed || Date.parse(feeds.trips.generated_at) >= Date.parse(S.tripsFeed.generatedAt))) { S.tripsFeed = R.readTrips(feeds.trips); track(DB.set("trips", feeds.trips)); }
   }
   function stripModel(f) {
@@ -1971,7 +2055,7 @@ ${ask}
       </div></div>`;
   }
   function doPrint(which) { S.view = which; render(); document.querySelectorAll(".view").forEach(v => v.classList.toggle("printing", v.id === "view-" + which)); setTimeout(() => window.print(), 50); }
-  const printTarget = () => S.view === "manager" ? "manager" : S.view === "focus" ? "focus" : S.view === "projects" ? "projects" : S.view === "accounts" ? "accounts" : S.view === "events" ? "events" : "print";   // 00.05: Ctrl+P on Daily Focus prints Daily Focus
+  const printTarget = () => S.view === "manager" ? "manager" : S.view === "focus" ? "focus" : S.view === "projects" ? "projects" : S.view === "accounts" ? "accounts" : S.view === "events" ? "events" : S.view === "calendar" ? "calendar" : "print";   // 00.05: Ctrl+P on Daily Focus prints Daily Focus
 
   // ---------- help ----------
   function openHelp(sec) {
@@ -2000,7 +2084,7 @@ ${ask}
     openTimeFiles: () => pickFiles(".json", files => { files.forEach(([n, t]) => { const r = R2.parseTimeFile(t, n); S.fileEvents["picked:" + n] = r.events; if (r.bad) S.problems.push(r.bad); }); recompute(); render(); toast(`Merged ${files.length} time file(s).`); }),
     importLog: () => pickFile(".md,.txt", (n, t) => importLog(n, t)), logCall: () => logCall($("#asof")),
     print: () => doPrint("print"), printManager: () => doPrint("manager"), printFocus: () => doPrint("focus"), reload: () => reloadSafely(),
-    keyAccounts: () => keyAccountsDialog(), vFocus: () => setView("focus"), vDash: () => setView("dashboard"), vWork: () => setView("workload"), vPrint: () => setView("print"), vManager: () => setView("manager"), vProjects: () => setView("projects"), vAccounts: () => setView("accounts"), vEvents: () => setView("events"),
+    keyAccounts: () => keyAccountsDialog(), vFocus: () => setView("focus"), vDash: () => setView("dashboard"), vWork: () => setView("workload"), vPrint: () => setView("print"), vManager: () => setView("manager"), vProjects: () => setView("projects"), vAccounts: () => setView("accounts"), vEvents: () => setView("events"), vCalendar: () => setView("calendar"),
     importEvents: () => pickFiles(".md,text/markdown", files => importEventsFiles(files)), printEvents: () => doPrint("events"), links: () => linksDialog(), samLink: () => samDialog(),
     importAccounts: () => pickFiles(".md,text/markdown", files => importAccountFiles(files)), importContacts: () => pickFile(".csv,text/csv", (n, t) => importContactsFile(n, t)), printAccounts: () => doPrint("accounts"),
     printProjects: () => doPrint("projects"), exportProjects: () => exportProjects("csv"), exportProjectsXlsx: () => exportProjects("xlsx"), exportProjectsGraph: () => exportProjects("graph"), importPlanner: () => importPlanner(), importProjectJson: () => pickFile(".json,application/json", (n, t) => importProjectJson(n, t)),

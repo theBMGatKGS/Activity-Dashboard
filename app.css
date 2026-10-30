@@ -528,3 +528,39 @@ tr.unvrow td,.unvli{outline:1px dashed #5e4512;outline-offset:-1px}
 }
 .evrow .linkbtn{background:none;border:0;padding:0;color:var(--info);text-decoration:underline;cursor:pointer;font:inherit}
 @media print{#view-events.printing .evnote{color:#102645}}
+/* rev 3: Calendar tab (events at a glance) */
+#view-calendar{display:flex;flex-direction:column;gap:10px}
+#view-calendar.hidden{display:none}
+.calcounts{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.calcount{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:6px 12px;min-height:44px;color:inherit;cursor:pointer;font:inherit}
+.calcount b{font-size:20px;margin-right:6px}.calcount.red{border-left:3px solid #d9534f}.calcount.amber{border-left:3px solid var(--inc)}
+.calnext{font-size:13px;margin-left:6px}
+.calbody{display:grid;grid-template-columns:340px 1fr;gap:14px;align-items:start}
+.calnext3 h3,.calmonth h3{font-size:13px;margin:4px 0 6px}
+.calcard{display:flex;flex-direction:column;gap:2px;width:100%;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin:0 0 6px;color:inherit;font:inherit;font-size:12px;cursor:pointer;min-height:44px}
+.calcard.red{border-left:3px solid #d9534f}.calcard .cwhen{font-family:var(--mono,monospace);font-size:11px}.calcard .cflags{display:flex;flex-wrap:wrap;gap:3px}
+.caldl{margin:0;padding-left:16px;font-size:12px}
+.calmonths{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.calgrid{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px}
+.calgrid th{font-size:10px;color:var(--muted);font-weight:600;padding:2px 0}
+.calgrid td{text-align:center;padding:1px}
+.calday{display:inline-flex;align-items:center;justify-content:center;position:relative;width:100%;min-height:28px;border-radius:4px;border:1px solid transparent;background:none;color:inherit;font:inherit}
+.calday.past{color:var(--muted)}.calday.today{border-color:var(--accent)}
+button.calday.has{background:#16364f;cursor:pointer}button.calday.red{background:#3a1d1d}
+.calday .dot{position:absolute;top:2px;right:3px;width:6px;height:6px;border-radius:50%;background:#ff5a52}
+.evrow.flash{animation:evflash 1.6s ease-out 1;outline:2px solid var(--info)}.evrow.dayhit{outline:1px solid var(--info)}
+@keyframes evflash{0%{background:#16364f}100%{background:var(--surface)}}
+.calprintfoot{display:none}
+@media (max-width:1024px){.calbody{grid-template-columns:1fr}.calmonths{grid-template-columns:repeat(2,minmax(0,1fr))}.calday{min-height:44px}}
+@media (max-width:760px){.calmonths{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:10px}.calmonth{flex:0 0 calc(100% - 8px);scroll-snap-align:start}}
+@media print{
+  #view-calendar.printing{display:block!important;background:#fff!important;color:#1a1a1a!important;padding:.3in .35in;font:9pt/1.3 var(--sans)}
+  #view-calendar.printing .calcount,#view-calendar.printing .calcard{background:#fff;color:#1a1a1a;border-color:#BBB}
+  #view-calendar.printing h2,#view-calendar.printing h3{color:#102645}
+  #view-calendar.printing .calmonths{grid-template-columns:repeat(4,1fr)}
+  #view-calendar.printing button.calday.has{background:#E6EEF6;color:#102645}#view-calendar.printing button.calday.red{background:#F6E1E1;color:#AC242A}
+  #view-calendar.printing .faint{color:#474747!important}#view-calendar.printing .linkbtn{color:#102645}
+  #view-calendar.printing .projfoot{display:none}#view-calendar.printing .calprintfoot{display:block;margin-top:8px}
+}
+#view-calendar .linkbtn,.calnext .linkbtn{background:none;border:0;padding:0;color:var(--info);text-decoration:underline;cursor:pointer;font:inherit}
+@media screen and (max-width:1800px){.top{height:auto;min-height:36px;flex-wrap:wrap;gap:4px;padding:4px 10px}.right{flex-wrap:wrap}}

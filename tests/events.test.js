@@ -90,4 +90,33 @@ t("L2 SAM links: notebook file and sources file, Obsidian and GitHub forms", () 
   assert.strictEqual(s.final.urls.github, "https://github.com/example-owner/example-notebook/blob/main/reports/sam-activity/2026-10.md"); assert.strictEqual(s.sources.path, "crm/outbox/sam-report/2026-10/sources.md"); assert.deepStrictEqual(E.samLinks(null, "2026-11-03").final.urls, {}); });
 t("L3 Links validation", () => { assert.strictEqual(E.linksProblem({ vault: "V", repo: "https://github.com/a/b" }), null); assert.ok(E.linksProblem({ repo: "javascript:alert(1)" })); assert.ok(E.linksProblem({ repo: "https://example.com/a/b" })); assert.ok(E.linksProblem({ vault: "a/b" })); assert.ok(E.linksProblem({ sources: "../x.md" })); assert.ok(E.linksProblem({ branch: "a b" })); });
 
+// ---- rev 3: Past boundary, Calendar summary, Links merge ----
+const SUMS = (d, rs) => E.model([], store(rs), d, null);
+t("B1 Past boundary: an event ending today is not past; ending yesterday is", () => { const r = [Object.assign({}, row("Example Hold Fair"), { start_date: "2026-11-01", end_date: "2026-11-03" })];
+  assert.notStrictEqual(SUMS("2026-11-03", r).list[0].section, "past"); assert.strictEqual(SUMS("2026-11-04", r).list[0].section, "past"); });
+t("B2 Past boundary: an unknown end date never becomes past; undated never past", () => { const r = [Object.assign({}, row("Example Hold Fair"), { start_date: "2026-01-01", end_date: "?" })]; assert.notStrictEqual(SUMS("2026-11-04", r).list[0].section, "past");
+  const u = [Object.assign({}, row("Example Hold Fair"), { start_date: "?", end_date: "?" })]; assert.notStrictEqual(SUMS("2026-11-04", u).list[0].section, "past"); });
+t("B3 Past boundary is the same in both zones", () => { ["America/Chicago", "America/New_York"].forEach(z => { R.setTimeZone(z); const r = [Object.assign({}, row("Example Hold Fair"), { start_date: "2026-11-01", end_date: "2026-11-01" })];
+  assert.notStrictEqual(SUMS("2026-11-01", r).list[0].section, "past"); assert.strictEqual(SUMS("2026-11-02", r).list[0].section, "past"); }); R.setTimeZone("America/Chicago"); });
+t("C1 summary: four months, Monday-first, padded to whole weeks", () => { const s = E.summary(SUMS("2026-10-19"), "2026-10-19", 4); assert.strictEqual(s.grid.length, 4); const C = g => [].concat(...g.weeks);
+  assert.ok(s.grid.every(g => g.weeks.every(w => w.length === 7))); assert.strictEqual(C(s.grid[0]).findIndex(c => c), 3); assert.strictEqual(C(s.grid[1]).findIndex(c => c), 6); assert.strictEqual(C(s.grid[3]).find(c => c).day, "2027-01-01"); assert.strictEqual(s.grid[3].month, "2027-01"); });
+t("C2 summary: red dots on event days, today marked, past days marked", () => { const s = E.summary(SUMS("2026-10-19"), "2026-10-19", 4); const all = [].concat(...s.grid.map(g => [].concat(...g.weeks))).filter(Boolean);
+  assert.ok(all.find(c => c.day === "2026-10-19").today); assert.ok(all.find(c => c.day === "2026-10-18").past); assert.ok(all.some(c => c.n && c.red)); assert.ok(all.filter(c => c.n).every(c => c.ids.length === c.n)); });
+t("C3 summary: next 3 skip skipped and on hold, sorted by date", () => { const s = E.summary(SUMS("2026-10-19"), "2026-10-19", 4); assert.ok(s.next.length <= 3); assert.ok(s.next.every(x => x.status !== "skipped" && x.status !== "on hold"));
+  assert.deepStrictEqual(s.next.map(x => x.start_date), s.next.map(x => x.start_date).slice().sort()); });
+t("C4 summary counts match the model", () => { const m = SUMS("2026-10-19"), s = E.summary(m, "2026-10-19", 4); assert.strictEqual(s.counts.red, m.redCount); assert.ok(s.counts.undated >= 0); });
+t("C5 summary deadlines are within 0..14 days", () => { const s = E.summary(SUMS("2026-10-19"), "2026-10-19", 4); assert.ok(s.deadlines.every(d => d.days >= 0 && d.days <= 14)); });
+const NOW = "2026-10-19T09:00:00-05:00", LATER = "2026-10-19T10:00:00-05:00";
+t("K1 setLinks stamps only changed fields with time and machine", () => { const a = E.setLinks(null, { vault: "Example Vault", repo: "https://github.com/example-owner/example-notebook" }, NOW, "desk1");
+  assert.deepStrictEqual(a.links.vault, { v: "Example Vault", at: NOW, by: "desk1" }); const b = E.setLinks(a, { vault: "Example Vault", branch: "main" }, LATER, "ipad1"); assert.strictEqual(b.links.vault.at, NOW); assert.strictEqual(b.links.branch.by, "ipad1"); });
+t("K2 mergeLinks: newest change per link wins, the others kept", () => { const base = E.setLinks(null, { vault: "Example Vault", repo: "https://github.com/example-owner/example-notebook" }, NOW, "desk1");
+  const a = E.setLinks(base, { vault: "Other Vault" }, LATER, "desk1"), b = E.setLinks(base, { repo: "https://github.com/example-owner/other-notebook" }, "2026-10-19T09:30:00-05:00", "ipad1");
+  const m = E.mergeLinks(a, b); assert.strictEqual(m.links.vault.v, "Other Vault"); assert.strictEqual(m.links.repo.v, "https://github.com/example-owner/other-notebook"); assert.deepStrictEqual(E.mergeLinks(b, a).links, m.links); assert.strictEqual(m.updated_at, LATER); });
+t("K3 mergeLinks ties: later updated_at, then machine name", () => { const x = { schema_version: 1, updated_at: NOW, links: { vault: { v: "A", at: NOW, by: "zeta" } } }, y = { schema_version: 1, updated_at: NOW, links: { vault: { v: "B", at: NOW, by: "alpha" } } };
+  assert.strictEqual(E.mergeLinks(x, y).links.vault.v, "B"); assert.strictEqual(E.mergeLinks(y, x).links.vault.v, "B"); assert.strictEqual(E.mergeLinks(Object.assign({}, x, { updated_at: LATER }), y).links.vault.v, "A"); });
+t("K4 readLinksStore drops bad fields and rejects bad stores", () => { assert.throws(() => E.readLinksStore({ schema_version: 2 })); assert.throws(() => E.readLinksStore({ schema_version: 1, updated_at: "x", links: {} }));
+  const r = E.readLinksStore({ schema_version: 1, updated_at: NOW, links: { vault: { v: "V", at: NOW, by: "Bad Name" }, repo: { v: "javascript:alert(1)", at: NOW, by: "a" }, branch: { v: "main", at: NOW, by: "a" }, extra: { v: "x", at: NOW, by: "a" } } });
+  assert.deepStrictEqual(Object.keys(r.links), ["branch"]); });
+t("K5 linksValues and sameLinks", () => { const a = E.setLinks(null, { vault: "V", branch: "main" }, NOW, "a"); assert.deepStrictEqual(E.linksValues(a), { vault: "V", branch: "main" }); assert.ok(E.sameLinks(a, JSON.parse(JSON.stringify(a)))); assert.ok(!E.sameLinks(a, E.setLinks(a, { vault: "W" }, LATER, "a"))); });
+
 console.log(`${n - fail}/${n} passed`); if (fail) process.exit(1);

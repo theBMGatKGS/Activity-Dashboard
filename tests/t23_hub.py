@@ -8,6 +8,7 @@ reload reconnects; offline is reported and recovers; public repo refused; classi
 api.github.com; frame-busting; service worker never caches API responses (route-level)."""
 import pathlib, shutil, tempfile, json, os, sys, base64, hashlib, re
 from playwright.sync_api import sync_playwright
+TILE_MS = 60000   # rev 3 (QA Low): the tile waits get 60 s under box load
 SRC = pathlib.Path(__file__).resolve().parents[1]; ok = True
 def check(c, m):
     global ok; print(("PASS " if c else "FAIL ") + m); ok = ok and c
@@ -73,7 +74,7 @@ with sync_playwright() as p:
         pg = ctx.new_page(); pg.on("pageerror", lambda e: errors.append(f"{m}: {e}")); pg.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
         pg.on("console", lambda msg: errors.append(f"{m} CSP: {msg.text}") if "Content Security Policy" in msg.text else None)
         pg.goto((app / "index.html").as_uri() + Q + m); return pg
-    def ready(pg): pg.wait_for_selector(".tile"); pg.evaluate("DASH.app.syncNow()"); pg.evaluate("DASH.app.flush()")
+    def ready(pg): pg.wait_for_selector(".tile", timeout=TILE_MS); pg.evaluate("DASH.app.syncNow()"); pg.evaluate("DASH.app.flush()")
     def menu(pg, act): pg.click('.mtop:has-text("File")'); pg.click(f'[data-act="{act}"]')
     # --- work PC: folder, encryption on, then GitHub sync from the menu
     pc = page("workpc", True); ready(pc)
@@ -100,7 +101,7 @@ with sync_playwright() as p:
     check(TOK["workpc"] not in raw and json.loads(cfg["tokenEnv"])["kind"] == "dash-encrypted" and json.loads(cfg["tokenEnv"])["purpose"] == "token", "PC: token stored only as an encrypted envelope (raw IndexedDB scan)")
     check(pc.evaluate("JSON.stringify(localStorage)").find("github_pat_") < 0, "PC: token not in localStorage")
     # --- iPad: no folder support, GitHub is the store
-    ipad = page("ipad", False); ipad.wait_for_selector(".tile")
+    ipad = page("ipad", False); ipad.wait_for_selector(".tile", timeout=TILE_MS)
     check("Set up GitHub sync" in ipad.inner_text("#sync"), "iPad: sync chip offers GitHub sync when folders aren't supported")
     ipad.click("#sync"); ipad.wait_for_selector("#hubdlg"); ipad.fill("#hub-repo", REPO); ipad.fill("#hub-token", TOK["ipad"]); ipad.click("#hub-ok")
     ipad.wait_for_selector("#vaultunlock", timeout=20000); ipad.fill("#vault-pass", "wrong passphrase here"); ipad.click("#vault-ok")
@@ -204,13 +205,13 @@ with sync_playwright() as p:
     lp = lctx.new_page(); lp.on("pageerror", lambda e: errors.append(f"laptop: {e}")); lp.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
     lp.goto((app / "index.html").as_uri() + Q + "laptop"); lp.wait_for_selector("#vaultunlock", timeout=20000)
     lp.fill("#vault-pass", PASS1); lp.uncheck("#vault-remember"); lp.click("#vault-ok"); lp.wait_for_function("() => !document.querySelector('#vaultunlock')", timeout=30000)
-    lp.wait_for_selector(".tile"); menu(lp, "hub"); lp.wait_for_selector("#hubdlg"); lp.fill("#hub-repo", REPO); lp.fill("#hub-token", TOK["laptop"]); lp.click("#hub-ok")
+    lp.wait_for_selector(".tile", timeout=TILE_MS); menu(lp, "hub"); lp.wait_for_selector("#hubdlg"); lp.fill("#hub-repo", REPO); lp.fill("#hub-token", TOK["laptop"]); lp.click("#hub-ok")
     lp.wait_for_function("() => !document.querySelector('#hubdlg')", timeout=30000)
     check("☁" in lp.inner_text("#sync") and (data2 / "inbox-snapshot.json.enc").exists(), "L1 set-up: folder with only keyring.json connects to GitHub and pulls the snapshot")
     for f in os.listdir(data2):
         if f != "keyring.json": (data2 / f).unlink()   # back to a folder holding only keyring.json
     before = STATE["commits"]
-    lp.reload(); lp.wait_for_selector("#vaultunlock", timeout=20000); lp.click("#vault-later"); lp.wait_for_selector(".tile")   # locked at start-up
+    lp.reload(); lp.wait_for_selector("#vaultunlock", timeout=20000); lp.click("#vault-later"); lp.wait_for_selector(".tile", timeout=TILE_MS)   # locked at start-up
     menu(lp, "encryption"); lp.wait_for_selector("#vaultunlock", timeout=20000); lp.fill("#vault-pass", PASS1); lp.click("#vault-ok")
     lp.wait_for_function("() => !document.querySelector('#vaultunlock')", timeout=30000); lp.evaluate("DASH.app.syncNow(true)"); lp.evaluate("DASH.app.syncNow(true)")
     chip = lp.inner_text("#sync")
@@ -234,7 +235,7 @@ with sync_playwright() as p:
     (data2 / "keyring.json").write_text(krB); hubA = HUB["keyring.json"]; localB = (data2 / "keyring.json").read_bytes()
     lp.evaluate("new Promise(res => { indexedDB.open('activity-dashboard').onsuccess = e => { e.target.result.transaction('kv', 'readwrite').objectStore('kv').delete('vaultKey').onsuccess = () => res(1); }; })")
     k0 = len(CALLS); lp.reload(); lp.wait_for_selector("#vaultunlock", timeout=20000); lp.fill("#vault-pass", PASS2); lp.click("#vault-ok")
-    lp.wait_for_function("() => !document.querySelector('#vaultunlock')", timeout=30000); lp.wait_for_selector(".tile"); lp.evaluate("DASH.app.syncNow(true)"); lp.evaluate("DASH.app.syncNow(true)")
+    lp.wait_for_function("() => !document.querySelector('#vaultunlock')", timeout=30000); lp.wait_for_selector(".tile", timeout=TILE_MS); lp.evaluate("DASH.app.syncNow(true)"); lp.evaluate("DASH.app.syncNow(true)")
     chip, tip = lp.inner_text("#sync"), lp.get_attribute("#sync", "title"); writes = [c for c in CALLS[k0:] if c[0] in ("PUT", "DELETE")]
     check(chip.startswith("⚠ GitHub not connected") and "1 problem" in chip and "☁" not in chip, f"K1 chip: '⚠ GitHub not connected', 1 problem, no cloud mark ({chip!r})")
     check("different keyring" in tip, f"K1 tooltip says 'different keyring' ({tip[:120]!r})")
@@ -247,7 +248,7 @@ with sync_playwright() as p:
     # ---- K2: the saved token can't be opened (corrupted): same warning, and no request at all
     lp.evaluate("""new Promise(res => { indexedDB.open('activity-dashboard').onsuccess = e => { const st = e.target.result.transaction('kv', 'readwrite').objectStore('kv'), q = st.get('hubCfg');
       q.onsuccess = () => { const c = q.result, env = JSON.parse(c.tokenEnv); env.ct = env.ct.split('').reverse().join(''); c.tokenEnv = JSON.stringify(env); st.put(c, 'hubCfg').onsuccess = res; }; }; })""")
-    lp.reload(); lp.wait_for_selector(".tile"); t0 = len(CALLS); lp.evaluate("DASH.app.syncNow(true)"); lp.evaluate("DASH.app.syncNow(true)")
+    lp.reload(); lp.wait_for_selector(".tile", timeout=TILE_MS); t0 = len(CALLS); lp.evaluate("DASH.app.syncNow(true)"); lp.evaluate("DASH.app.syncNow(true)")
     chip, tip = lp.inner_text("#sync"), lp.get_attribute("#sync", "title")
     check(chip.startswith("⚠ GitHub not connected") and "1 problem" in chip and "☁" not in chip and "token" in tip and len(CALLS) == t0, f"K2 corrupted token: same warning, tooltip names the token, no requests ({chip!r}, {len(CALLS) - t0} requests)")
     HUB.clear(); HUB.update(saved)
