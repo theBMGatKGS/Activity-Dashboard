@@ -16,7 +16,7 @@ PASS = "synthetic test passphrase t31"; ENV = dict(os.environ, DASH_TEST_PASS=PA
 FS_JS = """(() => { const nf = () => { const e = new Error('not found'); e.name = 'NotFoundError'; return e; }; window.__textReads = [];
   const fh = n => ({ kind: 'file', name: n, async getFile() { const r = await window.__fs('stat', n, ''); if (!r) throw nf();
       return { lastModified: r.m, size: r.size, text: async () => { window.__textReads.push(n); return (await window.__fs('read', n, '')).text; } }; },
-    async move(to) { await window.__fs('move', n, to); },
+    async move(to) { if (await window.__fs('move', n, to) === 'nomove') { const e = new Error('move not allowed'); e.name = 'NotAllowedError'; throw e; } },
     async createWritable() { let buf = ''; return { write: async t => { buf += t; }, close: async () => { await window.__fs('write', n, buf); } }; } });
   window.DASH_TEST_FS = { kind: 'directory', name: 'Data', denied: !!window.__denied, queryPermission: async () => 'granted',
     async *entries() { for (const f of await window.__fs('list', '', '')) yield [f, fh(f)]; },
@@ -40,7 +40,7 @@ def folder(old=None, plain=(), extra=()):
     for name, s in plain: (d / name).write_text("window.DASH_SNAPSHOT = " + json.dumps(s) + ";\n" if name.endswith(".js") else json.dumps(s))
     for name, text in extra: (d / name).write_text(text)
     return d
-LOCKED = set(); WRITES = []; CORRUPT = set()
+LOCKED = set(); WRITES = []; CORRUPT = set(); CORRUPT_ONCE = set(); MOVEFAIL = [False]; TLOG = []
 def fs_for(d):
     def fs(op, name, text):
         if op == "list": return sorted(os.listdir(d))
@@ -50,8 +50,12 @@ def fs_for(d):
             st = p.stat(); r = {"m": int(st.st_mtime_ns // 1_000_000), "size": st.st_size}
             if op == "read": r["text"] = p.read_text()
             return r
-        if op == "write": WRITES.append(name); p.write_text("{corrupt" if name in CORRUPT else text); return True
-        if op == "move": os.replace(p, d / text); return True
+        if op == "write":
+            if name == "inbox-snapshot.json.enc": TLOG.append(text if not (name in CORRUPT or name in CORRUPT_ONCE) else "{corrupt")
+            WRITES.append(name); bad = name in CORRUPT or name in CORRUPT_ONCE; CORRUPT_ONCE.discard(name); p.write_text("{corrupt" if bad else text); return True
+        if op == "move":
+            if MOVEFAIL[0]: return "nomove"
+            os.replace(p, d / text); return True
         if op == "remove":
             if name in LOCKED: return "locked"
             p.unlink(); return True
@@ -206,6 +210,73 @@ with sync_playwright() as p:
     check(s["gen"] == NEW and "opened snapshot" not in s["asof"], f"6a newer folder snapshot beats an older opened one ({s['asof']!r})")
     pg.evaluate(f"DASH.db.set('openedSnapshot', {json.dumps(snap('2026-10-30T08:00:00-05:00'))})"); pg.evaluate("DASH.app.flush()"); pg.reload(); pg.wait_for_selector(".tile"); s = S(pg)
     check(s["gen"] == "2026-10-30T08:00:00-05:00" and "opened snapshot" in s["asof"], f"6b newer opened snapshot beats an older folder copy ({s['asof']!r})"); ctx.close()
+    def overlay(pg, title, lines):
+        pg.evaluate("""([t, l]) => { const o = document.createElement('div'); o.id = 'qa-ov'; o.style.cssText = 'position:fixed;top:44px;right:8px;z-index:99;max-width:640px;background:#1b2230;color:#f4c56a;border:1px solid #f4c56a;padding:10px 12px;font:12px/1.5 monospace;white-space:pre-wrap';
+          o.textContent = t + '\\n' + l; document.body.appendChild(o); }""", [title, lines])
+    def vault_menu(pg): pg.click('.mtop:has-text("File")'); pg.click('[data-act="encryption"]'); pg.wait_for_selector("#vaultmenu")
+    DLG = {"msgs": [], "accept": True}
+    def on_dlg(dl): DLG["msgs"].append(dl.message); dl.accept() if DLG["accept"] else dl.dismiss()
+
+    # D1: the Projects store save goes through the checked write; a failed write keeps the good .enc
+    d = folder(NEW); ctx, pg = page(d)
+    save = "(async () => { const S = DASH.app.state; S.projExample = false; S.projStore = S.projStore && !S.projExample ? S.projStore : { schema_version: 1, plans: [] }; S.projStore.plans = [{ id: 'p-t31', name: 'Plan T31', buckets: [], tasks: [] }]; await DASH.app.saveStore(); await DASH.app.flush(); })()"
+    pg.evaluate(save); good = (d / "projects-store.json.enc").read_text() if (d / "projects-store.json.enc").exists() else None
+    check(good is not None and "projects-store.json.enc.tmp" in WRITES, "D1 Projects save: written through a .tmp file, then moved")
+    CORRUPT.add("projects-store.json.enc.tmp"); pg.evaluate(save.replace("Plan T31", "Plan T31 b")); CORRUPT.clear(); s = S(pg)
+    check((d / "projects-store.json.enc").read_text() == good and not (d / "projects-store.json.enc.tmp").exists(), "D1 Projects save: a failed write leaves the previous .enc intact and no .tmp")
+    pg.evaluate("DASH.app.syncNow()"); s = S(pg)
+    check(any("projects-store.json.enc" in x and "not saved" in x for x in s["problems"]), "D1 Projects save: the failure is named in a problem line"); ctx.close()
+
+    # Move fallback: move() throws -> checked in-place write; a corrupt in-place write puts the previous bytes back
+    d = folder(OLD, [("inbox-snapshot.js", snap(NEW))]); MOVEFAIL[0] = True; ctx, pg = page(d)
+    check(gen_of(d) == NEW and not (d / "inbox-snapshot.json.enc.tmp").exists() and not (d / "inbox-snapshot.js").exists(), "move fallback: move() fails, the checked in-place write lands, no .tmp left"); ctx.close()
+    d = folder(OLD, [("inbox-snapshot.js", snap(NEW))]); before = (d / "inbox-snapshot.json.enc").read_text(); TLOG.clear(); CORRUPT_ONCE.add("inbox-snapshot.json.enc"); ctx, pg = page(d); s = S(pg)
+    check(len(TLOG) >= 2 and TLOG[0] == "{corrupt" and TLOG[1] == before, f"move fallback: a corrupt in-place write is undone at once (the previous .enc is written back) ({len(TLOG)} writes)")
+    check(gen_of(d) == NEW and not (d / "inbox-snapshot.js").exists(), "move fallback: the next try succeeds and only then is the plain file deleted")
+    MOVEFAIL[0] = False; CORRUPT_ONCE.clear(); ctx.close()
+
+    # Stray *.enc.tmp: named in a problem line
+    d = folder(NEW, extra=[("projects-store.json.enc.tmp", "{stray")]); ctx, pg = page(d); s = S(pg)
+    check(any("projects-store.json.enc.tmp" in x and "leftover temporary file" in x for x in s["problems"]), "stray .enc.tmp: problem line names it"); ctx.close()
+
+    # D2: refused files have their own confirmation; 'Delete plaintext originals' never includes them; setting untouched
+    d = folder(NEW, [("inbox-snapshot-270601.js", snap(FUT))], extra=[("time-laptop.json", tl)]); ctx, pg = page(d); pg.on("dialog", on_dlg)
+    pr0 = pg.evaluate("DASH.db.get('prefs').then(p => !!(p && p.deletePlain))"); s = S(pg)
+    check(any("inbox-snapshot-270601.js" in x and "refused" in x for x in s["problems"]) and not any("plaintext file(s) still" in x and "2 " in x for x in s["problems"]), f"D2 refused file listed apart from plaintext originals ({[x for x in s['problems'] if 'plaintext' in x or 'refused' in x]})")
+    vault_menu(pg); btns = pg.eval_on_selector_all("#vaultmenu [data-v]", "bs => bs.map(b => b.dataset.v)")
+    check("ref:inbox-snapshot-270601.js" in btns and "del" in btns, f"D2 vault menu: separate 'Delete refused file' and 'Delete plaintext originals' buttons ({btns})")
+    DLG["accept"] = False; pg.click('#vaultmenu [data-v="del"]'); pg.wait_for_timeout(300)
+    check(DLG["msgs"] and "time-laptop.json" in DLG["msgs"][-1] and "270601" not in DLG["msgs"][-1], f"D2 'Delete plaintext originals' never lists the refused file ({DLG['msgs'][-1:]})")
+    vault_menu(pg); pg.click('#vaultmenu [data-v="ref:inbox-snapshot-270601.js"]'); pg.wait_for_timeout(300); msg = DLG["msgs"][-1]
+    check("inbox-snapshot-270601.js" in msg and "NO encrypted copy" in msg, f"D2 refused-file confirmation names the file and says it has no encrypted copy ({msg[:120]!r})")
+    pg.evaluate("DASH.app.syncNow(true)"); s = S(pg)
+    check((d / "inbox-snapshot-270601.js").exists() and any("inbox-snapshot-270601.js" in x for x in s["problems"]), "D2 cancel keeps the file and its warning")
+    overlay(pg, "Confirmation shown for a refused file (test overlay of the browser's confirm box):", msg); pg.screenshot(path=str(SHOTS / "31f-refused-file-confirmation.png")); pg.evaluate("document.getElementById('qa-ov').remove()")
+    DLG["accept"] = True; vault_menu(pg); pg.click('#vaultmenu [data-v="ref:inbox-snapshot-270601.js"]'); pg.wait_for_timeout(500); s = S(pg)
+    pr1 = pg.evaluate("DASH.db.get('prefs').then(p => !!(p && p.deletePlain))")
+    check(not (d / "inbox-snapshot-270601.js").exists() and (d / "time-laptop.json").exists() and not any("270601" in x for x in s["problems"]), "D2 confirm deletes only that file; the time log stays")
+    check(pr0 == pr1 == False, f"D2 the delete-plaintext setting is unchanged ({pr0} -> {pr1})"); ctx.close()
+
+    # One-time cleanup of example weeks left in the real history by 00.09.000
+    EXH = json.loads((SRC / "examples/example-snapshot.json").read_text())["totals_history"]
+    near = json.loads(json.dumps(EXH[0])); near["totals"]["overdue"] += 1
+    real = {"generated_at": "2026-10-26T07:00:00-05:00", "totals": dict(EXH[0]["totals"], travel=9)}
+    seeded = EXH + [real]; seeded[0] = near   # first fixture week replaced by a near-miss (one value differs): kept
+    d = folder(NEW); ctx, pg = page(d)
+    pg.evaluate("h => Promise.all([DASH.db.set('history', h), DASH.db.set('historyCleanup0901', undefined)])", seeded); pg.evaluate("DASH.app.flush()")
+    pg.reload(); pg.wait_for_selector(".tile"); pg.evaluate("DASH.app.flush()")
+    st = pg.evaluate("(async () => ({ h: await DASH.db.get('history'), b: await DASH.db.get('historyBackup0901'), m: await DASH.db.get('historyCleanup0901'), n: DASH.app.state.cleanupNotice || '' }))()")
+    hd = [x["generated_at"] for x in st["h"]]
+    check(not any(x == e for x in st["h"] for e in EXH), f"cleanup: every exact example week removed ({len(EXH) - 1} of the seeded {len(seeded)})")
+    check(any(x["generated_at"] == near["generated_at"] and x["totals"] == near["totals"] for x in st["h"]) and real["generated_at"] in hd, "cleanup: near-miss (one value differs) and real weeks kept")
+    check(st["n"] == f"Removed {len(EXH) - 1} example weeks from your trend history (left by 00.09.000). A backup was kept on this computer.", f"cleanup: one-line notice with the count ({st['n']!r})")
+    check(st["b"] == seeded and st["m"] and st["m"].get("removed") == len(EXH) - 1, "cleanup: backup equals the store before the change; marker recorded")
+    raw = pg.evaluate("""new Promise(res => { const r = indexedDB.open('activity-dashboard'); r.onsuccess = () => { const g = r.result.transaction('kv').objectStore('kv').get('historyBackup0901'); g.onsuccess = () => res(JSON.stringify(g.result)); }; })""")
+    check("dashCache" in raw and "overdue" not in raw, "cleanup: the backup is stored encrypted")
+    pg.evaluate(f"(() => {{ const t = document.getElementById('toast'); t.textContent = {json.dumps(st['n'])}; t.classList.remove('hidden'); }})()"); pg.screenshot(path=str(SHOTS / "31g-history-cleanup-notice.png"))
+    pg.evaluate("h => DASH.db.set('history', h)", seeded); pg.evaluate("DASH.app.flush()"); pg.reload(); pg.wait_for_selector(".tile"); pg.evaluate("DASH.app.flush()")
+    h2 = pg.evaluate("DASH.db.get('history')")
+    check(len(h2) >= len(seeded) and not pg.evaluate("DASH.app.state.cleanupNotice || ''"), "cleanup runs only once (marker): re-seeded weeks are left alone, no notice"); ctx.close()
     b.close()
 check(not errors, f"no page errors ({errors[:3]})")
 print("T31 " + ("OK" if ok else "FAIL")); sys.exit(0 if ok else 1)

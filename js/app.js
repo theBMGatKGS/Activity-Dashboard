@@ -40,6 +40,7 @@
     await hubBoot();                                              // 00.04: GitHub data hub (the store on iPad, a mirror next to a folder)
     await offerLegacyDelete();
     S.history = (await DB.get("history")) || [];
+    if (S.vault.kr && S.vault.key) await cleanupExampleHistory();   // 00.09.001: once
     { const cb = await DB.get("clearBase"); S.clearBase = cb && typeof cb.day === "string" && Array.isArray(cb.ids) ? cb : null; }   // 00.05.003: Today's Clear baseline {day, ids} (this computer only)
     S.own = (await DB.get("ownEvents")) || [];
     recompute();
@@ -77,6 +78,28 @@
     if (s.rejects.length) banner(`⚠ Incomplete: ${s.rejects.length} row(s) skipped — ${s.rejects.slice(0, 3).join("; ")}${s.rejects.length > 3 ? "; …" : ""}`);
     render(); return true;
   }
+  // 00.09.001: one-time cleanup of history that 00.09.000 polluted with the example's weekly totals. Removes only entries equal to
+  // the example fixture's totals_history (date and every value). Backs the store up first (read back to check), then sets a marker.
+  const canon = o => JSON.stringify(o && typeof o === "object" ? Object.keys(o).sort().reduce((a, k) => (a[k] = o[k], a), {}) : o);
+  async function cleanupExampleHistory() {
+    if (!S.vault.kr || !S.vault.key) return;
+    try {
+      if (await DB.get("historyCleanup0901")) return;
+      window.DASH_EXAMPLE_SNAPSHOT || await loadScript(CFG.examplePath || "examples/example-snapshot.js");
+      const ex = window.DASH_EXAMPLE_SNAPSHOT; if (!ex || !Array.isArray(ex.totals_history)) return;
+      const known = new Set(ex.totals_history.map(h => h.generated_at + "|" + canon(h.totals)));
+      const cur = (await DB.get("history")) || []; if (!Array.isArray(cur)) return;
+      const keep = cur.filter(h => !(h && known.has(h.generated_at + "|" + canon(h.totals)))), removed = cur.length - keep.length;
+      if (removed) {
+        await DB.set("historyBackup0901", cur);
+        if (JSON.stringify(await DB.get("historyBackup0901")) !== JSON.stringify(cur)) throw new Error("backup read-back failed");
+        await DB.set("history", keep);
+        if (JSON.stringify(await DB.get("history")) !== JSON.stringify(keep)) { await DB.set("history", cur); throw new Error("read-back failed; history put back"); }
+        S.history = keep; S.cleanupNotice = `Removed ${removed} example week${removed > 1 ? "s" : ""} from your trend history (left by 00.09.000). A backup was kept on this computer.`; toast(S.cleanupNotice);
+      }
+      await DB.set("historyCleanup0901", { at: new Date().toISOString(), removed });
+    } catch (e) { S.problems.push("History cleanup: " + (e.message || e) + " (nothing changed)"); }
+  }
   function ctx() { return { today: S.today, calendar: S.snap ? S.snap.calendar : [], timeEntries: S.entries }; }
   function banner(msg, err) { const b = $("#banner"); b.textContent = msg; b.className = "banner" + (err ? " err" : ""); }
 
@@ -112,8 +135,8 @@
   function unmarkAttended(id) { S.entries = S.entries.filter(e => !(e.source === "calendar" && e.eventId === id)); saveEntries(); render(); }
   // Pending IndexedDB writes; reloads wait for them (DASH.app.flush) so a tombstone is never lost.
   const pending = new Set();
-  function track(p) { if (p && p.then) { pending.add(p); p.finally(() => pending.delete(p)); } return p; }
-  function flush() { return Promise.all([...pending]); }
+  function track(p) { if (p && p.then) { pending.add(p); p.finally(() => pending.delete(p)).catch(() => {}); } return p; }   // the caller handles a rejection
+  function flush() { return Promise.all([...pending].map(p => p.catch(() => {}))); }
   async function reloadSafely() { await flush(); location.reload(); }
   function saveRemoved() { return commit(); }
   async function removeEntry(id) {
@@ -129,7 +152,7 @@
   // This machine writes only Data/time-<machine>.json; it reads every Data/time-*.json (conflict copies too) and folds
   // them with DASH.sync (last writer wins per entry: timestamp, then machine name). IndexedDB keeps a cache + this machine's events.
   const R2 = DASH.sync, POLL_MS = (CFG.pollSeconds || 60) * 1000;
-  Object.assign(S, { clock: R2.clock(), future: [], fileProblems: {}, machine: null, own: [], fileEvents: {}, seen: {}, problems: [], dir: null, dirStored: null, granted: false, lastSync: null, machines: [], view0: { entries: [], removedCal: [], domainMap: {} } });
+  Object.assign(S, { saveProblems: {}, clock: R2.clock(), future: [], fileProblems: {}, machine: null, own: [], fileEvents: {}, seen: {}, problems: [], dir: null, dirStored: null, granted: false, lastSync: null, machines: [], view0: { entries: [], removedCal: [], domainMap: {} } });
   const isExample = () => S.snap && S.snap.example && !S.allowExampleWrites;
   function learned(rules) { const d = (rules && rules.domainMap) || {}, b = R.DEFAULT_RULES.domainMap, o = {}; Object.keys(d).forEach(k => { if (b[k] !== d[k]) o[k] = d[k]; }); return o; }
   function recompute() {
@@ -269,7 +292,7 @@
   // found there are encrypted on the next sync and (if you agreed) deleted. Without keyring.json the folder works as in 00.02.
   const V = DASH.vault, ENC = ".enc", KEYRING = "keyring.json";
   const SNAP_NAMES = ["inbox-snapshot.json", "inbox-snapshot.js"].concat(CFG.snapshotNames || []), LOG_NAMES = ["notebook-log.js"].concat(CFG.notebookLogNames || []);
-  S.vault = { kr: null, key: null, locked: false, plainLeft: [], plainDone: {}, adopted: [], snapUndeleted: {}, snapWaiting: null };
+  S.vault = { kr: null, key: null, locked: false, plainLeft: [], plainDone: {}, adopted: [], snapUndeleted: {}, snapWaiting: null, refused: {} };
   const locked = () => !!(S.vault.kr && !S.vault.key);
   // "time-mac.json.enc" → "time-mac.json"; a OneDrive conflict copy "time-mac.json-WORKPC.enc" → "time-mac-WORKPC.json"
   function innerName(n) { if (!/\.enc$/i.test(n)) return n; const b = n.slice(0, -4); return /\.(json|js)$/i.test(b) ? b : b.replace(/\.(json|js)([^.]*)$/i, "$2.$1"); }
@@ -295,8 +318,13 @@
     let good = false; try { good = await V.decrypt(S.vault.key, S.vault.kr, (await readName(tmp)).text, purpose) === body; } catch (e) { good = false; }
     if (!good) { try { await S.dir.removeEntry(tmp); } catch (e) { /* left for the next try */ } throw new Error("read-back check failed; the previous encrypted copy is kept"); }
     const h = await S.dir.getFileHandle(tmp);
-    if (h.move) await h.move(target);
-    else { await writeText(target, ct); try { await S.dir.removeEntry(tmp); } catch (e) { /* harmless */ } }
+    if (h.move) { try { await h.move(target); return; } catch (e) { /* fall back below */ } }
+    // Fallback (no move(), or it failed): write the target in place, read it back, and put the previous bytes back if it doesn't check out.
+    let old = null; try { old = (await readName(target)).text; } catch (e) { old = null; }
+    await writeText(target, ct);
+    let ok = false; try { ok = await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, purpose) === body; } catch (e) { ok = false; }
+    if (!ok) { if (old != null) { try { await writeText(target, old); } catch (e) { /* reported below */ } } try { await S.dir.removeEntry(tmp); } catch (e) { /* harmless */ } throw new Error("read-back check failed; the previous encrypted copy was put back"); }
+    try { await S.dir.removeEntry(tmp); } catch (e) { /* harmless */ }
   }
   async function readName(name) { const h = await S.dir.getFileHandle(name); return readText(h); }
   async function loadKeyring() {
@@ -441,7 +469,7 @@
           target = "inbox-snapshot.json" + ENC; const raw = parseSnapshotText(name, text);
           try { R.readSnapshot(raw); } catch (e) { throw new Error("snapshot rejected (" + e.message + "); not encrypted or uploaded, the previous one is kept"); }   // 00.04.001
           if (raw && raw.example) throw new Error("example snapshot; example data is never encrypted into the Data folder");   // 00.09.001
-          if (futureSnap(raw)) throw new Error("generated_at is in the future; not used and not deleted");   // F1
+          if (futureSnap(raw)) { const e = new Error("generated_at is in the future"); e.refused = true; throw e; }   // F1 / D2: listed apart from plaintext originals
           body = JSON.stringify(raw);
           try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, "snapshot")); R.readSnapshot(old); if (!futureSnap(old) && new Date(old.generated_at) >= new Date(raw.generated_at)) body = null; } catch (e) { /* none yet, or the old one is invalid: replace it */ }   // 00.09.001: same generated_at = same snapshot, no rewrite
         } else if (FEED_READ[purpose]) {   // 00.06.000 (00.07.000: + projects): validate, keep the newer copy
@@ -460,19 +488,29 @@
           continue;
         }
         if (prefs.deletePlain && S.dir.removeEntry) await S.dir.removeEntry(name); else { S.vault.plainDone[name] = sig; left.push(name); }
-      } catch (e) { S.fileProblems[name] = `${name}: plaintext file not encrypted (${e.message || e})`; left.push(name); }
+      } catch (e) {
+        if (e && e.refused) { S.vault.refused[name] = true; S.fileProblems[name] = `${name}: refused (its date is in the future), not encrypted and no encrypted copy; delete it by hand or with File → Encryption… → Delete refused file`; continue; }
+        S.fileProblems[name] = `${name}: plaintext file not encrypted (${e.message || e})`; left.push(name); }
     }
     return { n, left };
   }
+  // D2: a refused (future-dated) file has its own confirmation; it deletes only that file and leaves the delete-plaintext setting alone.
+  async function deleteRefused(name) {
+    if (!S.vault.refused[name]) return;
+    if (!confirm(`Delete ${name} from the Data folder?\n\nIt was refused because its date is in the future.  It has NO encrypted copy, so deleting it removes it for good.\n\nOK = delete this one file. Cancel = keep it.`)) return;
+    try { await S.dir.removeEntry(name); delete S.vault.refused[name]; delete S.fileProblems[name]; toast(`${name} deleted.`); }
+    catch (e) { toast(`${name} couldn't be deleted (${e.message || e}).`); }
+    S.seen = {}; await syncNow(true);
+  }
   async function deletePlainNow() {
-    const left = S.vault.plainLeft.slice(); if (!left.length) { toast("No plaintext data files are left in the Data folder."); return; }
+    const left = S.vault.plainLeft.filter(n => !S.vault.refused[n]); if (!left.length) { toast("No plaintext data files are left in the Data folder."); return; }
     if (!confirm(`Delete ${left.length} plaintext file(s) from the Data folder? Their encrypted copies were checked.\n\n${left.join("\n")}`)) return;
     const prefs = (await DB.get("prefs")) || {}; prefs.deletePlain = true; await DB.set("prefs", prefs);
     S.vault.plainDone = {}; S.seen = {}; await syncNow(true); toast("Plaintext originals deleted.");
   }
   async function encryptionDialog() {
     if (!S.vault.kr) { await turnOnEncryption(); return; }
-    if (!S.vault.key) { if (await ensureUnlocked()) { S.seen = {}; if (!S.hub) await hubBoot(); await syncNow(true); } return; }
+    if (!S.vault.key) { if (await ensureUnlocked()) { await cleanupExampleHistory(); S.seen = {}; if (!S.hub) await hubBoot(); await syncNow(true); } return; }
     const act = await dialog("vaultmenu", `<b class="vt">🔐 Encryption</b>
       <p>This Data folder is encrypted (keyring <span class="mono">${esc(S.vault.kr.keyId)}</span>, created ${esc(new Date(S.vault.kr.created).toLocaleDateString())}). It's unlocked on this computer${S.vault.remembered ? " and remembered" : " for this session only"}.</p>
       ${S.vault.plainLeft.length ? `<p class="verr">⚠ ${S.vault.plainLeft.length} plaintext file(s) are still in the Data folder: ${esc(S.vault.plainLeft.join(", "))}</p>` : ""}
@@ -481,6 +519,7 @@
         <button class="btn" data-v="rk">New recovery key…</button>
         <button class="btn" data-v="rem">${S.vault.remembered ? "Forget on this computer" : "Remember on this computer"}</button>
         ${S.vault.plainLeft.length ? `<button class="btn" data-v="del">Delete plaintext originals…</button>` : ""}
+        ${Object.keys(S.vault.refused).map(n => `<button class="btn" data-v="ref:${esc(n)}">Delete refused file ${esc(n)}…</button>`).join("")}
         <button class="btn" data-v="lock">Lock now</button>
       </div><div class="vbtns"><button class="btn primary" data-v="">Close</button></div>`,
     (d, done) => d.querySelectorAll("[data-v]").forEach(b => b.onclick = () => done(b.dataset.v)));
@@ -488,6 +527,7 @@
     // Lock: the hub client (and the token it holds) and the name codec leave memory too; unlocking attaches them again.
     if (act === "lock") { detachHub(); hubCodec = null; DB.setCipher(null); S.vault.key = null; await rememberKey(false); S.vault.locked = true; banner("🔒 Locked. File → Encryption… to unlock.", true); renderSync(); }
     if (act === "del") await deletePlainNow();
+    if (act && act.startsWith("ref:")) await deleteRefused(act.slice(4));
     if (act === "pass") {
       const r = await dialog("vaultpass", `<b class="vt">Change passphrase</b><label class="vlab">Current passphrase<input type="password" id="vc-old"></label>${passFields("New passphrase", "New passphrase again")}
         <div id="vc-err" class="verr" role="alert"></div><div class="vbtns"><button class="btn" id="vc-cancel">Cancel</button><button class="btn primary" id="vc-ok">Change</button></div>`,
@@ -712,6 +752,7 @@
       for await (const [name, h] of S.dir.entries()) {
         if (h.kind !== "file") continue; names.add(name);
         if (name === KEYRING) { keyringSeen = true; continue; }
+        if (/\.enc\.tmp$/i.test(name)) { S.fileProblems[name] = `${name}: leftover temporary file from an interrupted save; not used, safe to delete`; continue; }   // 00.09.001
         const isEnc = /\.enc$/i.test(name), inner = innerName(name), purpose = purposeOf(inner);
         if (!purpose || (purpose === "snapshot" && /\.csv$/i.test(inner))) continue;
         names.add(inner);
@@ -742,7 +783,8 @@
       if (await loadKeyring()) { await ensureUnlocked(); S.seen = {}; return doSync(manual, true); }
     }
     if (S.vault.kr) {
-      const r = plain.length && !again ? await encryptPlain(plain) : { n: 0, left: plain.map(x => x[0]) };
+      if (!again) Object.keys(S.vault.refused).forEach(n => { if (!names.has(n)) delete S.vault.refused[n]; });
+      const r = plain.length && !again ? await encryptPlain(plain) : { n: 0, left: plain.map(x => x[0]).filter(n => !S.vault.refused[n]) };
       S.vault.plainLeft = kept.concat(r.left);
       snapNotice();
       if (r.n) { S.seen = {}; return doSync(manual, true); }
@@ -751,6 +793,7 @@
     Object.keys(S.fileEvents).forEach(n => { if (!n.startsWith("picked:") && !names.has(n)) { delete S.fileEvents[n]; changed = true; } });
     Object.keys(S.fileProblems).forEach(n => { if (!names.has(n)) delete S.fileProblems[n]; });
     S.problems.push(...Object.values(S.fileProblems));
+    S.problems.push(...Object.values(S.saveProblems));   // D1
     // absorb this machine's own events found in any file (e.g. a OneDrive conflict copy of my own file)
     const mine = new Set(S.own.map(e => e.eid)), extra = [].concat(...Object.values(S.fileEvents)).filter(e => e.machine === S.machine && !mine.has(e.eid));
     if (extra.length) { S.own = R2.dedupe(S.own.concat(extra)); track(DB.set("ownEvents", S.own)); }
@@ -1144,8 +1187,8 @@
     track(DB.set("projectsStore", body));   // while locked the encrypted cache writes nothing
     S.projDirty = !canSaveToFolder() && !!(S.vault && S.vault.kr);
     if (canSaveToFolder()) {
-      const text = JSON.stringify(body), ct = await V.encrypt(S.vault.key, S.vault.kr, "projstore", text);
-      await track(writeText(STORE_NAME + ".enc", ct));
+      try { await track(writeVerified(STORE_NAME + ".enc", "projstore", JSON.stringify(body))); delete S.saveProblems[STORE_NAME]; }   // D1
+      catch (e) { S.saveProblems[STORE_NAME] = `${STORE_NAME}.enc: not saved (${e.message || e}); the previous copy is kept`; S.projDirty = true; }
     }
     render();
   }

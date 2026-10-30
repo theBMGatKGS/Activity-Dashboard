@@ -14,6 +14,13 @@
 - F5: a clock report stamp more than 5 minutes in the future is not trusted.  With both the report's own time and the reporter's last write, the report expires 24 hours after the earlier one.
 - A plain snapshot that couldn't be deleted after a good adopt no longer shows New snapshot waiting when the folder is locked.
 - Tests: t31 adds F1 (June 2027 snapshot, then a normal delivery), F1b and F1c (future-dated encrypted copy), F2 (locked start, unlock, reload), F4 (corrupt temp write), the leftover-file case, and case 6 (folder snapshot against an opened one, both ways).  `sync.test.js` adds F5a to F5e.  T20, T21, T23 and T24 now drop in snapshots stamped before their test clocks, since F1 refuses future-dated ones.  The -06:00 (after 11/1) display stays covered by t31 case 16.
+- Second QA review.  D1: the Projects store save goes through the checked write (temp file, read-back, then move).  A failed save keeps the previous copy, names the file in a problem line and is retried on the next sync.
+- D2: a refused future-dated file is listed apart from plaintext originals.  File → Encryption… has a Delete refused file button for it, whose confirmation names the file and says it has no encrypted copy.  Confirming deletes only that file and leaves the delete-plaintext setting alone; cancelling keeps the file and its warning.  Delete plaintext originals never lists refused files.
+- One-time cleanup: on the first unlock with this release, history entries that exactly match the example fixture's weekly totals (date and every value) are removed from the real encrypted history.  The store is backed up first (encrypted, read back to check), a one-line notice gives the count, and a marker stops it from running again.  Near matches and real weeks are kept.
+- A leftover `*.enc.tmp` in the Data folder is named in a problem line.
+- Checked write: when `move()` is missing or fails, the target is written in place, read back, and the previous bytes are put back if it doesn't check out.  New T32 shows that `move()` onto an existing `.enc` replaces it in Chromium (the origin-private file system; a local folder picker can't be automated).
+- `track()` and `flush()` no longer turn a handled save failure into an unhandled page error.
+- T23 runs at 11/2 again, so its -06:00 snapshots go through GitHub to the iPad as before.
 - Test harness: `DASH_TEST_FS.denied` mirrors a folder whose permission lapsed.  New `tests/t31_snapshot.py` (browser) and `tests/snap_vault_helper.js`; `sync.test.js` O1a–O1g.  REV 00.09.001_261030.
 
 ## 00.09.000_261029 (Oct 29 2026)

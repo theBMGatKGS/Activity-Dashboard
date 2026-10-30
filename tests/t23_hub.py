@@ -54,7 +54,7 @@ def handle(route):
         HUB[name] = base64.b64decode(body["content"]); STATE["commits"] += 1; return reply(201, {"content": {"name": name, "sha": gsha(HUB[name]), "size": len(HUB[name])}})
     if r.method == "DELETE": HUB.pop(name, None); STATE["commits"] += 1; return reply(200, {})
     reply(405, {})
-Q = "?now=2026-10-19T08:00:00-05:00&view=dashboard&machine="
+Q = "?now=2026-11-02T10:30:00-06:00&view=dashboard&machine="   # 00.09.001: after the 11/1 change, so the -06:00 snapshots below are not future-dated (F1) and reach the iPad through the hub
 TOT = "JSON.stringify(DASH.app.state.entries.map(e => [e.id, e.minutes]).sort())"
 RAW = """new Promise(res => { const r = indexedDB.open('activity-dashboard'); r.onsuccess = () => { const out = {}, t = r.result.transaction('kv'), c = t.objectStore('kv').openCursor();
   c.onsuccess = () => { const x = c.result; if (x) { out[x.key] = x.value; x.continue(); } };
@@ -134,8 +134,7 @@ with sync_playwright() as p:
     HUBSNAP = """(async () => { const S = DASH.app.state; return JSON.parse(await DASH.vault.decrypt(S.vault.key, S.vault.kr, (await S.hub.read('inbox-snapshot.json.enc')).text, 'snapshot')).generated_at; })()"""
     LOCSNAP = """(async t => JSON.parse(await DASH.vault.decrypt(DASH.app.state.vault.key, DASH.app.state.vault.kr, t, 'snapshot')).generated_at)"""
     before_hub = pc.evaluate(HUBSNAP)
-    # 00.09.001: snapshot stamps stay before the 08:00 test clock (F1 refuses future-dated snapshots)
-    bad = dict(snap, generated_at="2026-10-19T07:40:00-05:00", source="wrong-source"); (data / "inbox-snapshot.json").write_text(json.dumps(bad))
+    bad = dict(snap, generated_at="2026-11-02T08:00:00-06:00", source="wrong-source"); (data / "inbox-snapshot.json").write_text(json.dumps(bad))
     pc.evaluate("DASH.app.syncNow()"); pc.evaluate("DASH.app.syncNow()")
     check(pc.evaluate(HUBSNAP) == before_hub and pc.evaluate(LOCSNAP, (data / "inbox-snapshot.json.enc").read_text()) == before_hub and "snapshot rejected" in pc.get_attribute("#sync", "title"),
           "R1 e2e: a plain snapshot that fails validation (wrong source) is not encrypted, not uploaded, and doesn't replace the good one")
@@ -143,24 +142,24 @@ with sync_playwright() as p:
     # what 00.04.000 did: the rejected snapshot reached the hub (written here straight through the hub client)
     pc.evaluate("""(async b => { const S = DASH.app.state; await S.hub.write('inbox-snapshot.json.enc', await DASH.vault.encrypt(S.vault.key, S.vault.kr, 'snapshot', b), 'sync'); })""", json.dumps(bad))
     # later: the corrected plain snapshot lands in the folder
-    good = dict(snap, generated_at="2026-10-19T07:45:00-05:00"); (data / "inbox-snapshot.json").write_text(json.dumps(good))
+    good = dict(snap, generated_at="2026-11-02T09:00:00-06:00"); (data / "inbox-snapshot.json").write_text(json.dumps(good))
     pc.evaluate("DASH.app.syncNow()"); pc.evaluate("DASH.app.syncNow()"); pc.evaluate("DASH.app.flush()")
     loc = pc.evaluate(LOCSNAP, (data / "inbox-snapshot.json.enc").read_text())
-    check(loc == "2026-10-19T07:45:00-05:00" and pc.evaluate(HUBSNAP) == "2026-10-19T07:45:00-05:00" and not (data / "inbox-snapshot.json").exists(),
+    check(loc == "2026-11-02T09:00:00-06:00" and pc.evaluate(HUBSNAP) == "2026-11-02T09:00:00-06:00" and not (data / "inbox-snapshot.json").exists(),
           "R2 e2e repro: the corrected newer snapshot stays in the folder AND replaces the rejected older blob on the hub")
-    check(pc.evaluate("DASH.app.state.snap.raw_generated_at") == "2026-10-19T07:45:00-05:00", "R3 e2e: the dashboard shows the corrected snapshot")
+    check(pc.evaluate("DASH.app.state.snap.raw_generated_at") == "2026-11-02T09:00:00-06:00", "R3 e2e: the dashboard shows the corrected snapshot")
     ipad.evaluate("DASH.app.syncNow()"); ipad.evaluate("DASH.app.syncNow()")
-    check(ipad.evaluate("DASH.app.state.snap.raw_generated_at") == "2026-10-19T07:45:00-05:00", "R4 e2e: the iPad gets the corrected snapshot from the hub")
+    check(ipad.evaluate("DASH.app.state.snap.raw_generated_at") == "2026-11-02T09:00:00-06:00", "R4 e2e: the iPad gets the corrected snapshot from the hub")
     # a newer snapshot arriving on the hub (another machine) wins locally; the older local copy is kept as .prev.enc
-    newer = dict(snap, generated_at="2026-10-19T07:50:00-05:00")
+    newer = dict(snap, generated_at="2026-11-02T10:00:00-06:00")
     pc.evaluate("""(async b => { const S = DASH.app.state; await S.hub.write('inbox-snapshot.json.enc', await DASH.vault.encrypt(S.vault.key, S.vault.kr, 'snapshot', b), 'sync'); })""", json.dumps(newer))
     pc.evaluate("DASH.app.syncNow()"); pc.evaluate("DASH.app.syncNow()")
-    check(pc.evaluate(LOCSNAP, (data / "inbox-snapshot.json.enc").read_text()) == "2026-10-19T07:50:00-05:00" and pc.evaluate(LOCSNAP, (data / "inbox-snapshot.json.prev.enc").read_text()) == "2026-10-19T07:45:00-05:00",
+    check(pc.evaluate(LOCSNAP, (data / "inbox-snapshot.json.enc").read_text()) == "2026-11-02T10:00:00-06:00" and pc.evaluate(LOCSNAP, (data / "inbox-snapshot.json.prev.enc").read_text()) == "2026-11-02T09:00:00-06:00",
           "R5 e2e: a newer hub snapshot wins; the older local one is kept as inbox-snapshot.json.prev.enc")
     nhub = len(HUB); shutil.copy(data / "inbox-snapshot.json.prev.enc", data / "inbox-snapshot.json.bad-copy.enc")
     pc.evaluate("DASH.app.syncNow()"); pc.evaluate("DASH.app.syncNow()")
-    check(len(HUB) == nhub and pc.evaluate(LOCSNAP, (data / "inbox-snapshot.json.enc").read_text()) == "2026-10-19T07:50:00-05:00", "R6 e2e: a renamed local backup (inbox-snapshot.json.bad-copy.enc) and .prev.enc are never uploaded")
-    check(pc.evaluate("DASH.app.state.snap.raw_generated_at") == "2026-10-19T07:50:00-05:00", "R7 e2e: with a renamed older backup in the folder the dashboard still shows the newest valid snapshot")
+    check(len(HUB) == nhub and pc.evaluate(LOCSNAP, (data / "inbox-snapshot.json.enc").read_text()) == "2026-11-02T10:00:00-06:00", "R6 e2e: a renamed local backup (inbox-snapshot.json.bad-copy.enc) and .prev.enc are never uploaded")
+    check(pc.evaluate("DASH.app.state.snap.raw_generated_at") == "2026-11-02T10:00:00-06:00", "R7 e2e: with a renamed older backup in the folder the dashboard still shows the newest valid snapshot")
     raw = ipad.evaluate(RAW)
     check(TOK["ipad"] not in raw and not any(s in raw for s in SECRETS) and "Owner/operator" not in raw, "iPad: no token or readable data in the browser's storage")
     # reload: reconnects with the remembered key and the encrypted token
