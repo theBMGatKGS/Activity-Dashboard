@@ -299,14 +299,16 @@
   const LINK_FIELDS = ["vault", "repo", "branch", "sources"];
   const ISO = s => typeof s === "string" && ISO_OFF.test(s) && !isNaN(Date.parse(s));
   function emptyLinks(nowIso) { return { schema_version: 1, updated_at: nowIso, links: {} }; }
-  function readLinksStore(raw) {
+  function readLinksStore(raw, maxMs) {   // maxMs (optional): a per-link stamp later than this is refused (listed in .refused), like future-dated snapshots
     if (!raw || typeof raw !== "object" || raw.schema_version !== 1) throw new Error("links: schema_version must be 1");
     if (!ISO(raw.updated_at)) throw new Error("links: updated_at must be a date-time with offset");
     if (!raw.links || typeof raw.links !== "object" || Array.isArray(raw.links)) throw new Error("links: links must be an object");
-    const links = {};
+    const links = {}, refused = [];
     LINK_FIELDS.forEach(k => { const f = raw.links[k]; if (!f || typeof f !== "object" || typeof f.v !== "string" || !ISO(f.at) || typeof f.by !== "string" || !/^[a-z0-9]{1,24}$/.test(f.by)) return;
-      if (linksProblem({ [k]: f.v })) return; links[k] = { v: f.v, at: f.at, by: f.by }; });
-    return { schema_version: 1, updated_at: raw.updated_at, links };
+      if (linksProblem({ [k]: f.v })) return; if (maxMs != null && Date.parse(f.at) > maxMs) { refused.push(k); return; } links[k] = { v: f.v, at: f.at, by: f.by }; });
+    let upd = raw.updated_at;
+    if (maxMs != null && Date.parse(upd) > maxMs) { const ats = Object.values(links).map(f => f.at).sort((a, b) => Date.parse(b) - Date.parse(a)); upd = ats[0] || "1970-01-01T00:00:00+00:00"; refused.push("updated_at"); }
+    const out = { schema_version: 1, updated_at: upd, links }; if (refused.length) Object.defineProperty(out, "refused", { value: refused, enumerable: false }); return out;
   }
   function mergeLinks(a, b) {   // per link: later "at" wins; tie: the store with the later updated_at; tie: machine name, alphabetical first
     if (!a) return b; if (!b) return a;

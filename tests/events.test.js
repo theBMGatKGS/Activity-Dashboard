@@ -119,4 +119,12 @@ t("K4 readLinksStore drops bad fields and rejects bad stores", () => { assert.th
   assert.deepStrictEqual(Object.keys(r.links), ["branch"]); });
 t("K5 linksValues and sameLinks", () => { const a = E.setLinks(null, { vault: "V", branch: "main" }, NOW, "a"); assert.deepStrictEqual(E.linksValues(a), { vault: "V", branch: "main" }); assert.ok(E.sameLinks(a, JSON.parse(JSON.stringify(a)))); assert.ok(!E.sameLinks(a, E.setLinks(a, { vault: "W" }, LATER, "a"))); });
 
+t("K6 readLinksStore refuses a link stamped past maxMs, and a future updated_at", () => { const max = Date.parse(LATER);
+  const r = E.readLinksStore({ schema_version: 1, updated_at: "2027-01-01T00:00:00-06:00", links: { vault: { v: "Future", at: "2027-01-01T00:00:00-06:00", by: "pc" }, branch: { v: "main", at: NOW, by: "a" } } }, max);
+  assert.deepStrictEqual(Object.keys(r.links), ["branch"]); assert.deepStrictEqual(r.refused, ["vault", "updated_at"]); assert.strictEqual(r.updated_at, NOW); assert.ok(!("refused" in JSON.parse(JSON.stringify(r))));
+  assert.strictEqual(E.readLinksStore({ schema_version: 1, updated_at: NOW, links: { vault: { v: "V", at: NOW, by: "a" } } }, max).refused, undefined); });
+t("K7 without the guard a future stamp beats every later edit; with it the later edit wins", () => { const fut = { schema_version: 1, updated_at: NOW, links: { vault: { v: "Future", at: "2027-01-01T00:00:00-06:00", by: "pc" } } };
+  const edit = E.setLinks(null, { vault: "Edited" }, LATER, "a"); assert.strictEqual(E.mergeLinks(edit, E.readLinksStore(fut)).links.vault.v, "Future");
+  assert.strictEqual(E.mergeLinks(edit, E.readLinksStore(fut, Date.parse(LATER) + 300000)).links.vault.v, "Edited"); });
+
 console.log(`${n - fail}/${n} passed`); if (fail) process.exit(1);

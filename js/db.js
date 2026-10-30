@@ -62,7 +62,7 @@
   // Never clears the machine name, folder grant or time events: deleting time is done by the app as "remove" events,
   // so it reaches the other machine too (Clear → Also delete, typed DELETE).
   const KEEP = ["ownEvents", "migratedV2", "timeEntries", "calTombstones", "audienceRules"];
-  const CACHE_ONLY = ["clearBase", "calendarSnap", "trips", "projectsFeed", "historyBackup0901", "historyCleanup0901", "links"];   // 00.10.000: Links (vault name, repo address) stay on this computer   // 00.09.001 (L1): the history backup is never exported   // 00.07.000: + Planner export cache   // 00.06.000: caches that Clear wipes but Export never writes out
+  const CACHE_ONLY = ["clearBase", "calendarSnap", "trips", "projectsFeed", "historyBackup0901", "historyCleanup0901", "links"];   // 00.10.000: Links (vault name, repo address) are synced encrypted as links.json.enc; this cache is never exported   // 00.09.001 (L1): the history backup is never exported   // 00.07.000: + Planner export cache   // 00.06.000: caches that Clear wipes but Export never writes out
   async function clearAll() { for (const k of KEYS.concat(CACHE_ONLY)) if (!KEEP.includes(k)) await set(k, undefined); }
   // 00.03: one-time copy of an older build's browser cache (same "kv" store, different database name, set in config.local.js
   // legacyDbNames). Runs only on a browser that has never used this build (no machine name yet). The old database is left as is.

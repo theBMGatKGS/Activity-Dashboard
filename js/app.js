@@ -1364,18 +1364,24 @@
     const d = e.target.closest && e.target.closest("[data-evday]"); if (d) { goEvent(null, d.dataset.evday); return true; }
     return false;
   }
-  // ---------- 00.10.000 File → Links… (per computer, encrypted) and the SAM bullets link ----------
+  // ---------- 00.10.000 File → Links… (synced, encrypted: links.json.enc) and the SAM bullets link ----------
   // rev 3: Links live in links.json.enc (purpose "links", the folder's keyring), synced by the folder and the hub like any data file.
   // Newest change to each link wins (E.mergeLinks).  IndexedDB "links" is the encrypted cache: cache-only, never exported.
   Object.assign(S, { linksStore: null, linksPrev: null, linksDirty: false });
   const linksExample = () => !!(S.snap && S.snap.example) || !!S.evExample;
   const machineTag = () => String(S.machine || "local").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 24) || "local";
-  async function loadLinks() {
-    if (S.linksLoaded) return S.links;
+  // rev 3 B3: a link stamped more than FUTURE_MS ahead of this clock is refused (the snapshot pattern), with a problem line, so it can't win forever
+  const linksMax = () => nowDate().getTime() + R2.FUTURE_MS;
+  const readLinksChecked = (raw, where) => { const r = E.readLinksStore(raw, linksMax());
+    if (r.refused) S.saveProblems.linksFuture = `${LINKS_NAME}.enc: ${where} change${r.refused.length > 1 ? "s" : ""} dated in the future (more than ${Math.round(R2.FUTURE_MS / 60000)} min ahead of this computer's clock) refused: ${r.refused.join(", ")}`;
+    return r; };
+  let linksLoading = null;
+  function loadLinks() { if (S.linksLoaded) return Promise.resolve(S.links); return linksLoading || (linksLoading = loadLinks1().finally(() => { linksLoading = null; })); }
+  async function loadLinks1() {
     if (S.vault && S.vault.kr && !S.vault.key) return S.links;   // locked: nothing is read
     const l = await DB.get("links");
     try {
-      if (l && l.schema_version === 1) S.linksStore = E.mergeLinks(S.linksStore, E.readLinksStore(l));
+      if (l && l.schema_version === 1) S.linksStore = E.mergeLinks(S.linksStore, readLinksChecked(l, "cached"));
       else if (l && typeof l === "object" && !E.linksProblem(l)) { S.linksStore = E.mergeLinks(S.linksStore, E.setLinks(null, l, nowDate().toISOString(), machineTag())); S.linksDirty = true; }   // 651b0b8 cache, migrated once
     } catch (e) { /* ignore a bad cache */ }
     S.links = S.linksStore && Object.keys(S.linksStore.links).length ? E.linksValues(S.linksStore) : null;
@@ -1384,16 +1390,21 @@
   async function saveLinks(fileToo) {
     if (!S.linksStore || linksExample() || !(S.vault && (!S.vault.kr || S.vault.key))) return;
     track(DB.set("links", S.linksStore));
-    if (fileToo && canSaveToFolder()) { S.linksDirty = false; await track(writeVerified(LINKS_NAME + ".enc", "links", JSON.stringify(S.linksStore))); }
+    if (fileToo && canSaveToFolder()) {
+      try { const h = await S.dir.getFileHandle(LINKS_NAME + ".enc"); const cur = readLinksChecked(JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, await (await h.getFile()).text(), "links")), "synced");
+        S.linksStore = E.mergeLinks(S.linksStore, cur); S.links = Object.keys(S.linksStore.links).length ? E.linksValues(S.linksStore) : null; } catch (e) { /* no file yet, or unreadable: write ours */ }   // never overwrite another computer's newer link
+      S.linksDirty = false; await track(writeVerified(LINKS_NAME + ".enc", "links", JSON.stringify(S.linksStore))); }
   }
-  function useLinksFeed(raw) {
+  async function useLinksFeed(raw) {
     if (linksExample() || !(S.vault && S.vault.key)) return;
-    let inc; try { inc = E.readLinksStore(raw); } catch (e) { return; }
+    await loadLinks();   // rev 3 B1: the IndexedDB cache (and a migrated 00.10.000 cache) is merged before the synced file, never after
+    let inc; try { inc = readLinksChecked(raw, "synced"); } catch (e) { return; }
+    if (!inc.refused && S.saveProblems.linksFuture && !S.linksFutureSeen) S.linksFutureSeen = true; else if (!inc.refused && S.linksFutureSeen) { delete S.saveProblems.linksFuture; S.linksFutureSeen = false; }   // cleared after the next clean read
     let m = E.mergeLinks(S.linksStore, inc);
-    if (S.linksPrev) { try { m = E.mergeLinks(m, E.readLinksStore(S.linksPrev)); } catch (e) { /* ignore */ } S.linksPrev = null; }
+    if (S.linksPrev) { try { m = E.mergeLinks(m, readLinksChecked(S.linksPrev, "replaced")); } catch (e) { /* ignore */ } S.linksPrev = null; }
     const local = !E.sameLinks(m, S.linksStore), stale = !E.sameLinks(m, inc);
     S.linksStore = m; S.links = Object.keys(m.links).length ? E.linksValues(m) : null; S.linksLoaded = true;
-    if (local || stale || S.linksDirty) saveLinks(stale || S.linksDirty);
+    if (local || stale || S.linksDirty) track(saveLinks(stale || S.linksDirty));   // a failed write is a save problem, never an unhandled error
   }
   async function linksDialog() {
     if (linksExample()) { toast("⚠ Load your real data first: Links are never saved while EXAMPLE DATA is shown."); return; }
@@ -1415,7 +1426,8 @@
         const p = E.linksProblem(v); if (p) { d.querySelector("#lk-err").textContent = p; return; }
         if (!v.vault && !v.repo) { d.querySelector("#lk-err").textContent = "Set the vault name, the repo address, or both."; return; }
         await loadLinks(); S.linksStore = E.setLinks(S.linksStore, v, nowDate().toISOString(), machineTag()); S.links = E.linksValues(S.linksStore); S.linksLoaded = true;
-        await saveLinks(true); done(true); toast("Links saved, encrypted, in links.json.enc.  They sync to your other computers."); render(); };
+        try { await saveLinks(true); } catch (e) { S.linksDirty = true; d.querySelector("#lk-err").textContent = "Saved here; the folder copy didn't check out and will be written at the next sync."; return; }
+        done(true); toast("Links saved, encrypted, in links.json.enc.  They sync to your other computers."); render(); };
     });
   }
   async function samDialog() {
@@ -1760,7 +1772,8 @@ ${ask}
     if (feeds.projstore && (!S.projStore || S.projExample || Date.parse(feeds.projstore.updated_at) > Date.parse(S.projStore.updated_at))) { S.projStore = R.readStore(feeds.projstore); S.projExample = false; track(DB.set("projectsStore", feeds.projstore)); }
     if (feeds.accstore && (!S.accStore || S.accExample || Date.parse(feeds.accstore.updated_at) > Date.parse(S.accStore.updated_at))) { S.accStore = A.readAccStore(feeds.accstore); S.accExample = false; track(DB.set("accountsStore", feeds.accstore)); }
     if (feeds.contacts && (!S.contacts || S.accExample || Date.parse(feeds.contacts.updated_at) > Date.parse(S.contacts.updated_at))) { S.contacts = A.readContacts(feeds.contacts); track(DB.set("contacts", feeds.contacts)); }
-    if (feeds.links) useLinksFeed(feeds.links); else if (S.linksDirty && !linksExample()) saveLinks(true);   // rev 3: Links merge per link
+    if (!S.linksLoaded && S.vault && S.vault.key) track(loadLinks());   // B1: the key can arrive after the snapshot load; read the cache now
+    if (feeds.links) track(useLinksFeed(feeds.links)); else if (S.linksDirty && !linksExample()) track(saveLinks(true));   // rev 3: Links merge per link
     if (feeds.events && !S.evExample && (!S.evStore || S.evExample || Date.parse(feeds.events.updated_at) > Date.parse(S.evStore.updated_at))) { S.evStore = E.readEventsStore(feeds.events); S.evExample = false; track(DB.set("eventsStore", feeds.events)); }
     if (feeds.trips && (!S.tripsFeed || Date.parse(feeds.trips.generated_at) >= Date.parse(S.tripsFeed.generatedAt))) { S.tripsFeed = R.readTrips(feeds.trips); track(DB.set("trips", feeds.trips)); }
   }
