@@ -15,6 +15,7 @@
 - Rev 3: Links now sync across computers as `links.json.enc` (purpose `links`), through the Data folder and the GitHub hub (opaque blob names; `DATA_RE` includes it).  Each link carries the time and computer of its last change.  The newest change to each link wins and the others are kept, including the copy the hub replaced (`.prev.enc`).  The iPad can change Links too.  Links are never plaintext in the folder, in transit or in IndexedDB, and never exported.  A plain `links.json` is never adopted; it gets a problem line.  Nothing is read or written while locked or on EXAMPLE DATA.  The 00.10.000 per-computer cache is migrated once.  `events.js` gains the Links store functions (`readLinksStore`, `mergeLinks`, `setLinks` and others).
 - Rev 3: EXAMPLE DATA never syncs the events store or Links to the folder or the hub.
 - Rev 3: tests.  Past boundary, Calendar summary and Links merge unit tests (`events.test.js`, now 62); Calendar checks in `t33_events.py`; new `tests/t34_links_sync.py` (two computers, per-link merge, locked, plain file, example, migration); `hub.test.js` R13–R15.  QA Low items: `t23_hub.py` tile waits use `TILE_MS = 60000`, and `shots.py` uses condition waits instead of fixed sleeps.
+- Rev 3: the Links dialog title is now "🔗 Links (synced, encrypted)" instead of "Links on this computer", since Links sync across computers.  `t34_links_sync.py` checks the title.
 - Rev 3: the header wraps to two lines below 1800 px, since the extra tab pushed it past 1440 px.
 
 ## 00.09.001_261030 (Oct 30 2026)

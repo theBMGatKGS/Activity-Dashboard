@@ -1400,7 +1400,7 @@
     if (S.vault && S.vault.kr && !S.vault.key) { toast("⚠ Unlock the Data folder first: Links are stored encrypted."); return; }
     if (!canSaveToFolder()) { toast("⚠ Links need an encrypted, unlocked Data folder (File → Encryption…), so they are never kept unencrypted."); return; }
     const l = (await loadLinks()) || {};
-    await dialog("linksdlg", `<b class="vt">🔗 Links on this computer</b>
+    await dialog("linksdlg", `<b class="vt">🔗 Links (synced, encrypted)</b>
       <p>Where the notebook lives, for the SAM bullets link and note links.  Stored encrypted (links.json.enc) and synced to your other computers; never exported.  The newest change to each link wins.</p>
       ${S.linksStore && Object.keys(S.linksStore.links).length ? `<p class="faint" id="lk-sync">${E.LINK_FIELDS.filter(k => S.linksStore.links[k]).map(k => `${k}: changed ${esc(R.dayLabel(R.isoDay(S.linksStore.links[k].at)))} ${esc(R.hm(S.linksStore.links[k].at))} on ${esc(S.linksStore.links[k].by)}`).join(" · ")}</p>` : ""}
       <label class="vlab">Obsidian vault name<input id="lk-vault" value="${esc(l.vault || "")}" autocomplete="off" spellcheck="false"></label>

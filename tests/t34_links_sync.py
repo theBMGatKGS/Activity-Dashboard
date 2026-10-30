@@ -48,6 +48,7 @@ with sync_playwright() as p:
     ipad.wait_for_function("() => DASH.app.state.vault.key", timeout=60000); sync(ipad)
     check(ipad.evaluate("DASH.app.state.links && DASH.app.state.links.vault") == "Example Vault", "the iPad reads Links from links.json.enc")
     links_dialog(ipad, branch="dev"); ipad.wait_for_selector("#lk-sync")
+    check(ipad.inner_text("#linksdlg .vt") == "🔗 Links (synced, encrypted)", "the Links dialog title says they are synced and encrypted")
     check("desk1" in ipad.inner_text("#lk-sync"), "the Links dialog shows when and where each link last changed")
     ipad.screenshot(path=str(SHOTS / "34c-links-sync-ipad.png")); ipad.click("#lk-save"); ipad.wait_for_timeout(300); ipad.evaluate("DASH.app.flush()")
     d = ipad.evaluate(DEC); check(d["links"]["branch"]["v"] == "dev" and d["links"]["branch"]["by"] == "ipad1" and d["links"]["vault"]["by"] == "desk1", "the iPad can change Links; its change is stamped ipad1, the others kept")
