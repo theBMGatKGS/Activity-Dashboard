@@ -82,24 +82,47 @@
   // 00.09.001: one-time cleanup of history that 00.09.000 polluted with the example's weekly totals. Removes only entries equal to
   // the example fixture's totals_history (date and every value). Backs the store up first (read back to check), then sets a marker.
   const canon = o => JSON.stringify(o && typeof o === "object" ? Object.keys(o).sort().reduce((a, k) => (a[k] = o[k], a), {}) : o);
+  // Oct 19 rule (00.09.001, v2): the example's own computed week. Removed only when its stamp is exactly the example fixture's
+  // generated_at AND all 10 counts equal R.totals(example items) for some day from that date through today (the app's own logic).
+  function exampleWeekMatch(h, ex) {
+    if (!h || !ex || h.generated_at !== ex.generated_at || !h.totals) return false;
+    let s; try { s = R.readSnapshot(ex); } catch (e) { return false; }
+    const first = R.isoDay(ex.generated_at), last = R.ymd(nowDate()), want = canon(h.totals);
+    if (Object.keys(h.totals).length !== R.TOTAL_KEYS.length) return false;
+    for (let d = first, i = 0; d <= last && i < 400; d = R.addDays(d, 1), i++) {
+      if (canon(R.totals(s.items, { today: d, calendar: s.calendar, timeEntries: [] })) === want) return true;
+    }
+    return false;
+  }
   async function cleanupExampleHistory() {
     if (!S.vault.kr || !S.vault.key) return;
     try {
       const mk = await DB.get("historyCleanup0901");
-      if (mk) { if (mk.at && Date.now() - Date.parse(mk.at) > 30 * 864e5 && await DB.get("historyBackup0901") !== undefined) { await DB.set("historyBackup0901", undefined); toast("The 30-day history backup was discarded."); } return; }   // L1
+      const expire = async at => { if (at && Date.now() - Date.parse(at) > 30 * 864e5 && await DB.get("historyBackup0901") !== undefined) { await DB.set("historyBackup0901", undefined); toast("The 30-day history backup was discarded."); } };   // L1
+      if (mk && mk.v >= 2) { await expire(mk.at); return; }
       window.DASH_EXAMPLE_SNAPSHOT || await loadScript(CFG.examplePath || "examples/example-snapshot.js");
       const ex = window.DASH_EXAMPLE_SNAPSHOT; if (!ex || !Array.isArray(ex.totals_history)) return;
       const known = new Set(ex.totals_history.map(h => h.generated_at + "|" + canon(h.totals)));
       const cur = (await DB.get("history")) || []; if (!Array.isArray(cur)) return;
-      const keep = cur.filter(h => !(h && known.has(h.generated_at + "|" + canon(h.totals)))), removed = cur.length - keep.length;
+      // A marker without v (written by the first build of this cleanup) means the fixture weeks were already handled: only the Oct 19 rule runs.
+      const fixtureRule = !mk;
+      const drop = h => !!h && ((fixtureRule && known.has(h.generated_at + "|" + canon(h.totals))) || exampleWeekMatch(h, ex));
+      const keep = cur.filter(h => !drop(h)), removed = cur.length - keep.length;
+      let at = mk && mk.at ? mk.at : new Date().toISOString();
       if (removed) {
-        await DB.set("historyBackup0901", cur);
-        if (JSON.stringify(await DB.get("historyBackup0901")) !== JSON.stringify(cur)) throw new Error("backup read-back failed");
+        // Back up first. A backup kept from the first pass predates both passes, so it is kept as is; otherwise the current store is backed up.
+        const prev = await DB.get("historyBackup0901");
+        if (prev === undefined) {
+          await DB.set("historyBackup0901", cur);
+          if (JSON.stringify(await DB.get("historyBackup0901")) !== JSON.stringify(cur)) throw new Error("backup read-back failed");
+          at = new Date().toISOString();
+        }
         await DB.set("history", keep);
         if (JSON.stringify(await DB.get("history")) !== JSON.stringify(keep)) { await DB.set("history", cur); throw new Error("read-back failed; history put back"); }
         S.history = keep; S.cleanupNotice = `Removed ${removed} example week${removed > 1 ? "s" : ""} from your trend history (left by 00.09.000). A backup was kept on this computer.`; toast(S.cleanupNotice);
       }
-      await DB.set("historyCleanup0901", { at: new Date().toISOString(), removed });
+      await DB.set("historyCleanup0901", { v: 2, at, removed: ((mk && mk.removed) || 0) + removed });
+      await expire(at);
     } catch (e) { S.problems.push("History cleanup: " + (e.message || e) + " (nothing changed)"); }
   }
   function ctx() { return { today: S.today, calendar: S.snap ? S.snap.calendar : [], timeEntries: S.entries }; }

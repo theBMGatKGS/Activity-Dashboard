@@ -310,6 +310,37 @@ with sync_playwright() as p:
     pg.click('.mtop:has-text("File")'); pg.click('[data-act="reload"]'); pg.wait_for_timeout(800)
     check(pg.evaluate("window.__noReload === 1") and "did not reload" in pg.inner_text("#banner"), f"L2 Reload snapshot after a failed save: no reload, banner says why ({pg.inner_text('#banner')!r})")
     pg.screenshot(path=str(SHOTS / "31h-failed-save-no-reload.png")); ctx.close()
+    # Oct 19 rule: the example's computed week (stamp exactly the fixture's generated_at, all 10 counts = the app's example totals for a day 10/19..today)
+    d = folder(NEW); ctx, pg = page(d)
+    EXG = json.loads((SRC / "examples/example-snapshot.json").read_text())["generated_at"]
+    pg.evaluate("DASH.app.flush()"); pg.reload(); pg.wait_for_selector(".tile")
+    calc = lambda day: (pg.evaluate("() => !!window.DASH_EXAMPLE_SNAPSHOT") or pg.add_script_tag(url="examples/example-snapshot.js")) and pg.evaluate("d => { const R = DASH.rules, s = R.readSnapshot(window.DASH_EXAMPLE_SNAPSHOT); return R.totals(s.items, { today: d, calendar: s.calendar, timeEntries: [] }); }", day)
+    t27 = calc("2026-10-27")
+    check({k: t27[k] for k in ("iOwe", "owedToMe", "followUps", "waitingOn", "accountTouches", "travel")} == {"iOwe": 15, "owedToMe": 6, "followUps": 10, "waitingOn": 6, "accountTouches": 5, "travel": 2}, f"Oct19: the six fixed counts come out of the app's example logic ({t27})")
+    realw = {"generated_at": "2026-10-26T07:00:00-05:00", "totals": dict(t27, travel=9)}
+    def run(entry, marker=None, backup=None, extra=()):
+        pg.evaluate("([h, m, b]) => Promise.all([DASH.db.set('history', h), DASH.db.set('historyCleanup0901', m === null ? undefined : m), DASH.db.set('historyBackup0901', b === null ? undefined : b)])", [list(extra) + [entry, realw], marker, backup])
+        pg.evaluate("DASH.app.flush()"); pg.reload(); pg.wait_for_selector(".tile"); pg.evaluate("DASH.app.flush()")
+        r = pg.evaluate("(async () => ({ h: await DASH.db.get('history'), b: await DASH.db.get('historyBackup0901'), m: await DASH.db.get('historyCleanup0901') }))()")
+        r["h"] = [x for x in r["h"] if x["generated_at"] != NEW]; return r   # the loaded snapshot's own week is added on load
+    exact = {"generated_at": EXG, "totals": t27}
+    r = run(exact)
+    check(r["h"] == [realw], f"Oct19: exact stamp and all 10 counts (as computed for 10/27) removed; the real week kept ({[x['generated_at'] for x in r['h']]})")
+    check(r["b"] == [exact, realw] and r["m"].get("v") == 2, "Oct19: backup written first (equals the store before the change); marker v2")
+    r = run({"generated_at": "2026-10-19T07:31:00-05:00", "totals": t27})
+    check(len(r["h"]) == 2, "Oct19: near-miss stamp (07:31) kept")
+    r = run({"generated_at": EXG, "totals": dict(t27, overdue=t27["overdue"] + 1)})
+    check(len(r["h"]) == 2, "Oct19: one count off kept")
+    r = run({"generated_at": EXG, "totals": {"overdue": 2, "dueToday": 1, "thisWeek": 4, "iOwe": 3, "owedToMe": 1, "goingCold": 0, "followUps": 5, "waitingOn": 2, "accountTouches": 1, "travel": 0}})
+    check(len(r["h"]) == 2, "Oct19: a real 10/19 entry with different counts kept")
+    r = run({"generated_at": EXG, "totals": calc("2026-10-19")})
+    check(r["h"] == [realw], "Oct19: the 10/19 computation (first day) matches too")
+    # second pass for a store already cleaned by the first build (marker without v): only the Oct 19 rule runs; the older backup is kept
+    oldb = [{"generated_at": "2026-01-05T07:00:00-06:00", "totals": {}}]
+    r = run(exact, marker={"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "removed": 8}, backup=oldb, extra=EXH)   # fixture weeks seeded after the first pass are not touched again
+    check(r["h"] == EXH + [realw] and r["b"] == oldb and r["m"].get("v") == 2 and r["m"].get("removed") == 9, f"Oct19 second pass: removes the Oct 19 week, keeps the first pass's backup, marker v2 ({r['m']})")
+    r = run(exact, marker={"v": 2, "at": r["m"]["at"], "removed": 9}, backup=oldb)
+    check(len(r["h"]) == 2, "Oct19: runs once (v2 marker): a later exact entry is left alone"); ctx.close()
     b.close()
 check(not errors, f"no page errors ({errors[:3]})")
 print("T31 " + ("OK" if ok else "FAIL")); sys.exit(0 if ok else 1)
