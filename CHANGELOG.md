@@ -8,6 +8,12 @@
 - Guards: an example snapshot (`example: true`) or an invalid one is never encrypted into the folder; it is kept and named in a problem line.  Nothing is read or written while locked or without folder permission.  Plain names stay off GitHub (`hub.js` `DATA_RE` unchanged).
 - O1: clock reports carry an `at` stamp (re-dated every 12 hours while still true).  `sync.js` `liveReport()` ignores a report more than 24 hours old, or, for files without `at`, one in a file last written more than 24 hours ago.  So an old report stops showing "This computer's clock is ahead".
 - O2: test only, a `-06:00` snapshot after the 11/1 change shows 6:47 AM CT in Chicago and 7:47 AM ET in New York.  The box-side build is fixed separately.
+- QA review fixes.  F1: a snapshot whose generated_at is more than 5 minutes (FUTURE_MS) ahead of now is refused, plain or encrypted.  A problem line names the file only; the file is never adopted or deleted, and a future-dated encrypted copy never wins the newest comparison, so the next normal delivery replaces it.
+- F2: moving from EXAMPLE DATA to a real snapshot (for example a locked start, then unlock) drops the example weekly totals and reloads the stored real history, so no example totals reach the encrypted history store or the trend lines.
+- F4: encrypted files are written to `<name>.tmp`, read back and decrypted, then renamed over the old file.  A failed write leaves the previous encrypted copy as it was.  The Projects and Accounts stores use the same path.
+- F5: a clock report stamp more than 5 minutes in the future is not trusted.  With both the report's own time and the reporter's last write, the report expires 24 hours after the earlier one.
+- A plain snapshot that couldn't be deleted after a good adopt no longer shows New snapshot waiting when the folder is locked.
+- Tests: t31 adds F1 (June 2027 snapshot, then a normal delivery), F1b and F1c (future-dated encrypted copy), F2 (locked start, unlock, reload), F4 (corrupt temp write), the leftover-file case, and case 6 (folder snapshot against an opened one, both ways).  `sync.test.js` adds F5a to F5e.  T20, T21, T23 and T24 now drop in snapshots stamped before their test clocks, since F1 refuses future-dated ones.  The -06:00 (after 11/1) display stays covered by t31 case 16.
 - Test harness: `DASH_TEST_FS.denied` mirrors a folder whose permission lapsed.  New `tests/t31_snapshot.py` (browser) and `tests/snap_vault_helper.js`; `sync.test.js` O1a–O1g.  REV 00.09.001_261030.
 
 ## 00.09.000_261029 (Oct 29 2026)

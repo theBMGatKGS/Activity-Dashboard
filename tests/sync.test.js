@@ -413,5 +413,11 @@ const st = evs => JSON.stringify(Y.materialize(Y.fold(evs)));
   check(Y.liveReport({}, iso(25), now, 24) === false, "O1e no at: a report in a file last written 25 h ago is ignored (the 10/23 case)");
   check(Y.liveReport({}, iso(3), now, 24) === true, "O1f no at: a report in a file written 3 h ago counts");
   check(Y.liveReport({}, null, now, 24) === false, "O1g no at and no updated_at: ignored");
+  const ahead = h => new Date(now + h * 3.6e6).toISOString();
+  check(Y.liveReport({ at: ahead(720) }, null, now, 24) === false, "F5a an at stamp 30 days ahead is not trusted (no other stamp: ignored)");
+  check(Y.liveReport({ at: ahead(720) }, iso(2), now, 24) === true && Y.liveReport({ at: ahead(720) }, iso(30), now, 24) === false, "F5b a future at falls back to the reporter's last write");
+  check(Y.liveReport({ at: ahead(0.05) }, null, now, 24) === true, "F5c an at stamp 3 min ahead (within FUTURE_MS) is accepted");
+  check(Y.liveReport({ at: iso(1) }, iso(48), now, 24) === false, "F5d both stamps: expires at the earlier one (at 1 h, last write 48 h -> ignored)");
+  check(Y.liveReport({}, ahead(48), now, 24) === false, "F5e no at and a future last write: ignored");
 }
 console.log(`\n${pass}/${pass + fail} passed`); if (fail) process.exit(1);

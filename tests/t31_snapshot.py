@@ -1,5 +1,7 @@
 """T31 (00.09.001): plain snapshot deliveries in an encrypted Data folder, end to end in Chromium. Fictional example data only.
 A test-only stand-in for the granted folder (window.DASH_TEST_FS, as in T21) records which files had their contents read.
+00.09.001 QA fixes: F1 future-dated snapshots refused, F2 example history dropped on the example-to-real switch, F4 temp file +
+read-back + rename, the leftover-file waiting banner, and case 6 (folder vs opened snapshot by date).
 Checks: unlocked adopt (newer, older, same, dated names, invalid, example, delete fails, idempotent), locked 'New snapshot waiting'
 (no contents read, unlock from the chip), reconnect state, time logs still follow the delete setting, the GitHub-only stale tip,
 clock reports expire after 24 h (O1), and a -06:00 snapshot after the DST change in Chicago and New York (O2).
@@ -14,6 +16,7 @@ PASS = "synthetic test passphrase t31"; ENV = dict(os.environ, DASH_TEST_PASS=PA
 FS_JS = """(() => { const nf = () => { const e = new Error('not found'); e.name = 'NotFoundError'; return e; }; window.__textReads = [];
   const fh = n => ({ kind: 'file', name: n, async getFile() { const r = await window.__fs('stat', n, ''); if (!r) throw nf();
       return { lastModified: r.m, size: r.size, text: async () => { window.__textReads.push(n); return (await window.__fs('read', n, '')).text; } }; },
+    async move(to) { await window.__fs('move', n, to); },
     async createWritable() { let buf = ''; return { write: async t => { buf += t; }, close: async () => { await window.__fs('write', n, buf); } }; } });
   window.DASH_TEST_FS = { kind: 'directory', name: 'Data', denied: !!window.__denied, queryPermission: async () => 'granted',
     async *entries() { for (const f of await window.__fs('list', '', '')) yield [f, fh(f)]; },
@@ -22,6 +25,7 @@ FS_JS = """(() => { const nf = () => { const e = new Error('not found'); e.name 
 tmp = pathlib.Path(tempfile.mkdtemp(prefix="dash-t31-w-")); app = tmp / "Dashboard"; shutil.copytree(SRC, app, ignore=shutil.ignore_patterns("tests", ".git"))
 KR = tmp / "keyring.json"; subprocess.run(["node", HELP, "keyring", str(KR)], check=True, env=ENV)
 BASE = json.loads((SRC / "examples/example-snapshot.json").read_text()); BASE.pop("example")
+EX_DATES = {h["generated_at"] for h in BASE["totals_history"]}; BASE["totals_history"] = []   # real fixtures carry no example weekly totals (F2)
 def snap(gen, example=False, bad=False):
     s = dict(BASE, generated_at=gen); s.pop("example", None)
     if example: s["example"] = True
@@ -36,7 +40,7 @@ def folder(old=None, plain=(), extra=()):
     for name, s in plain: (d / name).write_text("window.DASH_SNAPSHOT = " + json.dumps(s) + ";\n" if name.endswith(".js") else json.dumps(s))
     for name, text in extra: (d / name).write_text(text)
     return d
-LOCKED = set(); WRITES = []
+LOCKED = set(); WRITES = []; CORRUPT = set()
 def fs_for(d):
     def fs(op, name, text):
         if op == "list": return sorted(os.listdir(d))
@@ -46,7 +50,8 @@ def fs_for(d):
             st = p.stat(); r = {"m": int(st.st_mtime_ns // 1_000_000), "size": st.st_size}
             if op == "read": r["text"] = p.read_text()
             return r
-        if op == "write": WRITES.append(name); p.write_text(text); return True
+        if op == "write": WRITES.append(name); p.write_text("{corrupt" if name in CORRUPT else text); return True
+        if op == "move": os.replace(p, d / text); return True
         if op == "remove":
             if name in LOCKED: return "locked"
             p.unlink(); return True
@@ -154,6 +159,53 @@ with sync_playwright() as p:
     for tz, want in [("America/Chicago", "6:47 AM CT"), ("America/New_York", "7:47 AM ET")]:
         d = folder(OLD, [("inbox-snapshot.js", snap(G))]); ctx, pg = page(d, now="2026-11-02T08:00:00-06:00", tz=tz); s = S(pg)
         check(s["gen"] == G and want in s["asof"] and "Mon 11/2" in s["asof"] and "Stale" not in s["asof"], f"16 O2 -06:00 snapshot in {tz}: {want} ({s['asof']!r})"); ctx.close()
+    # F1: a snapshot dated June 2027 is refused (named in a problem line, kept, not adopted); a normal delivery after it is adopted
+    FUT = "2027-06-01T06:00:00-05:00"
+    d = folder(OLD, [("inbox-snapshot-270601.js", snap(FUT))]); ctx, pg = page(d); s = S(pg)
+    check(gen_of(d) == OLD and s["gen"] == OLD and (d / "inbox-snapshot-270601.js").exists(), "F1 future plain: not adopted, not deleted, encrypted copy unchanged")
+    fp = [x for x in s["problems"] if "inbox-snapshot-270601.js" in x]
+    check(fp and "in the future" in fp[0] and FUT not in fp[0] and "tasks" not in fp[0], f"F1 future plain: a problem line names the file only ({fp[:1]})")
+    pg.evaluate("""(() => { const o = document.createElement('div'); o.id = 'qa-problems'; o.style.cssText = 'position:fixed;top:44px;right:8px;z-index:99;max-width:640px;background:#1b2230;color:#f4c56a;border:1px solid #f4c56a;padding:10px 12px;font:12px/1.5 monospace;white-space:pre-wrap';
+      o.textContent = 'Sync chip problem lines (test overlay of the chip tooltip):\\n' + DASH.app.state.problems.join('\\n'); document.body.appendChild(o); })()""")
+    pg.screenshot(path=str(SHOTS / "31e-future-snapshot-problem-line.png")); pg.evaluate("document.getElementById('qa-problems').remove()")
+    (d / "inbox-snapshot.js").write_text("window.DASH_SNAPSHOT = " + json.dumps(snap(NEW)) + ";\n"); pg.evaluate("DASH.app.syncNow(true)"); pg.evaluate("DASH.app.flush()"); s = S(pg)
+    check(gen_of(d) == NEW and s["gen"] == NEW and not (d / "inbox-snapshot.js").exists() and (d / "inbox-snapshot-270601.js").exists(), "F1 then a normal delivery: the real one is adopted and deleted; the future file stays"); ctx.close()
+    # F1b: an existing future-dated .enc doesn't win: it is not shown, and a normal delivery replaces it
+    d = folder(FUT, [("inbox-snapshot.js", snap(NEW))]); ctx, pg = page(d); s = S(pg)
+    check(gen_of(d) == NEW and s["gen"] == NEW and not (d / "inbox-snapshot.js").exists(), f"F1b future .enc: does not win the comparison; the real delivery replaces it ({gen_of(d)})"); ctx.close()
+    d = folder(FUT); ctx, pg = page(d); s = S(pg)
+    check(s["gen"] != FUT and any("inbox-snapshot.json.enc" in x and "in the future" in x for x in s["problems"]), f"F1c future .enc alone: not shown, named in a problem line ({s['gen']})"); ctx.close()
+
+    # F4: a failed write leaves the good .enc intact (temp file, read-back, then rename)
+    d = folder(OLD, [("inbox-snapshot.js", snap(NEW))]); before = (d / "inbox-snapshot.json.enc").read_text(); CORRUPT.add("inbox-snapshot.json.enc.tmp"); ctx, pg = page(d); s = S(pg)
+    check((d / "inbox-snapshot.json.enc").read_text() == before and gen_of(d) == OLD and s["gen"] == OLD, "F4 corrupt write: the previous encrypted copy is intact and still shown (not example data)")
+    check((d / "inbox-snapshot.js").exists() and not (d / "inbox-snapshot.json.enc.tmp").exists() and any("read-back" in x for x in s["problems"]), "F4 corrupt write: plain file kept, no temp file left, problem line shown")
+    CORRUPT.clear(); pg.evaluate("DASH.app.syncNow(true)"); pg.evaluate("DASH.app.flush()")
+    check(gen_of(d) == NEW and not (d / "inbox-snapshot.js").exists(), "F4 next sync after the fault clears: adopted normally"); ctx.close()
+
+    # Low: a leftover plain file that couldn't be deleted after a good adopt doesn't show 'New snapshot waiting' when locked
+    d = folder(OLD, [("inbox-snapshot.js", snap(NEW))]); LOCKED.add("inbox-snapshot.js"); ctx, pg = page(d)
+    pg.click('.mtop:has-text("File")'); pg.click('[data-act="encryption"]'); pg.wait_for_selector("#vaultmenu"); pg.click('#vaultmenu [data-v="lock"]') if pg.query_selector('#vaultmenu [data-v="lock"]') else pg.evaluate("(() => { const b = [...document.querySelectorAll('#vaultmenu button')].find(x => /Lock/.test(x.textContent)); b.click(); })()")
+    pg.evaluate("DASH.app.syncNow()"); s = S(pg)
+    check(s["chip"] == "🔒 Data locked", f"Low: leftover undeletable file doesn't raise 'New snapshot waiting' ({s['chip']!r})"); LOCKED.clear(); ctx.close()
+
+    # F2: locked start shows EXAMPLE DATA; after unlock the real history holds none of the example weekly totals
+    d = folder(OLD, [("inbox-snapshot.js", snap(NEW))]); ctx, pg = page(d, unlock=False)
+    ex = pg.evaluate("DASH.app.state.history.map(h => h.generated_at)"); check(bool(EX_DATES & set(ex)), f"F2 locked start: example totals on screen ({len(ex)} weeks)")
+    pg.click("#sync"); pg.wait_for_selector("#vaultunlock"); pg.fill("#vault-pass", PASS); pg.click("#vault-ok")
+    pg.wait_for_function(f"() => DASH.app.state.snap.raw_generated_at === {json.dumps(NEW)}", timeout=30000); pg.evaluate("DASH.app.flush()")
+    h1 = pg.evaluate("DASH.app.state.history.map(h => h.generated_at)")
+    check(not (EX_DATES & set(h1)) and h1, f"F2 after unlock: in-memory history and trend lines carry no example weeks ({h1})")
+    pg.reload(); pg.wait_for_selector(".tile"); pg.evaluate("DASH.app.flush()"); h2 = pg.evaluate("DASH.app.state.history.map(h => h.generated_at)")
+    check(not (EX_DATES & set(h2)) and h2, f"F2 stored (encrypted) history after reload carries no example weeks ({h2})"); ctx.close()
+
+    # 6: a newer folder snapshot beats an older opened one, and a newer opened one beats an older folder copy
+    d = folder(OLD); ctx, pg = page(d)
+    pg.evaluate(f"DASH.db.set('openedSnapshot', {json.dumps(snap('2026-10-28T06:00:00-05:00'))})"); pg.evaluate("DASH.app.flush()")
+    (d / "inbox-snapshot.js").write_text("window.DASH_SNAPSHOT = " + json.dumps(snap(NEW)) + ";\n"); pg.reload(); pg.wait_for_selector(".tile"); s = S(pg)
+    check(s["gen"] == NEW and "opened snapshot" not in s["asof"], f"6a newer folder snapshot beats an older opened one ({s['asof']!r})")
+    pg.evaluate(f"DASH.db.set('openedSnapshot', {json.dumps(snap('2026-10-30T08:00:00-05:00'))})"); pg.evaluate("DASH.app.flush()"); pg.reload(); pg.wait_for_selector(".tile"); s = S(pg)
+    check(s["gen"] == "2026-10-30T08:00:00-05:00" and "opened snapshot" in s["asof"], f"6b newer opened snapshot beats an older folder copy ({s['asof']!r})"); ctx.close()
     b.close()
 check(not errors, f"no page errors ({errors[:3]})")
 print("T31 " + ("OK" if ok else "FAIL")); sys.exit(0 if ok else 1)

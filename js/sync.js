@@ -60,11 +60,13 @@
       const x = { about: r.about, ahead_min: r.ahead_min }; if (typeof r.at === "string" && !isNaN(Date.parse(r.at))) x.at = new Date(Date.parse(r.at)).toISOString(); return x; }) : [];   // 00.09.001: optional "at"
     return { machine: base, events, reports, updated_at: typeof o.updated_at === "string" && !isNaN(Date.parse(o.updated_at)) ? new Date(Date.parse(o.updated_at)).toISOString() : null, bad: probs.length ? `${name}: ${probs.join("; ")}` : null };
   }
-  // 00.09.001 (O1): a clock report counts for 24 h from when it was made ("at"), or, for an older file without "at",
-  // from the reporter's last write (the file's updated_at). Older reports are ignored, so a fixed clock stops being flagged.
+  // 00.09.001 (O1): a clock report counts for 24 h from when it was made ("at") or from the reporter's last write (the file's
+  // updated_at), whichever is earlier. Older reports are ignored, so a fixed clock stops being flagged.
   function liveReport(r, fileUpdated, nowMs, hours) {
-    const t = Date.parse(r.at || fileUpdated || ""); if (isNaN(t)) return false;
-    return nowMs - t <= (hours || 24) * 3.6e6;
+    // F5: a stamp more than FUTURE_MS ahead is not trusted; with both stamps, the earlier one counts (expires first)
+    const ts = [Date.parse(r.at || ""), Date.parse(fileUpdated || "")].filter(t => !isNaN(t) && t <= nowMs + FUTURE_MS);
+    if (!ts.length) return false;
+    return nowMs - Math.min(...ts) <= (hours || 24) * 3.6e6;
   }
   // reports: [{about, ahead_min}] — this machine telling the others their clock looks ahead (D5: the warning shows on both)
   function serialize(machine, events, nowIso, reports) {

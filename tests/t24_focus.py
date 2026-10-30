@@ -177,10 +177,11 @@ with sync_playwright() as p:
     check(mac.evaluate("DASH.app.state.flags['star:Account B'].on === false") and mac.query_selector("#fs-dueToday [data-row='EX-2'] .key") is None, "unstar on workpc wins on the mac (later stamp)")
     mac.goto((app / "index.html").as_uri() + "?now=2026-10-19T11:30:00-05:00&machine=mac"); mac.wait_for_selector(".sq", timeout=30000); mac.evaluate("DASH.app.syncNow()")
     check(mac.query_selector("#fs-overdue [data-row='EX-1']") is not None and mac.query_selector("[data-row='EX-7']") is None, "after reload at 11:30 CT the snoozed row is back; the Done row stays hidden until To Do catches up")
-    snap2 = dict(snap, generated_at="2026-10-20T07:30:00-05:00", tasks=[dict(t, status="done") if t["id"] == "EX-7" else t for t in snap["tasks"]])
+    # 00.09.001: stamped before the 11:30 test clock (F1 refuses future-dated snapshots)
+    snap2 = dict(snap, generated_at="2026-10-19T11:00:00-05:00", tasks=[dict(t, status="done") if t["id"] == "EX-7" else t for t in snap["tasks"]])
     mac.evaluate("""(async t => { const S = DASH.app.state; await S.dir.getFileHandle('inbox-snapshot.json', { create: true }).then(h => h.createWritable()).then(async w => { await w.write(t); await w.close(); }); })""", json.dumps(snap2))
     mac.evaluate("DASH.app.syncNow()"); mac.evaluate("DASH.app.syncNow()"); mac.wait_for_timeout(200)
-    check(mac.evaluate("DASH.app.state.snap.generatedAt").startswith("2026-10-20") and not mac.query_selector(".donehere"), "To Do caught up (task done in the next snapshot): the 'done here' count clears itself")
+    check(mac.evaluate("DASH.app.state.snap.raw_generated_at") == "2026-10-19T11:00:00-05:00" and not mac.query_selector(".donehere"), "To Do caught up (task done in the next snapshot): the 'done here' count clears itself")
     cm.close(); cp.close()
     # ---------------- Part C: fonts cached by the service worker, offline ----------------
     site = tmp / "site"; shutil.copytree(SRC, site, ignore=shutil.ignore_patterns("tests", ".git"))

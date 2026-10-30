@@ -65,7 +65,10 @@
   async function useSnapshot(raw, from) {
     let s;
     try { s = R.readSnapshot(raw); } catch (e) { banner("Snapshot not loaded: " + e.message + " The previous data is kept.", true); if (!S.snap) render(); return false; }
+    const wasExample = !!(S.snap && S.snap.example);
     s.from = from; s.raw_generated_at = raw.generated_at; S.snap = s; S.snapRaw = raw;
+    // 00.09.001 (F2): leaving EXAMPLE DATA for a real snapshot drops the example's weekly totals; only the stored real history is kept
+    if (wasExample && !s.example) { let h = []; try { h = (await DB.get("history")) || []; } catch (e) { h = []; } S.history = Array.isArray(h) ? h.filter(x => x && !x.example) : []; }
     await calForSnapshot(s);
     const cur = { generated_at: s.generatedAt, totals: R.totals(s.items, ctx()) };
     S.history = R.mergeHistory(R.mergeHistory(S.history, s.history), [cur]);
@@ -284,6 +287,17 @@
     if (name === KEYRING && S.hub && !S.hubOnly) { try { await S.hub.write(KEYRING, text, "sync"); } catch (e) { S.hubState.error = e.message || String(e); } }   // 00.04: a new passphrase reaches the hub at once
     return fh.getFile();
   }
+  // F4: encrypted files go to <name>.tmp first, are read back and decrypted, and only then replace <name>.
+  // A failed write leaves the previous good file untouched.
+  async function writeVerified(target, purpose, body) {
+    const ct = await V.encrypt(S.vault.key, S.vault.kr, purpose, body), tmp = target + ".tmp";
+    await writeText(tmp, ct);
+    let good = false; try { good = await V.decrypt(S.vault.key, S.vault.kr, (await readName(tmp)).text, purpose) === body; } catch (e) { good = false; }
+    if (!good) { try { await S.dir.removeEntry(tmp); } catch (e) { /* left for the next try */ } throw new Error("read-back check failed; the previous encrypted copy is kept"); }
+    const h = await S.dir.getFileHandle(tmp);
+    if (h.move) await h.move(target);
+    else { await writeText(target, ct); try { await S.dir.removeEntry(tmp); } catch (e) { /* harmless */ } }
+  }
   async function readName(name) { const h = await S.dir.getFileHandle(name); return readText(h); }
   async function loadKeyring() {
     try { const r = await readName(KEYRING); S.seen[KEYRING] = r.sig; const kr = V.parseKeyring(r.text);
@@ -427,15 +441,15 @@
           target = "inbox-snapshot.json" + ENC; const raw = parseSnapshotText(name, text);
           try { R.readSnapshot(raw); } catch (e) { throw new Error("snapshot rejected (" + e.message + "); not encrypted or uploaded, the previous one is kept"); }   // 00.04.001
           if (raw && raw.example) throw new Error("example snapshot; example data is never encrypted into the Data folder");   // 00.09.001
+          if (futureSnap(raw)) throw new Error("generated_at is in the future; not used and not deleted");   // F1
           body = JSON.stringify(raw);
-          try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, "snapshot")); R.readSnapshot(old); if (new Date(old.generated_at) >= new Date(raw.generated_at)) body = null; } catch (e) { /* none yet, or the old one is invalid: replace it */ }   // 00.09.001: same generated_at = same snapshot, no rewrite
+          try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, "snapshot")); R.readSnapshot(old); if (!futureSnap(old) && new Date(old.generated_at) >= new Date(raw.generated_at)) body = null; } catch (e) { /* none yet, or the old one is invalid: replace it */ }   // 00.09.001: same generated_at = same snapshot, no rewrite
         } else if (FEED_READ[purpose]) {   // 00.06.000 (00.07.000: + projects): validate, keep the newer copy
           target = name + ENC; const raw = JSON.parse(text); FEED_READ[purpose](raw); body = JSON.stringify(raw);
           try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, purpose)); if (Date.parse(stampOf(old)) > Date.parse(stampOf(raw))) body = null; } catch (e) { /* none yet */ }
         } else { target = "notebook-log.js" + ENC; parseLogJs(text); body = text; }
         if (body != null) {
-          const ct = await V.encrypt(S.vault.key, S.vault.kr, purpose, body); await writeText(target, ct);
-          if (await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, purpose) !== body) throw new Error("read-back check failed");
+          await writeVerified(target, purpose, body);
         }
         n++;
         if (purpose === "snapshot") {   // 00.09.001: a snapshot is a regenerated export: the plain file is always deleted once the encrypted copy checks out
@@ -616,6 +630,8 @@
   // 00.09.001: plain snapshot deliveries (inbox-snapshot.js / .json, dated names) in an encrypted folder. Unlocked: encrypt the
   // newest into inbox-snapshot.json.enc (encryptPlain keeps the newer of the two by generated_at), check it, delete the plain file.
   // Only file names and generated_at are ever shown; snapshot contents are never logged.
+  // F1: a snapshot stamped more than FUTURE_MS ahead of now is refused (never adopted, deleted, or allowed to win a comparison)
+  const futureSnap = raw => { const t = Date.parse(raw && raw.generated_at); return !isNaN(t) && t - nowDate().getTime() > R2.FUTURE_MS; };
   const isPlainSnap = n => !/\.enc$/i.test(n) && !/\.csv$/i.test(n) && purposeOf(n) === "snapshot";
   async function plainSnapList() {
     const out = [];
@@ -648,7 +664,7 @@
       for await (const [name, h] of S.dir.entries()) {
         if (h.kind !== "file") continue;
         if (name === "inbox-snapshot.json" + ENC) { try { enc = (await h.getFile()).lastModified; } catch (e) { /* none */ } }
-        else if (isPlainSnap(name)) { try { plain.push([name, (await h.getFile()).lastModified]); } catch (e) { /* skip */ } }
+        else if (isPlainSnap(name) && !S.vault.snapUndeleted[name]) { try { plain.push([name, (await h.getFile()).lastModified]); } catch (e) { /* skip */ } }
       }
       const newer = plain.filter(x => x[1] > enc); if (newer.length) S.vault.snapWaiting = { names: newer.map(x => x[0]) };
     } catch (e) { /* folder unreadable: the chip says so */ }
@@ -656,7 +672,8 @@
   async function readDirSnapshot() {
     if (S.vault.kr) {
       if (!S.vault.key) return null; const n = "inbox-snapshot.json" + ENC;
-      try { const r = await readName(n); S.seen[n] = r.sig; return JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, r.text, "snapshot")); }
+      try { const r = await readName(n); S.seen[n] = r.sig; const o = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, r.text, "snapshot"));
+        if (futureSnap(o)) { S.fileProblems[n] = `${n}: generated_at is in the future; not used`; return null; } return o; }
       catch (e) { if (e && e.name !== "NotFoundError") S.problems.push(`${n}: ${e.message || e}`); return null; }
     }
     for (const n of SNAP_NAMES) {
@@ -713,6 +730,7 @@
           else if (FEED_READ[purpose]) { const raw = JSON.parse(r.text); FEED_READ[purpose](raw); feeds[purpose] = raw; }
           else {   // 00.04.001: several snapshot files (e.g. a renamed backup): use the newest one that passes validation
             const cand = parseSnapshotText(inner, r.text); let okc = true; try { R.readSnapshot(cand); } catch (e) { okc = false; }
+            if (futureSnap(cand)) { S.fileProblems[name] = `${name}: generated_at is in the future; not used`; continue; }   // F1
             const better = !snapRaw || (okc && (!snapOk || Date.parse(cand.generated_at) > Date.parse(snapRaw.generated_at)));
             if (better) { snapRaw = cand; snapOk = okc; }
           }
@@ -1298,7 +1316,7 @@
     const key = which === "contacts" ? "contacts" : "accountsStore", name = which === "contacts" ? CONTACTS_NAME : ACC_NAME, purpose = which === "contacts" ? "contacts" : "accstore";
     const body = which === "contacts" ? { schema_version: 1, updated_at: o.updated_at, contacts: o.contacts } : { schema_version: 1, updated_at: o.updated_at, accounts: o.accounts };
     track(DB.set(key, body));
-    if (canSaveToFolder()) { const ct = await V.encrypt(S.vault.key, S.vault.kr, purpose, JSON.stringify(body)); await track(writeText(name + ".enc", ct)); }
+    if (canSaveToFolder()) await track(writeVerified(name + ".enc", purpose, JSON.stringify(body)));
     render();
   }
   function importRefused(what) {

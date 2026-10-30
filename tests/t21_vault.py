@@ -109,7 +109,7 @@ with sync_playwright() as p:
     third.wait_for_function("() => document.querySelector('#vault-err').textContent.includes('Wrong')", timeout=20000); check(True, "after the change: the old passphrase is refused")
     third.fill("#vault-pass", PASS2); third.click("#vault-ok"); ready(third); check(third.evaluate(TOT) == pc.evaluate(TOT), "after the change: the new passphrase opens it on a third machine")
     # --- plaintext snapshot dropped in later (e.g. by an exporter) is encrypted and removed
-    snap2 = dict(snap, generated_at="2026-10-19T12:00:00-05:00"); (data / "inbox-snapshot.json").write_text(json.dumps(snap2))
+    snap2 = dict(snap, generated_at="2026-10-19T07:45:00-05:00"); (data / "inbox-snapshot.json").write_text(json.dumps(snap2))   # 00.09.001: before the 08:00 test clock (F1 refuses future-dated snapshots)
     mac.evaluate("DASH.app.syncNow()"); mac.evaluate("DASH.app.flush()")
     check(not (data / "inbox-snapshot.json").exists() and mac.evaluate("DASH.app.state.snap.raw_generated_at") == snap2["generated_at"], "new plaintext snapshot: encrypted, used, original deleted")
     # --- tamper
