@@ -64,6 +64,7 @@
     importLog("notebook-log.js", L.lines.join("\n"), true);
   }
   async function useSnapshot(raw, from) {
+    S.snapDone = null;   // QA Low (1): cleared as each load starts, so a waiter never sees the previous load's stamp
     let s;
     try { s = R.readSnapshot(raw); } catch (e) { banner("Snapshot not loaded: " + e.message + " The previous data is kept.", true); if (!S.snap) render(); return false; }
     const wasExample = !!(S.snap && S.snap.example);
@@ -99,7 +100,10 @@
     try {
       const mk = await DB.get("historyCleanup0901");
       const expire = async at => { if (at && Date.now() - Date.parse(at) > 30 * 864e5 && await DB.get("historyBackup0901") !== undefined) { await DB.set("historyBackup0901", undefined); toast("The 30-day history backup was discarded."); } };   // L1
-      if (mk && mk.v >= 2) { await expire(mk.at); return; }
+      const okAt = t => typeof t === "string" && !isNaN(Date.parse(t)) && Date.parse(t) <= Date.now() + 864e5;
+      if (mk && mk.v >= 2) {   // QA Low (2): an unreadable or future marker date is rewritten to now, so the backup still expires 30 days later
+        if (!okAt(mk.at)) { await DB.set("historyCleanup0901", Object.assign({}, mk, { at: new Date().toISOString() })); return; }
+        await expire(mk.at); return; }
       window.DASH_EXAMPLE_SNAPSHOT || await loadScript(CFG.examplePath || "examples/example-snapshot.js");
       const ex = window.DASH_EXAMPLE_SNAPSHOT; if (!ex || !Array.isArray(ex.totals_history)) return;
       const known = new Set(ex.totals_history.map(h => h.generated_at + "|" + canon(h.totals)));
@@ -108,7 +112,7 @@
       const fixtureRule = !mk;
       const drop = h => !!h && ((fixtureRule && known.has(h.generated_at + "|" + canon(h.totals))) || exampleWeekMatch(h, ex));
       const keep = cur.filter(h => !drop(h)), removed = cur.length - keep.length;
-      let at = mk && mk.at ? mk.at : new Date().toISOString();
+      let at = mk && okAt(mk.at) ? mk.at : new Date().toISOString();
       if (removed) {
         // Back up first. A backup kept from the first pass predates both passes, so it is kept as is; otherwise the current store is backed up.
         const prev = await DB.get("historyBackup0901");

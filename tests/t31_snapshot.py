@@ -341,6 +341,21 @@ with sync_playwright() as p:
     check(r["h"] == EXH + [realw] and r["b"] == oldb and r["m"].get("v") == 2 and r["m"].get("removed") == 9, f"Oct19 second pass: removes the Oct 19 week, keeps the first pass's backup, marker v2 ({r['m']})")
     r = run(exact, marker={"v": 2, "at": r["m"]["at"], "removed": 9}, backup=oldb)
     check(len(r["h"]) == 2, "Oct19: runs once (v2 marker): a later exact entry is left alone"); ctx.close()
+    # QA Low (1): snapDone is cleared when a snapshot load starts and set when it finishes
+    d = folder(NEW); ctx, pg = page(d)
+    G2 = "2026-10-30T07:10:00-05:00"
+    mid, end = pg.evaluate("async r => { const p = DASH.app.useSnapshot(r, 'Inbox Exporter snapshot'); const mid = DASH.app.state.snapDone; await p; return [mid, DASH.app.state.snapDone]; }", snap(G2))
+    check(mid is None and end == G2, f"Low1: snapDone is null while a load runs, then the new stamp ({mid!r} -> {end!r})")
+    # QA Low (2): an unreadable or future marker date is rewritten, so the backup still expires
+    bk = [{"generated_at": "2026-01-05T07:00:00-06:00", "totals": {}}]
+    for label, bad in [("unreadable", "not a date"), ("future", "2030-01-01T00:00:00Z")]:
+        pg.evaluate("([m, b]) => Promise.all([DASH.db.set('historyCleanup0901', m), DASH.db.set('historyBackup0901', b)])", [{"v": 2, "at": bad, "removed": 1}, bk]); pg.evaluate("DASH.app.flush()")
+        pg.reload(); pg.wait_for_selector(".tile"); pg.evaluate("DASH.app.flush()")
+        m = pg.evaluate("DASH.db.get('historyCleanup0901')"); age = time.time() - __import__("datetime").datetime.fromisoformat(m["at"].replace("Z", "+00:00")).timestamp()
+        check(abs(age) < 600 and pg.evaluate("DASH.db.get('historyBackup0901').then(v => Array.isArray(v))"), f"Low2: {label} marker date rewritten to now; backup kept for its 30 days ({m['at']})")
+    old = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 31 * 86400))
+    pg.evaluate("m => DASH.db.set('historyCleanup0901', m)", {"v": 2, "at": old, "removed": 1}); pg.evaluate("DASH.app.flush()"); pg.reload(); pg.wait_for_selector(".tile")
+    check(pg.evaluate("DASH.db.get('historyBackup0901').then(v => v === undefined)"), "Low2: once the (rewritten) date is 30+ days old the backup goes"); ctx.close()
     b.close()
 check(not errors, f"no page errors ({errors[:3]})")
 print("T31 " + ("OK" if ok else "FAIL")); sys.exit(0 if ok else 1)

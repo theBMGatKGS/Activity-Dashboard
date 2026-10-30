@@ -27,6 +27,7 @@
 - The cleanup still removes only exact matches of the example fixture weeks.
 - Decision (Oct 30): the cleanup also removes the example's own computed week, by exact match, with the backup kept.  An entry goes only if its stamp is exactly the example fixture's generated_at and all 10 counts equal the app's example totals (`R.totals` on the example items) for some day from that date through today.  A near-miss stamp, one count off, or a real entry on that date with other counts is kept.
 - The cleanup marker now carries `v: 2`.  A store already cleaned by the earlier build (marker without `v`) gets a second pass that applies only this rule, keeps the existing backup (it predates both passes) or writes one first if there is none, and then sets `v: 2`.  The backup keeps the L1 rules: 30-day expiry, Discard history backup, not exported.
+- QA Low items: `S.snapDone` is cleared when each snapshot load starts, so a waiter never sees the previous stamp.  A cleanup marker whose date can't be read (or lies in the future) is rewritten to now, so the history backup still expires 30 days later.
 - Test harness: `DASH_TEST_FS.denied` mirrors a folder whose permission lapsed.  New `tests/t31_snapshot.py` (browser) and `tests/snap_vault_helper.js`; `sync.test.js` O1a–O1g.  REV 00.09.001_261030.
 
 ## 00.09.000_261029 (Oct 29 2026)
