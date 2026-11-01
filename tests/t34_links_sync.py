@@ -54,7 +54,8 @@ for f in [SRC / "index.html", SRC / "README.md", SRC / "RELEASE_NOTES.md", SRC /
     for i, line in enumerate(f.read_text().split("\n"), 1):
         for sent in re.split(r"(?<=[.!?;])\s+|<p>|<h3", line):
             if re.search(r"\b(on|for) this computer\b", sent, re.I) and re.search(r"\bLinks\b|links\.json|linksdlg|\blinks\b", sent): BAD.append(f"{f.name}:{i}")
-check(not BAD, f"no 'on/for this computer' wording about Links in the app or docs ({BAD[:5]})")
+            if re.search(r"\bper[- ]computer\s+Links\b|\bLinks\b[^.]{0,30}\bper[- ]computer\b(?!\s+cache)", sent, re.I): BAD.append(f"{f.name}:{i} per-computer")   # 00.10.001: also "per-computer Links"
+check(not BAD, f"no 'on/for this computer' or 'per-computer Links' wording in the app or docs ({BAD[:5]})")
 with sync_playwright() as p:
     b = p.chromium.launch()
     def computer(m, t="09:20", w=1440, h=900):
@@ -113,7 +114,7 @@ with sync_playwright() as p:
     (data / "links.json.enc").write_text(fut)
     until(mac, lambda: "dated in the future" in " ".join(mac.evaluate("DASH.app.state.problems")) and link(mac, "vault") == "Other Vault", "future refused")
     check(mac.evaluate("DASH.app.state.links.vault") == "Other Vault" and link(mac, "vault") == "Other Vault" and "2027" not in json.dumps(dec(mac)), "future stamp: refused, the file is written back without it")
-    check(any("links.json.enc" in x and "dated in the future" in x for x in mac.evaluate("DASH.app.state.problems")), "future stamp: a problem line names links.json.enc")
+    check(any("links.json.enc" in x and "dated in the future" in x and "clears once the other computer's clock is fixed" in x for x in mac.evaluate("DASH.app.state.problems")), "future stamp: a problem line names links.json.enc and says it clears once the other clock is fixed")
     links_dialog(ipad, vault="Later Vault"); save_dialog(ipad); check(link(ipad, "vault") == "Later Vault", "future stamp: a later real edit (iPad dialog) still wins")
     until(mac, lambda: mac.evaluate("DASH.app.state.links.vault") == "Later Vault", "mac later")
     # 5. never exported; IndexedDB holds an envelope only

@@ -564,3 +564,13 @@ button.calday.has{background:#16364f;cursor:pointer}button.calday.red{background
 }
 #view-calendar .linkbtn,.calnext .linkbtn{background:none;border:0;padding:0;color:var(--info);text-decoration:underline;cursor:pointer;font:inherit}
 @media screen and (max-width:1800px){.top{height:auto;min-height:36px;flex-wrap:wrap;gap:4px;padding:4px 10px}.right{flex-wrap:wrap}}
+/* 00.10.001: Grok Bot usage tile (Daily Focus) */
+.ustile{display:flex;flex-direction:column;gap:3px;margin-top:8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:inherit;text-decoration:none;min-height:44px;font-size:12px;max-width:340px;box-sizing:border-box}
+a.ustile{cursor:pointer}a.ustile:hover,a.ustile:focus-visible{border-color:var(--info);outline:none;box-shadow:0 0 0 2px rgba(159,208,240,.35)}
+.ustile.warn{border-color:var(--inc);background:var(--incbg)}.ustile.warn .usw,.ustile .uso.maxed,.uswarn{color:var(--inctx)}
+.ustile.none{flex-direction:row;gap:6px;align-items:center}
+.ush{font-weight:600;font-size:12px}.usrow{display:flex;justify-content:space-between;gap:8px}.usrow b{font-size:13px}
+.usbar{display:block;height:6px;border-radius:3px;background:var(--line);overflow:hidden}.usbar i{display:block;height:100%;background:var(--info)}.ustile.warn .usbar i{background:var(--inc)}
+.usres,.usasof{font-size:10.5px}
+@media (max-width:1024px){.ustile{min-height:44px;padding:10px 12px;max-width:none}}
+@media print{.ustile{display:none!important}}

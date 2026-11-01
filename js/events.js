@@ -1,7 +1,7 @@
 /* Activity Dashboard 00.10.000: Tradeshows & Events.  Pure functions, no DOM, no network.
    Outlook's "Tradeshows & Events" calendar (snapshot events[]) is the source of truth for dates, times and location;
    the notebook's events table (events.md) holds the details.  Both are kept only encrypted (snapshot, events-store.json.enc).
-   Also: the SAM bullets link (month choice and notebook paths) and the per-computer Links settings. */
+   Also: the SAM bullets link (month choice and notebook paths) and the Links store (synced, encrypted, as links.json.enc). */
 (function (g) {
   "use strict";
   const R = g.DASH.rules, A = g.DASH.accounts;
@@ -242,7 +242,7 @@
     out.answers[outlookId] = { row: rowKey, choice: choice === "link" ? "link" : "no" }; return out;
   }
 
-  // ---------- SAM bullets link and per-computer Links ----------
+  // ---------- SAM bullets link and Links (synced, encrypted) ----------
   function samMonth(today) {   // last month until the 19th; from the 20th, this month to date
     const [y, m, d] = today.split("-").map(Number);
     if (d >= 20) return { month: `${y}-${String(m).padStart(2, "0")}`, toDate: true };

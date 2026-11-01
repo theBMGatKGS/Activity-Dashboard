@@ -3,10 +3,11 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"; ROOT="$(dirname "$HERE")"
 cd "$ROOT"
-node --check js/frame.js && node --check js/hub.js && node --check js/vault.js && node --check sw.js && node --check js/rules.js && node --check js/accounts.js && node --check js/events.js && node --check examples/example-events.js && node --check js/sync.js && node --check js/db.js && node --check js/app.js
+node --check js/frame.js && node --check js/hub.js && node --check js/vault.js && node --check sw.js && node --check js/rules.js && node --check js/accounts.js && node --check js/events.js && node --check js/usage.js && node --check examples/example-events.js && node --check js/sync.js && node --check js/db.js && node --check js/app.js
 node "$HERE/rules.test.js"
 node "$HERE/accounts.test.js"
 node "$HERE/events.test.js"
+node "$HERE/usage.test.js"
 node "$HERE/sync.test.js"
 node "$HERE/vault.test.js"
 node "$HERE/hub.test.js"
@@ -30,5 +31,6 @@ python3 "$HERE/t31_snapshot.py" "${SHOTS_DIR:-$(mktemp -d -t dash-t31-XXXX)}"
 python3 "$HERE/t32_move.py"
 python3 "$HERE/t33_events.py" "${SHOTS_DIR:-$(mktemp -d -t dash-t33-XXXX)}"
 python3 "$HERE/t34_links_sync.py" "${SHOTS_DIR:-$(mktemp -d -t dash-t34-XXXX)}"
+python3 "$HERE/t35_usage.py" "${SHOTS_DIR:-$(mktemp -d -t dash-t35-XXXX)}"
 python3 "$HERE/shots.py" "${SHOTS_DIR:-$(mktemp -d -t dash-shots-XXXX)}"
 echo "ALL TESTS PASSED"

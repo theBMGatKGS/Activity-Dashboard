@@ -94,7 +94,9 @@
     const history = (snap.totals_history || []).filter(h => h && RE_ISO.test(h.generated_at || "") && h.totals);
     // 00.10.000: Outlook "Tradeshows & Events" (optional; a bad item is rejected and the rest kept; older readers ignore the key)
     const events = snap.events !== undefined && g.DASH && g.DASH.events ? g.DASH.events.readSnapEvents(snap.events, rejects) : [];
-    return { generatedAt: snap.generated_at, example: snap.example === true, source: snap.source || "inbox-export", items, accounts, calendar, touches, history, events, hasEvents: Array.isArray(snap.events), rejects };
+    // 00.10.001: Grok Bot usage (optional; percentages and reset times only; a bad block is rejected, the snapshot is kept)
+    const usage = g.DASH && g.DASH.usage ? g.DASH.usage.read(snap.usage, rejects) : null;
+    return { generatedAt: snap.generated_at, example: snap.example === true, source: snap.source || "inbox-export", items, accounts, calendar, touches, history, events, hasEvents: Array.isArray(snap.events), usage, rejects };
   }
 
   // ---------- status / groups ----------

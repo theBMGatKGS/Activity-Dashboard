@@ -1,5 +1,12 @@
 # Release notes — Activity Dashboard
 
+## 00.10.001_261101 (Nov 1 2026)
+**Grok Bot usage on Daily Focus**: a small tile under today's meetings.
+- It shows the weekly percent used with a bar, the on-demand percent of the limit (or "Maxed"), when each resets, and when the numbers are from, all in Central Time.  No dollar amounts are shown.
+- It turns amber when weekly use is above 80% or on-demand is Maxed, and says "stale" when the numbers are over 3 days old.
+- Click it, or press Enter on it, to open the usage details in a new tab.
+- Links: a warning about a computer whose clock is ahead now says it clears once that clock is fixed.
+
 ## 00.10.000_261030 (Oct 30 2026)
 **Events**: tradeshows and events in their own tab, after Accounts.
 - Dates, times and location come from Outlook's "Tradeshows & Events" calendar (in the snapshot).  Details come from the notebook's events.md: File → Import events (events.md)….  It's read-only here and kept encrypted.

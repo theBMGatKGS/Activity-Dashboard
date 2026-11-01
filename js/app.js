@@ -3,7 +3,7 @@
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
   const R = DASH.rules, A = DASH.accounts, E = DASH.events, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.10.000_261030";
+  const REV = "00.10.001_261101";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -1373,7 +1373,7 @@
   // rev 3 B3: a link stamped more than FUTURE_MS ahead of this clock is refused (the snapshot pattern), with a problem line, so it can't win forever
   const linksMax = () => nowDate().getTime() + R2.FUTURE_MS;
   const readLinksChecked = (raw, where) => { const r = E.readLinksStore(raw, linksMax());
-    if (r.refused) S.saveProblems.linksFuture = `${LINKS_NAME}.enc: ${where} change${r.refused.length > 1 ? "s" : ""} dated in the future (more than ${Math.round(R2.FUTURE_MS / 60000)} min ahead of this computer's clock) refused: ${r.refused.join(", ")}`;
+    if (r.refused) S.saveProblems.linksFuture = `${LINKS_NAME}.enc: ${where} change${r.refused.length > 1 ? "s" : ""} dated in the future (more than ${Math.round(R2.FUTURE_MS / 60000)} min ahead of this computer's clock) refused: ${r.refused.join(", ")}.  This clears once the other computer's clock is fixed and Links sync again.`;
     return r; };
   let linksLoading = null;
   function loadLinks() { if (S.linksLoaded) return Promise.resolve(S.links); return linksLoading || (linksLoading = loadLinks1().finally(() => { linksLoading = null; })); }
@@ -1889,6 +1889,21 @@ ${ask}
       <div class="track" role="progressbar" aria-labelledby="tclear-l" aria-valuemin="0" aria-valuemax="${c.total}" aria-valuenow="${c.done}" aria-valuetext="${esc(c.text)}" title="${esc(c.text)}. Counts what's due today and overdue (not Waiting on) since the first snapshot today; Done in To Do or here fills it, Snooze never does.">${seg("done", c.done)}${seg("snzd", c.snoozed)}${seg("left", c.total - c.done - c.snoozed)}</div>
       ${ticks}${note ? `<div class="pnote mono">${esc(note)}</div>` : ""}</div>`;
   }
+  // 00.10.001: Grok Bot usage tile (percent of the limit, Maxed, reset times, as of; never dollar amounts).  Times in CT whatever the browser's zone.
+  function usageTileHtml() {
+    if (!S.snap || !DASH.usage) return "";
+    const U = DASH.usage, u = S.snap.usage || (S.snap.example ? U.example(S.snap.generatedAt) : null), m = U.model(u, nowDate().toISOString());
+    const t = s => esc(U.noDollar(s));
+    if (!m) return `<div class="ustile none" role="note"><span class="ush">Grok Bot usage</span> <span class="faint">No usage data</span></div>`;
+    const body = `<span class="ush">Grok Bot usage${m.example ? ` <span class="faint">· example</span>` : ""}${m.warn ? ` <span class="uswarn">⚠</span>` : ""}</span>
+      <span class="usrow"><span>Weekly</span><b class="usw">${t(m.weekly)}</b></span><span class="usbar" aria-hidden="true"><i style="width:${m.bar}%"></i></span>
+      <span class="usrow"><span>On-demand</span><b class="uso${m.maxed ? " maxed" : ""}">${t(m.onDemand)}</b></span>
+      <span class="usres faint">Weekly resets ${t(m.weeklyResets)} · On-demand resets ${t(m.onDemandResets)}</span>
+      <span class="usasof faint">as of ${t(m.asOf)}${m.stale ? ` · <span class="warnt usstale">stale: over ${U.STALE_DAYS} days old</span>` : ""}</span>`;
+    const aria = `Grok Bot usage: weekly ${m.weekly} used, on-demand ${m.onDemand}${m.warn ? ", warning" : ""}${m.stale ? ", stale" : ""}`;
+    return m.url ? `<a class="ustile${m.warn ? " warn" : ""}" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer" aria-label="${esc(aria)}. Opens the usage details in a new tab">${body}</a>`
+      : `<div class="ustile${m.warn ? " warn" : ""}" role="group" aria-label="${esc(aria)}">${body}</div>`;
+  }
   function renderFocus() {
     const el = $("#view-focus"); if (!el) return;
     const f = focusModel(), anim = !S.focusAnimated; S.focusModel = f;
@@ -1911,7 +1926,7 @@ ${ask}
     const header = `<header class="fhead"><div class="fleft"><div class="tiles4" role="group" aria-label="Today at a glance">${squares}</div>${clearBar(f)}</div>
       <div class="side"><div class="ttl"><h1>Daily Focus</h1><div class="asof${isStale() ? " stale" : ""}" title="${isStale() ? esc(staleState().tip) : "Time the snapshot was made (Central Time)."}">${isStale() ? esc(staleState().txt) : ""}${esc(asof)}${S.snap.example ? ' · <span class="exd">EXAMPLE DATA</span>' : ""}</div></div>
         ${f.doneHere ? `<div class="donehere" role="status">${f.doneHere} done here, not yet in To Do <span class="muted">· mark ${f.doneHere === 1 ? "it" : "them"} done in To Do</span></div>` : ""}
-        <div class="meet" aria-label="Meetings today">${meet}${evs.length > 4 ? `<button class="lnk mmore" data-meetmore>+${evs.length - 4} more</button>` : ""}</div></div></header>`;
+        <div class="meet" aria-label="Meetings today">${meet}${evs.length > 4 ? `<button class="lnk mmore" data-meetmore>+${evs.length - 4} more</button>` : ""}</div>${usageTileHtml()}</div></header>`;
     let i = 0;
     const sections = f.sections.map(x => {
       const [title, cls] = SEC[x.key], hero = x.key === "dueToday";
