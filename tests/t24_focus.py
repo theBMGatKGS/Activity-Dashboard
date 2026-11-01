@@ -27,7 +27,7 @@ with sync_playwright() as p:
     check(pg.evaluate("DASH.app.state.view") == "focus" and pg.is_visible("#view-focus") and not pg.is_visible("#view-dashboard") and pg.get_attribute(".tab[data-view=focus]", "aria-selected") == "true", "Focus is the default view (Q9), other views are tabs")
     check(pg.inner_text(".tab[data-view=dashboard]") == "Totals", "the old Dashboard tab is now Totals")
     sq = pg.evaluate("[...document.querySelectorAll('.sq')].map(e => { const r = e.getBoundingClientRect(), l = e.parentElement.querySelector('.sqlab').getBoundingClientRect(); return [e.dataset.sq, Math.round(r.width), Math.round(r.height), l.bottom <= r.top + 0.5, getComputedStyle(e.parentElement.querySelector('.sqlab')).fontSize]; })")
-    check([x[0] for x in sq] == ["dueToday", "overdue", "waiting", "cold"] and all(x[1] == 102 and x[2] == 102 and x[3] for x in sq), f"four equal 102×102 squares, labels above, Due Today first ({sq})")
+    check([x[0] for x in sq] == ["dueToday", "overdue", "waiting", "cold", None] and all(x[1] == 102 and x[2] == 102 and x[3] for x in sq), f"five equal 102×102 squares (00.10.001: the fifth is Grok Bot usage), labels above, Due Today first ({sq})")
     check(all(x[4] == "10px" for x in sq), "square labels are 10px (Q7)")
     dl = pg.evaluate("(() => { const s = document.querySelector('.sq.t-today').getBoundingClientRect(), d = document.querySelector('.sq.t-today .delta').getBoundingClientRect(); return [d.left >= s.left, d.right <= s.right, d.top >= s.top, d.bottom <= s.bottom, document.querySelector('.sq.t-today .delta').textContent]; })()")
     check(all(dl[:4]) and dl[4] == "▲+1", f"delta chip sits inside the Due Today square ({dl[4]})")
@@ -139,7 +139,7 @@ with sync_playwright() as p:
     # zoom 200% (~640 css px): squares 2×2, rows on two lines
     c4 = b.new_context(viewport={"width": 640, "height": 800}); p4 = c4.new_page(); p4.goto((SRC / "index.html").as_uri() + Q); p4.wait_for_selector(".sq")
     pos = p4.evaluate("[...document.querySelectorAll('.sq')].map(e => [Math.round(e.getBoundingClientRect().left), Math.round(e.getBoundingClientRect().top)])")
-    check(pos[0][1] == pos[1][1] and pos[2][1] > pos[0][1] and pos[0][0] == pos[2][0] and p4.evaluate("document.getElementById('view-focus').scrollWidth <= innerWidth + 1"), f"200% zoom: squares wrap 2×2, Daily Focus needs no sideways scroll ({pos})"); c4.close()
+    check(len(pos) == 5 and pos[0][1] == pos[2][1] and pos[3][1] > pos[0][1] and pos[3][1] == pos[4][1] and pos[0][0] == pos[3][0] and p4.evaluate("document.getElementById('view-focus').scrollWidth <= innerWidth + 1"), f"200% zoom: the five squares wrap 3 + 2, Daily Focus needs no sideways scroll ({pos})"); c4.close()
     check(not [c for c in csp if "refused" in c.lower() or "violat" in c.lower()], f"no CSP violations ({csp[:2]})")
     ctx.close()
     # ---------------- Part B: encrypted folder, two machines ----------------

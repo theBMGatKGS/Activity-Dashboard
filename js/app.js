@@ -1889,20 +1889,27 @@ ${ask}
       <div class="track" role="progressbar" aria-labelledby="tclear-l" aria-valuemin="0" aria-valuemax="${c.total}" aria-valuenow="${c.done}" aria-valuetext="${esc(c.text)}" title="${esc(c.text)}. Counts what's due today and overdue (not Waiting on) since the first snapshot today; Done in To Do or here fills it, Snooze never does.">${seg("done", c.done)}${seg("snzd", c.snoozed)}${seg("left", c.total - c.done - c.snoozed)}</div>
       ${ticks}${note ? `<div class="pnote mono">${esc(note)}</div>` : ""}</div>`;
   }
-  // 00.10.001: Grok Bot usage tile (percent of the limit, Maxed, reset times, as of; never dollar amounts).  Times in CT whatever the browser's zone.
-  function usageTileHtml() {
+  // 00.10.001: Grok Bot usage: a fifth Daily Focus square (glowing ring = weekly % used) and a one-line strip under the meetings
+  // (on-demand % or Maxed, reset times, as of, stale).  Percent of the limit only, never dollar amounts.  Times in CT whatever the browser's zone.
+  function usageModel() { if (!S.snap || !DASH.usage) return { m: null }; const U = DASH.usage, u = S.snap.usage || (S.snap.example ? U.example(S.snap.generatedAt) : null); return { m: U.model(u, nowDate().toISOString()) }; }
+  function usageSquareHtml() {
     if (!S.snap || !DASH.usage) return "";
-    const U = DASH.usage, u = S.snap.usage || (S.snap.example ? U.example(S.snap.generatedAt) : null), m = U.model(u, nowDate().toISOString());
-    const t = s => esc(U.noDollar(s));
-    if (!m) return `<div class="ustile none" role="note"><span class="ush">Grok Bot usage</span> <span class="faint">No usage data</span></div>`;
-    const body = `<span class="ush">Grok Bot usage${m.example ? ` <span class="faint">· example</span>` : ""}${m.warn ? ` <span class="uswarn">⚠</span>` : ""}</span>
-      <span class="usrow"><span>Weekly</span><b class="usw">${t(m.weekly)}</b></span><span class="usbar" aria-hidden="true"><i style="width:${m.bar}%"></i></span>
-      <span class="usrow"><span>On-demand</span><b class="uso${m.maxed ? " maxed" : ""}">${t(m.onDemand)}</b></span>
-      <span class="usres faint">Weekly resets ${t(m.weeklyResets)} · On-demand resets ${t(m.onDemandResets)}</span>
-      <span class="usasof faint">as of ${t(m.asOf)}${m.stale ? ` · <span class="warnt usstale">stale: over ${U.STALE_DAYS} days old</span>` : ""}</span>`;
-    const aria = `Grok Bot usage: weekly ${m.weekly} used, on-demand ${m.onDemand}${m.warn ? ", warning" : ""}${m.stale ? ", stale" : ""}`;
-    return m.url ? `<a class="ustile${m.warn ? " warn" : ""}" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer" aria-label="${esc(aria)}. Opens the usage details in a new tab">${body}</a>`
-      : `<div class="ustile${m.warn ? " warn" : ""}" role="group" aria-label="${esc(aria)}">${body}</div>`;
+    const U = DASH.usage, { m } = usageModel(), t = s => esc(U.noDollar(s));
+    const R0 = 34, C = 2 * Math.PI * R0, fill = m ? m.bar / 100 * C : 0;
+    const ring = `<svg class="usring" viewBox="0 0 80 80" aria-hidden="true" focusable="false"><circle class="trk" cx="40" cy="40" r="${R0}"/>${m ? `<circle class="arc" cx="40" cy="40" r="${R0}" stroke-dasharray="${fill.toFixed(2)} ${C.toFixed(2)}" transform="rotate(-90 40 40)"/>` : ""}</svg>`;
+    const mid = `<span class="usmid"><b class="uspct">${m ? t(m.weekly) : "—"}</b><small>Grok Bot</small></span>`;
+    const aria = m ? `Grok Bot usage: weekly ${m.weekly} used, on-demand ${m.onDemand}${m.warn ? ", warning" : ""}${m.stale ? ", stale" : ""}` : "Grok Bot usage: no usage data";
+    const cls = `sq t-usage tone-${m ? m.tone : "none"}${m && m.example ? " ex" : ""}`;
+    const box = m && m.url ? `<a class="${cls}" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer" aria-label="${esc(aria)}. Opens the usage details in a new tab">${ring}${mid}</a>`
+      : `<div class="${cls}" role="img" aria-label="${esc(aria)}">${ring}${mid}</div>`;
+    return `<div class="tw us"><span class="sqlab l-usage" id="lab-usage">Grok Bot usage</span>${box}</div>`;
+  }
+  function usageStripHtml() {
+    if (!S.snap || !DASH.usage) return "";
+    const U = DASH.usage, { m } = usageModel(), t = s => esc(U.noDollar(s));
+    if (!m) return `<div class="usstrip none" role="note"><span>Grok Bot usage</span><span class="faint">No usage data</span></div>`;
+    return `<div class="usstrip${m.maxed ? " maxed" : ""}" role="note" aria-label="Grok Bot usage details"><span>On-demand <b class="uso">${t(m.onDemand)}</b>${m.example ? ` <span class="faint">· example</span>` : ""}</span>
+      <span class="faint">Weekly resets ${t(m.weeklyResets)}</span><span class="faint">On-demand resets ${t(m.onDemandResets)}</span><span class="faint usasof">as of ${t(m.asOf)}</span>${m.stale ? `<span class="warnt usstale">stale: over ${U.STALE_DAYS} days old</span>` : ""}</div>`;
   }
   function renderFocus() {
     const el = $("#view-focus"); if (!el) return;
@@ -1918,7 +1925,8 @@ ${ask}
         `Due Today, ${c.dueToday} item${c.dueToday === 1 ? "" : "s"}${doneNote}${d ? ". " + deltaTip.replace(/\.$/, "") : ""}. Go to section`)
       + sq("overdue", "over", "Overdue", "i-over", c.overdue, "", `Overdue, ${c.overdue} item${c.overdue === 1 ? "" : "s"}. Go to section`)
       + sq("waiting", "wait", "Waiting past due", "i-wait", c.waiting, "", `Waiting past due, ${c.waiting} item${c.waiting === 1 ? "" : "s"}. Go to section`)
-      + sq("cold", "cold", "Going cold", "i-cold", c.cold, "", `Going cold, ${c.cold} key account${c.cold === 1 ? "" : "s"}. Go to section`);
+      + sq("cold", "cold", "Going cold", "i-cold", c.cold, "", `Going cold, ${c.cold} key account${c.cold === 1 ? "" : "s"}. Go to section`)
+      + usageSquareHtml();
     const now = new Date(f.nowIso), evs = R.withConflicts(S.snap.calendar).filter(e => e.day === S.today && new Date(e.end) > now).sort((a, b) => a.start < b.start ? -1 : 1);
     const meet = evs.slice(0, 4).map(e => `<div class="mt${e.conflict ? " cf" : ""}"><span class="t">${hhmm24(e.start)}</span><span class="ma">${esc(e.account || "—")}</span><small>${esc(e.title)}${e.conflict ? " ⚠" : ""} · <button class="lnk" data-prep="${esc(e.id)}" aria-label="Prep for ${esc(e.title)}">prep ↗</button></small></div>`).join("")
       || '<div class="mt empty"><small>No more meetings today.</small></div>';
@@ -1926,7 +1934,7 @@ ${ask}
     const header = `<header class="fhead"><div class="fleft"><div class="tiles4" role="group" aria-label="Today at a glance">${squares}</div>${clearBar(f)}</div>
       <div class="side"><div class="ttl"><h1>Daily Focus</h1><div class="asof${isStale() ? " stale" : ""}" title="${isStale() ? esc(staleState().tip) : "Time the snapshot was made (Central Time)."}">${isStale() ? esc(staleState().txt) : ""}${esc(asof)}${S.snap.example ? ' · <span class="exd">EXAMPLE DATA</span>' : ""}</div></div>
         ${f.doneHere ? `<div class="donehere" role="status">${f.doneHere} done here, not yet in To Do <span class="muted">· mark ${f.doneHere === 1 ? "it" : "them"} done in To Do</span></div>` : ""}
-        <div class="meet" aria-label="Meetings today">${meet}${evs.length > 4 ? `<button class="lnk mmore" data-meetmore>+${evs.length - 4} more</button>` : ""}</div>${usageTileHtml()}</div></header>`;
+        <div class="meet" aria-label="Meetings today">${meet}${evs.length > 4 ? `<button class="lnk mmore" data-meetmore>+${evs.length - 4} more</button>` : ""}</div>${usageStripHtml()}</div></header>`;
     let i = 0;
     const sections = f.sections.map(x => {
       const [title, cls] = SEC[x.key], hero = x.key === "dueToday";

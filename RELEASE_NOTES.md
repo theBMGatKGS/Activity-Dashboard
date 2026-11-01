@@ -1,10 +1,10 @@
 # Release notes — Activity Dashboard
 
 ## 00.10.001_261101 (Nov 1 2026)
-**Grok Bot usage on Daily Focus**: a small tile under today's meetings.
-- It shows the weekly percent used with a bar, the on-demand percent of the limit (or "Maxed"), when each resets, and when the numbers are from, all in Central Time.  No dollar amounts are shown.
-- It turns amber when weekly use is above 80% or on-demand is Maxed, and says "stale" when the numbers are over 3 days old.
-- Click it, or press Enter on it, to open the usage details in a new tab.
+**Grok Bot usage on Daily Focus**: a fifth square, right of Going cold.
+- A glowing ring fills to the weekly percent used, with the percent in the middle.  It's green up to 80%, amber above 80%, and red at 100% or when on-demand is Maxed.
+- A slim line under today's meetings shows the on-demand percent of the limit (or "Maxed"), when each resets, and when the numbers are from, all in Central Time.  It says "stale" when the numbers are over 3 days old.  No dollar amounts are shown.
+- Click the square, or press Enter on it, to open the usage details in a new tab.
 - Links: a warning about a computer whose clock is ahead now says it clears once that clock is fixed.
 
 ## 00.10.000_261030 (Oct 30 2026)
