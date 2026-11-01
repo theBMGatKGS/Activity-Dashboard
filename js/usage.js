@@ -32,8 +32,8 @@
   const noDollar = s => String(s).replace(/\$\s*\d[\d,]*(\.\d+)?/g, "");   // belt and braces: never render a dollar amount
   function model(u, nowIso) {
     if (!u) return null;
-    const w = Math.max(0, u.weekly_used_pct), maxed = !!u.on_demand_maxed;
-    return { weekly: pct(w), bar: Math.min(100, w), onDemand: maxed ? "Maxed" : pct(Math.min(100, u.on_demand_pct)), maxed,
+    const over = u.weekly_used_pct > 100, w = Math.min(100, Math.max(0, u.weekly_used_pct)), maxed = !!u.on_demand_maxed;   // 00.10.001b: clamped to 0-100; "100%+" if the source went over
+    return { weekly: over ? "100%+" : pct(w), bar: w, onDemand: maxed ? "Maxed" : pct(Math.min(100, u.on_demand_pct)), maxed,
       warn: w > WARN_WEEKLY || maxed, weeklyResets: ct(u.weekly_resets), onDemandResets: ct(u.on_demand_resets), asOf: ct(u.as_of),
       stale: Date.parse(nowIso) - Date.parse(u.as_of) > STALE_DAYS * 864e5, url: httpsUrl(u.detail_url), example: !!u.example };
   }

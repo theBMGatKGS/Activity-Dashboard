@@ -39,6 +39,7 @@ with sync_playwright() as p:
     pop = np.value; pop.wait_for_load_state(); check(pop.url == "https://example.com/usage", "Enter on the tile opens the details too"); pop.close()
     t = load(pg, U, {"weekly_used_pct": 80}); check(pg.query_selector(".ustile.warn") is None, "80% exactly: normal tone")
     t = load(pg, U, {"weekly_used_pct": 85.5}); check(pg.query_selector(".ustile.warn") is not None and "85.5%" in t, "weekly above 80%: warning tone")
+    t = load(pg, U, {"weekly_used_pct": 137.4}); check("100%+" in t and pg.eval_on_selector(".usbar i", "e => e.style.width") == "100%" and pg.query_selector(".ustile.warn") is not None, "weekly over 100: 100%+, full bar, warning tone")
     t = load(pg, U, {"on_demand_pct": 100, "on_demand_maxed": True}); check(pg.query_selector(".ustile.warn") is not None and "Maxed" in t and "100%" not in t, "on-demand used up: Maxed, warning tone")
     t = load(pg, U, {"weekly_used_pct": 91.2, "on_demand_pct": 100, "on_demand_maxed": True}); pg.screenshot(path=str(SHOTS / "35c-usage-warning.png"))
     t = load(pg, U, {"detail_url": "http://example.com/usage"}); check(pg.query_selector("a.ustile") is None and pg.query_selector("div.ustile") is not None, "an http detail link is refused (no link)")
@@ -55,6 +56,7 @@ with sync_playwright() as p:
     hgt = q.eval_on_selector("a.ustile", "e => e.getBoundingClientRect().height"); sw = q.evaluate("document.documentElement.scrollWidth")
     check(hgt >= 44 and sw <= 820, f"iPad width: 44 px tap target, no sideways scroll ({hgt:.0f} px, {sw})")
     check("as of Sun 11/1 7:15 AM CT" in q.inner_text(".ustile"), "New York browser: still CT")
-    q.eval_on_selector(".ustile", "e => e.scrollIntoView()"); q.screenshot(path=str(SHOTS / "35d-usage-ipad.png")); ip.close(); b.close()
+    q.evaluate("window.scrollTo(0, 0)"); q.wait_for_function("() => { const r = document.querySelector('.ustile').getBoundingClientRect(), h = document.querySelector('header.top').getBoundingClientRect(); return r.top >= h.bottom && r.bottom <= innerHeight; }")   # 00.10.001b: the tile is in view, below the sticky header
+    q.screenshot(path=str(SHOTS / "35d-usage-ipad.png")); ip.close(); b.close()
 check(not errors, f"no page errors ({errors[:3]})")
 print("T35 usage:", "PASS" if ok else "FAIL"); sys.exit(0 if ok else 1)
