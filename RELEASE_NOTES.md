@@ -1,5 +1,11 @@
 # Release notes — Activity Dashboard
 
+## 00.11.001_261102 (Nov 2 2026)
+- Saves run on their own.  Time entries and Log Touch save to the Data folder automatically, with no manual sync step.
+- A failed save stays queued on this computer (encrypted, never plaintext), retries with backoff (5 s up to 5 min), and survives a reload or an update.
+- Reload and updates park any unsaved work first, so nothing is thrown away.  One failure is counted once, not two or three times.
+- The sync chip only shows the status ("retrying save").
+
 ## 00.11.000_261101 (Nov 1 2026)
 **Time tracking**: a timer bar under the header.
 - Pick a group, a type, and an account, then press Start, and Stop when you're done.  Add past covers time you forgot to time.  Time texted to the assistant arrives with the morning snapshot.

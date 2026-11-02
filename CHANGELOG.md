@@ -1,5 +1,10 @@
 # Changelog — Activity Dashboard
 
+## 00.11.001_261102 (Nov 2 2026)
+- Automatic saves: time entries and Log Touch save on their own; a failed save is parked in an encrypted localStorage queue (purpose "pending"), retried with backoff (5, 15, 30, 60, 120, 300 s), restored on unlock after a reload, and cleared only after the folder write succeeds.
+- reloadSafely parks unsaved work before reloading instead of refusing; nested track() counts a failure once.
+- Sync chip shows "retrying save" as status only.  Test t37.
+
 ## 00.11.000_261101 (Nov 1 2026)
 - Timer bar under the header (design option 3).  Pick a group (Work, Touch, Travel, or Relationship), one of its 20 types, an account (or Internal or Travel/General), and an optional project, then Start and Stop.  The account box turns red until an account is picked.  Resume last restarts the last entry's settings, and Add past takes a date, a start, and a duration such as `1h30`.  Entries go into a new encrypted time store, `time-store.json.enc` (purpose `timestore`, SECRET IndexedDB keys `timeStore`, `timeTimer`, and `timeLast`).  Each entry has a fixed id, the newest change wins, a tie keeps this computer's copy, and a delete is kept as a tombstone.  Nothing is saved in plaintext, while locked, or on EXAMPLE DATA, and the bar says so.  The bar is sticky above 1800 px and sits under the header at narrower widths.
 - Time feed: the snapshot's optional `time` block (schema in `docs/time-feed-schema.md`) is read by `rules.js` and merged into the time store at unlock.  Unknown accounts are kept and listed in a review chip.  The daily snapshot build reads the feed file through a new guarded step, so a missing or broken file gives `time: null` and the build still succeeds.

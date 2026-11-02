@@ -308,7 +308,9 @@ with sync_playwright() as p:
     pg.evaluate("DASH.app.syncNow()"); s = S(pg)
     check(any("A save failed" in x for x in s["problems"]), f"L2 a failed save shows a problem line before any reload ({[x for x in s['problems'] if 'save' in x]})")
     pg.click('.mtop:has-text("File")'); pg.click('[data-act="reload"]'); pg.wait_for_timeout(800)
-    check(pg.evaluate("window.__noReload === 1") and "did not reload" in pg.inner_text("#banner"), f"L2 Reload snapshot after a failed save: no reload, banner says why ({pg.inner_text('#banner')!r})")
+    # 00.11.001: with an encrypted folder the unsaved work is parked in the encrypted pending queue first, so Reload goes ahead and nothing is lost
+    pg.wait_for_function("() => window.__noReload !== 1", timeout=20000); pg.wait_for_selector(".tile"); pg.wait_for_timeout(1500)
+    check("did not reload" not in pg.inner_text("#banner") and pg.evaluate("DASH.app.state.entries.some(e => e.id === 'i-l2')"), "L2 Reload after a failed save: pending work parked (encrypted), reloaded, and the edit is still there")
     pg.screenshot(path=str(SHOTS / "31h-failed-save-no-reload.png")); ctx.close()
     # Oct 19 rule: the example's computed week (stamp exactly the fixture's generated_at, all 10 counts = the app's example totals for a day 10/19..today)
     d = folder(NEW); ctx, pg = page(d)

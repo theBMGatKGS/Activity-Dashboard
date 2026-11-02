@@ -3,7 +3,7 @@
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
   const R = DASH.rules, A = DASH.accounts, E = DASH.events, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.11.000_261101";
+  const REV = "00.11.001_261102";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -167,10 +167,13 @@
   const pending = new Set();
   // 00.09.001 (L2): a failed tracked write is recorded and shown as a problem line at once; reloads stop while one is outstanding.
   const writeFails = [];
-  function track(p) { if (p && p.then) { pending.add(p); p.finally(() => pending.delete(p)).catch(e => { writeFails.push(e); S.saveProblems.write = `A save failed (${(e && e.message) || e}); not reloaded, so nothing in this window is lost`; renderSync(); }); } return p; }
+  const counted = new WeakSet();   // 00.11.001: a failure that bubbles through nested track() calls is counted once
+  function track(p) { if (p && p.then) { pending.add(p); p.finally(() => pending.delete(p)).catch(e => { if (e && typeof e === "object") { if (counted.has(e)) return; counted.add(e); } writeFails.push(e); S.saveProblems.write = `A save failed (${(e && e.message) || e}); not reloaded, so nothing in this window is lost`; renderSync(); }); } return p; }
   function flush() { return Promise.all([...pending].map(p => p.catch(() => {}))); }
   async function reloadSafely() {
     await flush(); await new Promise(r => setTimeout(r, 0));
+    // 00.11.001: unsaved time and touches are parked in the encrypted pending queue; once parked, a reload loses nothing.
+    if (writeFails.length && (!saveOwed() || await persistPending())) { writeFails.length = 0; delete S.saveProblems.write; }
     if (writeFails.length) { const n = writeFails.length; if (!S.problems.includes(S.saveProblems.write)) S.problems.push(S.saveProblems.write); banner(`⚠ ${n} save${n > 1 ? "s" : ""} failed, so the dashboard did not reload.  Check the sync chip, then try again.`, true); renderSync(); writeFails.length = 0; return false; }
     location.reload(); return true;
   }
@@ -225,7 +228,7 @@
     if (!evs.length) return Promise.resolve();
     S.own.push(...evs); recompute();
     if (isExample()) return Promise.resolve();
-    return track(Promise.all([DB.set("ownEvents", S.own), scheduleWrite()]));
+    return track(Promise.all([DB.set("ownEvents", S.own).catch(async e => { S.ownCacheDirty = true; await persistPending(); scheduleRetry(); throw e; }), scheduleWrite()]));
   }
   let wTimer = null, wPromise = null, wResolve = null;
   function scheduleWrite() {
@@ -242,7 +245,8 @@
       if (S.vault.kr) text = await V.encrypt(S.vault.key, S.vault.kr, "time", text);
       const f = await writeText(name, text); S.seen[name] = f.lastModified + ":" + f.size; S.fileEvents[inner] = S.own.filter(e => e.machine === S.machine); delete S.fileProblems[name];
       if (S.hub && !S.hubOnly && S.vault.kr) { try { await S.hub.write(name, text, "sync", { mtime: Number(f.lastModified) || Date.now() }); delete S.hubState.pending; } catch (e) { S.hubState.pending = true; S.hubState.error = e.message || String(e); } }
-    } catch (e) { S.problems.push(`could not write ${name}: ${e.message || e}`); }
+      S.ownDirty = false; settleRetry();
+    } catch (e) { S.ownDirty = true; S.saveProblems.write = `Saving to the Data folder failed (${e.message || e}); kept on this computer and retrying on its own`; await persistPending(); scheduleRetry(); }
     renderSync();
   }
   async function setupMachine() {
@@ -908,6 +912,7 @@
       if (hubDown) { warn = true; act = "hub"; }
       txt = `${hubDown ? "⚠ GitHub not connected" : `${warn ? "⚠" : S.vault && S.vault.kr ? "🔐" : "⟳"} Synced ${hhmm(S.lastSync)}`} · ${ms}${warn ? ` · ${S.problems.length} problem${S.problems.length > 1 ? "s" : ""}` : ""}`; tip = (warn ? S.problems.join("\n") + "\n\n" : "") + `Machines seen: ${ms}. Checks ${S.hubOnly ? "GitHub" : S.hub ? "the Data folder and GitHub" : "the Data folder"} every ${POLL_MS / 1000} s. Click to sync now.`;
       if (S.hub) txt += S.hubState.error ? " · ☁ ⚠" : " · ☁"; }
+    if (S.saveProblems && S.saveProblems.write) { txt += " · ⟳ retrying save"; tip = S.saveProblems.write + "\n\n" + tip; }   // 00.11.001: status only; retries run on their own
     c.textContent = txt; c.title = tip; c.dataset.act = act; c.classList.toggle("stale", warn);
   }
   function pickFiles(accept, cb) { const i = document.createElement("input"); i.type = "file"; i.accept = accept; i.multiple = true; i.onchange = async () => { const out = []; for (const f of i.files) out.push([f.name, await f.text()]); cb(out); }; i.click(); }
@@ -2156,7 +2161,7 @@ ${ask}
     try { const c = await DB.get("timeStore"); if (c && c.schema_version === 1) S.tstore = TL.merge(S.tstore, TL.readStore(c)); } catch (e) { /* a bad cache re-syncs from the folder */ }
     try { const tm = await DB.get("timeTimer"); if (tm && !TL.timerProblem(tm)) { S.timer = tm; S.tg = tm.group; S.tType = tm.type; S.tAcc = tm.account; S.tProj = tm.project || ""; } } catch (e) { /* ignore */ }
     try { const l = await DB.get("timeLast"); if (l && TL.GROUPS.includes(l.group)) S.tLast = l; } catch (e) { /* ignore */ }
-    S.tLoaded = true;
+    S.tLoaded = true; await restorePending();
   }
   function exampleTime() {   // fictional entries for EXAMPLE DATA (screen only, never saved)
     let s = TL.emptyStore(); const at = "2026-01-01T00:00:00Z", w = TL.weekRange(S.today).from, d = i => R.addDays(w, i);
@@ -2166,15 +2171,47 @@ ${ask}
       .forEach(([i, gp, ty, m, a, p], k) => { const day = d(i); s = TL.put(s, { id: "T-" + day.replace(/-/g, "") + "-" + (0xa0000000 + k).toString(16), date: day, start: null, minutes: m, group: gp, type: ty, account: a, project: p, notes: "", x_text: "", source: "example" }, at); });
     return s;
   }
+  // 00.11.001: saves run on their own.  A failed save keeps the store dirty, is parked in the encrypted pending queue (survives a
+  // reload or update) and retries with backoff; nothing is dropped and the sync chip only shows the status.
   async function saveTime() {
     if (!tCanSave()) { if (!tExample()) S.tDirty = true; return; }
-    S.tDirty = false; await track(DB.set("timeStore", S.tstore));
-    if (S.dir && S.granted !== false) {
-      try { const h = await S.dir.getFileHandle(TIMESTORE_NAME + ".enc"); const cur = TL.readStore(JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, await (await h.getFile()).text(), "timestore"))); S.tstore = TL.merge(S.tstore, cur); } catch (e) { /* no file yet: write ours */ }   // 00.11.000 (00.10.000 open item): merge the folder copy first
-      await track(writeVerified(TIMESTORE_NAME + ".enc", "timestore", JSON.stringify(S.tstore)));
-      await track(DB.set("timeStore", S.tstore));
+    S.tDirty = true;
+    try { await DB.set("timeStore", S.tstore); } catch (e) { await persistPending(); }   // the folder write below still runs
+    if (!(S.dir && S.granted !== false)) { await persistPending(); return; }   // saved on its own once the folder is connected (sync calls saveTime while dirty)
+    try {
+      try { const h = await S.dir.getFileHandle(TIMESTORE_NAME + ".enc"); const cur = TL.readStore(JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, await (await h.getFile()).text(), "timestore"))); S.tstore = TL.merge(S.tstore, cur); } catch (e) { /* no file yet: write ours */ }   // 00.11.000: merge the folder copy first
+      await writeVerified(TIMESTORE_NAME + ".enc", "timestore", JSON.stringify(S.tstore));
+      S.tDirty = false;
+      try { await DB.set("timeStore", S.tstore); } catch (e) { /* the folder copy is saved */ }
+      settleRetry();
+    } catch (e) {
+      S.tDirty = true; S.saveProblems.write = `Saving time to the Data folder failed (${e.message || e}); kept on this computer and retrying on its own`;
+      await persistPending(); scheduleRetry(); renderSync();
     }
   }
+  // ---------- 00.11.001: durable pending queue + automatic retry ----------
+  // localStorage holds only an AES-GCM envelope (purpose "pending") of the unsaved time store and own events: never plaintext.
+  const PQ_KEY = "dash-pending-v1", RETRY_S = [5, 15, 30, 60, 120, 300];
+  let retryN = 0, retryT = null;
+  const saveOwed = () => !!(S.tDirty || S.ownDirty || S.ownCacheDirty);
+  async function persistPending() {
+    if (!(S.vault && S.vault.kr && S.vault.key)) return false;
+    try { const body = JSON.stringify({ v: 1, at: new Date().toISOString(), time: S.tstore, own: (S.own || []).filter(e => e.machine === S.machine) });
+      localStorage.setItem(PQ_KEY, await V.encrypt(S.vault.key, S.vault.kr, "pending", body)); return true; } catch (e) { return false; }
+  }
+  async function restorePending() {
+    let t = null; try { t = localStorage.getItem(PQ_KEY); } catch (e) { return; } if (!t || !(S.vault && S.vault.key)) return;
+    try { const o = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, t, "pending"));
+      if (o.time) { S.tstore = TL.merge(S.tstore, TL.readStore(o.time)); S.tDirty = true; }
+      if (Array.isArray(o.own) && o.own.length) { S.own = R2.dedupe((S.own || []).concat(o.own)); S.ownDirty = true; try { recompute(); } catch (e) { /* recomputed on the next sync */ } }
+      scheduleRetry(0);
+    } catch (e) { S.problems.push("Pending saves could not be read (kept for the next unlock)"); }
+  }
+  function scheduleRetry(delayS) {
+    if (retryT) return; const d = delayS !== undefined ? delayS : RETRY_S[Math.min(retryN, RETRY_S.length - 1)]; retryN++;
+    retryT = setTimeout(async () => { retryT = null; if (S.tDirty) await saveTime(); if (S.ownCacheDirty) { try { await DB.set("ownEvents", S.own); S.ownCacheDirty = false; } catch (e) { scheduleRetry(); } } if (S.ownDirty) await writeOwn(); settleRetry(); }, d * 1000);
+  }
+  function settleRetry() { if (saveOwed()) return; retryN = 0; delete S.saveProblems.write; try { localStorage.removeItem(PQ_KEY); } catch (e) { /* ignore */ } }
   function useTimeFeed(raw) { if (tExample() || !raw) return; try { const inc = TL.readStore(raw), m = TL.merge(S.tstore, inc); const changed = !TL.same(m, S.tstore), stale = !TL.same(m, inc); S.tstore = m; if (changed) track(DB.set("timeStore", S.tstore)); if (stale || S.tDirty) track(saveTime()); } catch (e) { S.fileProblems[TIMESTORE_NAME + ".enc"] = `${TIMESTORE_NAME}.enc: ${e.message}`; } }
   // Snapshot "time" block (Q1A): merged by id on unlock; the same id is a correction and the newest generated_at wins.
   async function timeForSnapshot(s) {
