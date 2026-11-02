@@ -8,7 +8,7 @@
   const isIso = v => typeof v === "string" && ISO.test(v) && !isNaN(Date.parse(v));
   const num = v => typeof v === "number" && isFinite(v);
   const STALE_DAYS = 3, WARN_WEEKLY = 80;
-  const httpsUrl = v => { if (typeof v !== "string" || v.length > 500 || !/^https:\/\/[^\s<>"'`]+$/.test(v)) return null; try { const u = new URL(v); return u.protocol === "https:" ? u.href : null; } catch (e) { return null; } };
+  const httpsUrl = v => { if (typeof v !== "string" || v.length > 500 || !/^https:\/\/[^\s<>"'`]+$/.test(v)) return null; try { const u = new URL(v); return u.protocol === "https:" && !u.username && !u.password ? u.href : null; } catch (e) { return null; } };
   // usage: null/undefined -> null (no tile data); a bad block -> null and one reject line (never its contents)
   function read(raw, rejects) {
     if (raw === undefined || raw === null) return null;
@@ -27,12 +27,18 @@
     return { as_of: iso(t), weekly_used_pct: 42, weekly_resets: iso(t + 4 * 864e5), on_demand_pct: 18.5, on_demand_maxed: false, on_demand_resets: iso(t + 2 * 864e5), detail_url: null, example: true };
   }
   const CTF = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", weekday: "short", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" });
-  const ct = iso => { const o = {}; CTF.formatToParts(new Date(iso)).forEach(x => { o[x.type] = x.value; }); return `${o.weekday} ${o.month}/${o.day} ${o.hour}:${o.minute} ${o.dayPeriod} CT`; };   // e.g. "Fri 11/6 5:03 AM CT", whatever the browser's zone
+  // 00.11.000 (QA Low 3): inside the repeated 1-2 AM hour the label says CDT or CST, so the two 1:30s can be told apart
+  const ZN = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", timeZoneName: "short" });
+  const ambiguous = iso => { const t = Date.parse(iso), k = ms => CTF.format(new Date(ms)); return k(t - 36e5) === k(t) || k(t + 36e5) === k(t); };
+  const ct = iso => { const o = {}; CTF.formatToParts(new Date(iso)).forEach(x => { o[x.type] = x.value; });
+    const lab = ambiguous(iso) ? (ZN.formatToParts(new Date(iso)).find(x => x.type === "timeZoneName").value === "CDT" ? "CDT" : "CST") : "CT";
+    return `${o.weekday} ${o.month}/${o.day} ${o.hour}:${o.minute} ${o.dayPeriod} ${lab}`; };   // e.g. "Fri 11/6 5:03 AM CT", whatever the browser's zone
   const pct = n => (Math.round(n * 10) / 10).toFixed(n % 1 ? 1 : 0).replace(/\.0$/, "") + "%";
   const noDollar = s => String(s).replace(/\$\s*\d[\d,]*(\.\d+)?/g, "");   // belt and braces: never render a dollar amount
   function model(u, nowIso) {
     if (!u) return null;
-    const over = u.weekly_used_pct > 100, w = Math.min(100, Math.max(0, u.weekly_used_pct)), maxed = !!u.on_demand_maxed;   // 00.10.001b: clamped to 0-100; "100%+" if the source went over
+    // 00.10.001b: shown as 0-100 ("100%+" if the source went over; negative values are refused in read()).  00.11.000 (QA Low 1): the tone uses the rounded value shown
+    const over = u.weekly_used_pct > 100, w = Math.round(Math.min(100, Math.max(0, u.weekly_used_pct)) * 10) / 10, maxed = !!u.on_demand_maxed;
     return { weekly: over ? "100%+" : pct(w), bar: w, onDemand: maxed ? "Maxed" : pct(Math.min(100, u.on_demand_pct)), maxed,
       warn: w > WARN_WEEKLY || maxed, tone: maxed || w >= 100 ? "red" : w > WARN_WEEKLY ? "amber" : "green", weeklyResets: ct(u.weekly_resets), onDemandResets: ct(u.on_demand_resets), asOf: ct(u.as_of),
       stale: Date.parse(nowIso) - Date.parse(u.as_of) > STALE_DAYS * 864e5, url: httpsUrl(u.detail_url), example: !!u.example };

@@ -50,8 +50,8 @@ with sync_playwright() as p:
             pg.evaluate("DASH.app.state")  # switch attended
             pg.click("[data-attend='CAL-2']"); cal = pg.evaluate("DASH.app.state.entries.filter(e=>e.source==='calendar').map(e=>e.eventId).sort()")
             check(cal == ["CAL-1", "CAL-2", "CAL-4"], f"[{case}] switching Attended moves the time {cal}")
-            pg.click("[data-logcall]"); pg.select_option("#pop-kind", "Teams call"); pg.fill("#pop-min", "25"); pg.click("#pop-ok")
-            check(pg.evaluate("DASH.app.state.entries.some(e=>e.source==='interaction'&&e.kind==='Teams call'&&e.minutes===25)"), f"[{case}] + Log call adds an interaction")
+            pg.click("[data-logcall]"); pg.click("[data-tdt='teams_text']"); pg.select_option("#td-acc", index=3); pg.fill("#td-min", "25"); pg.click("#td-ok")
+            check(pg.evaluate("DASH.app.state.entries.some(e=>e.source==='interaction'&&e.touch==='teams_text'&&e.kind==='Teams chat'&&e.minutes===25)"), f"[{case}] + Log touch (00.11.000) adds an interaction")
             with pg.expect_file_chooser() as fc: pg.evaluate("document.querySelector('[data-act=importLog]').click()")
             fc.value.set_files(str(SRC / "tests/fixtures/example-notebook-log.md")); pg.wait_for_function("() => DASH.app.state.entries.filter(e=>e.origin==='notebook-log').length===5")
             with pg.expect_file_chooser() as fc: pg.evaluate("document.querySelector('[data-act=importLog]').click()")

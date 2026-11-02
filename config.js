@@ -18,4 +18,5 @@ window.DASH_CONFIG = {
   legacyTimeKinds: [],    // older "kind" values accepted in time-*.json
   snapshotNames: [],      // extra snapshot file names read from the Data folder (plaintext; encrypted on the next sync)
   notebookLogNames: [],   // extra notebook log file names
+  // 00.11.000: set these in config.local.js only (see config.local.example.js): internalAccountLabel, managerName, reportNameLine
 };

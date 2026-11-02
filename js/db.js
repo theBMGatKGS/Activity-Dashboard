@@ -6,6 +6,9 @@
    vaultKey (00.03: only if "Remember on this computer": {keyId, key} with key a NON-extractable AES-GCM CryptoKey), legacyImported. Nothing ever leaves this browser except via File > Export local data. */
 (function (g) {
   "use strict";
+  // 00.11.000 (QA Low 8): an opened snapshot is a copy of a delivered file; it is never written into Export local data.
+  // The time store (timeStore, timeTimer, timeLast) and reportsStore are not in KEYS at all: never exported, and Clear keeps the time log.
+  const NOT_EXPORTED = ["openedSnapshot"];
   const NAME = "activity-dashboard", STORE = "kv", KEYS = ["ownEvents", "migratedV2", "timeEntries", "calTombstones", "history", "audienceRules", "openedSnapshot", "prefs", "projectsStore", "accountsStore", "contacts", "eventsStore"];
   let dbp = null, mem = null;
   function open() {
@@ -23,7 +26,7 @@
   // 00.03.001: cached data (SECRET keys) is encrypted with the Data folder's key once the folder is encrypted. cipher = {enc, dec}
   // (text <-> envelope text, AES-256-GCM via DASH.vault) is set by the app while unlocked. "cacheEncrypted" (plain flag) is set as
   // soon as a keyring is seen: from then on a SECRET key is never written in the clear, and while locked it isn't written at all.
-  const SECRET = new Set(["ownEvents", "timeEntries", "calTombstones", "history", "audienceRules", "openedSnapshot", "clearBase", "calendarSnap", "trips", "projectsFeed", "projectsStore", "accountsStore", "contacts", "historyBackup0901", "eventsStore", "links"]);
+  const SECRET = new Set(["timeStore", "timeTimer", "timeLast", "reportsStore", "ownEvents", "timeEntries", "calTombstones", "history", "audienceRules", "openedSnapshot", "clearBase", "calendarSnap", "trips", "projectsFeed", "projectsStore", "accountsStore", "contacts", "historyBackup0901", "eventsStore", "links"]);
   let cipher = null, mustEncrypt = false;
   const isEnv = v => !!(v && typeof v === "object" && v.dashCache === 1 && typeof v.env === "string");
   function getRaw(k) {
@@ -47,7 +50,7 @@
     const db = await open(); if (!db) { mem[k] = v; return; }
     return new Promise((res, rej) => { const t = db.transaction(STORE, "readwrite"); t.objectStore(STORE).put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); });
   }
-  async function exportAll() { const o = { app: "activity-dashboard", exportVersion: 1, exportedAt: new Date().toISOString() }; for (const k of KEYS) o[k] = await get(k); return o; }
+  async function exportAll() { const o = { app: "activity-dashboard", exportVersion: 1, exportedAt: new Date().toISOString() }; for (const k of KEYS) if (!NOT_EXPORTED.includes(k)) o[k] = await get(k); return o; }
   async function importAll(o) {
     if (!o || o.app !== "activity-dashboard" || o.exportVersion !== 1) throw new Error("Not an Activity Dashboard local-data export.");
     if (o.timeEntries && !Array.isArray(o.timeEntries)) throw new Error("timeEntries must be a list.");
@@ -62,7 +65,7 @@
   // Never clears the machine name, folder grant or time events: deleting time is done by the app as "remove" events,
   // so it reaches the other machine too (Clear → Also delete, typed DELETE).
   const KEEP = ["ownEvents", "migratedV2", "timeEntries", "calTombstones", "audienceRules"];
-  const CACHE_ONLY = ["clearBase", "calendarSnap", "trips", "projectsFeed", "historyBackup0901", "historyCleanup0901", "links"];   // 00.10.000: Links (vault name, repo address) are synced encrypted as links.json.enc; this cache is never exported   // 00.09.001 (L1): the history backup is never exported   // 00.07.000: + Planner export cache   // 00.06.000: caches that Clear wipes but Export never writes out
+  const CACHE_ONLY = ["reportsStore", "clearBase", "calendarSnap", "trips", "projectsFeed", "historyBackup0901", "historyCleanup0901", "links"];   // 00.10.000: Links (vault name, repo address) are synced encrypted as links.json.enc; this cache is never exported   // 00.09.001 (L1): the history backup is never exported   // 00.07.000: + Planner export cache   // 00.06.000: caches that Clear wipes but Export never writes out
   async function clearAll() { for (const k of KEYS.concat(CACHE_ONLY)) if (!KEEP.includes(k)) await set(k, undefined); }
   // 00.03: one-time copy of an older build's browser cache (same "kv" store, different database name, set in config.local.js
   // legacyDbNames). Runs only on a browser that has never used this build (no machine name yet). The old database is left as is.

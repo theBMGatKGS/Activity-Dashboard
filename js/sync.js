@@ -5,7 +5,7 @@
 (function (g) {
   "use strict";
   const MACHINE_RE = /^[a-z0-9]{1,20}$/;          // no hyphens, so "time-<machine>.json" is unambiguous
-  const TIME_FILE_RE = /^time-.+\.json$/i;          // own file + any conflict copy
+  const TIME_FILE_RE = /^time-(?!store\.json$).+\.json$/i;          // own file + any conflict copy (00.11.000: not time-store.json, the encrypted time log)
   const OPS = ["upsert", "remove", "map", "flag"];   // 00.05: "flag" = key-account star, Done/Snooze overlay, internal person (data.on boolean)
   const FUTURE_MS = 5 * 60 * 1000;                 // a stamp more than 5 min ahead of this clock -> ⚠ on the sync chip
   let counter = 0;
@@ -27,7 +27,7 @@
 
   function fileName(machine) { return `time-${machine}.json`; }
   function isTimeFile(name) { return TIME_FILE_RE.test(name); }
-  function validMachine(m) { return MACHINE_RE.test(m || ""); }
+  function validMachine(m) { return MACHINE_RE.test(m || "") && m !== "store"; }   // 00.11.000: "store" is reserved (time-store.json)
   // F4: zero-padded counter so eids also sort in creation order as strings
   function makeEid(machine, nowMs) { counter = (counter + 1) % 1e8; return `${machine}.${pad(nowMs.toString(36), 9)}.${pad(counter, 8)}.${Math.random().toString(36).slice(2, 6)}`; }
   // Order: stamp (UTC ms, numeric), logical counter (numeric), machine, eid, then content.

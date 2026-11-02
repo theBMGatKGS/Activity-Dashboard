@@ -25,7 +25,7 @@ with sync_playwright() as p:
     ctx = b.new_context(viewport={"width": 1440, "height": 900}); pg = ctx.new_page(); pg.on("pageerror", lambda e: errors.append(str(e))); pg.on("dialog", lambda d: d.accept())
     pg.goto((SRC / "index.html").as_uri() + Q()); pg.wait_for_selector(".evrow")
     tabs = pg.eval_on_selector_all(".tabs .tab", "e => e.map(x => x.dataset.view)")
-    check(tabs.index("calendar") == tabs.index("accounts") + 1 and tabs.index("events") == tabs.index("calendar") + 1, f"Calendar sits after Accounts, then Events ({tabs})")
+    check(tabs.index("calendar") == tabs.index("accounts") + 1 and tabs.index("agenda") == tabs.index("calendar") + 1 and tabs.index("events") == tabs.index("agenda") + 1, f"Calendar sits after Accounts, then Agenda (00.11.000), then Events ({tabs})")
     check(pg.eval_on_selector_all(".evstrip .evd", "e => e.length") == 120 and pg.query_selector(".evstrip .evd.red") is not None, "120-day month strip with a red dot")
     check([h.split(" ")[0] for h in pg.eval_on_selector_all(".evsec h3", "e => e.map(x => x.textContent.trim())")] == ["Needs", "Upcoming"], "sections: Needs action, then Upcoming")
     check(re.search(r"18:00–20:00 CT", pg.inner_text("#view-events")) is not None and "all day" in pg.inner_text("#view-events"), "Outlook's time is shown with its zone label; all-day events say so")

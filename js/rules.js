@@ -96,7 +96,9 @@
     const events = snap.events !== undefined && g.DASH && g.DASH.events ? g.DASH.events.readSnapEvents(snap.events, rejects) : [];
     // 00.10.001: Grok Bot usage (optional; percentages and reset times only; a bad block is rejected, the snapshot is kept)
     const usage = g.DASH && g.DASH.usage ? g.DASH.usage.read(snap.usage, rejects) : null;
-    return { generatedAt: snap.generated_at, example: snap.example === true, source: snap.source || "inbox-export", items, accounts, calendar, touches, history, events, hasEvents: Array.isArray(snap.events), usage, rejects };
+    // 00.11.000: time entries from the assistant's texts (optional; bad entries rejected one line each, unknown accounts kept for review)
+    const time = g.DASH && g.DASH.timelog ? g.DASH.timelog.readFeed(snap.time, accounts.map(a => a.name), rejects) : null;
+    return { generatedAt: snap.generated_at, example: snap.example === true, source: snap.source || "inbox-export", items, accounts, calendar, touches, history, events, hasEvents: Array.isArray(snap.events), usage, time, rejects };
   }
 
   // ---------- status / groups ----------

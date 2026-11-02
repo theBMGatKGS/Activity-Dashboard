@@ -32,7 +32,7 @@ with sync_playwright() as p:
     pg.click("[data-filter=overdue]"); pg.screenshot(path=str(OUT / "02-filter-overdue.png")); pg.click("#clearf")
     pg.screenshot(path=str(OUT / "03a-conflict-attended-prompt.png"), clip={"x": 0, "y": 270, "width": 1440, "height": 260})
     pg.click("[data-attend='CAL-3']"); pg.click(".evtime.conf"); pg.screenshot(path=str(OUT / "03-adjust-meeting-popover.png")); pg.click("#pop-ok")
-    pg.click("[data-logcall]"); pg.select_option("#pop-kind", "Teams call"); pg.fill("#pop-min", "25"); pg.fill("#pop-note", "Sam K. riser question"); pg.screenshot(path=str(OUT / "03b-log-call-popover.png")); pg.click("#pop-ok")
+    pg.click("[data-logcall]"); pg.click("[data-tdt='teams_text']"); pg.select_option("#td-acc", index=3); pg.fill("#td-min", "25"); pg.fill("#td-who", "Sam K. riser question"); pg.screenshot(path=str(OUT / "03b-log-touch-dialog.png")); pg.click("#td-ok")
     with pg.expect_file_chooser() as fc: pg.evaluate("document.querySelector('[data-act=importLog]').click()")
     fc.value.set_files(str(D / "tests/fixtures/example-notebook-log.md")); settle(pg)
     pg.click("[data-custom]"); pg.screenshot(path=str(OUT / "04-log-time-popover.png")); pg.click("#pop-ok")

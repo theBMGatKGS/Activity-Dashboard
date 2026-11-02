@@ -3,7 +3,7 @@
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
   const R = DASH.rules, A = DASH.accounts, E = DASH.events, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.10.001_261101";
+  const REV = "00.11.000_261101";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -20,7 +20,7 @@
   const LABEL = { overdue: "Overdue", dueToday: "Due Today", thisWeek: "This Week", iOwe: "I Owe", owedToMe: "Owed to Me", goingCold: "Going Cold",
     followUps: "Follow-ups", waitingOn: "Waiting on", accountTouches: "Account touches", travel: "Travel" };
   // 00.05: Daily Focus is always the home view (Q9); ?view= opens another tab (deep links, tests).
-  const VIEWS = ["focus", "dashboard", "workload", "projects", "accounts", "calendar", "events", "print", "manager"];
+  const VIEWS = ["focus", "dashboard", "workload", "projects", "accounts", "calendar", "agenda", "events", "print", "manager"];
   const S = { snap: null, today: R.ymd(NOW), filter: null, open: {}, collapsed: {}, entries: [], removedCal: [], history: [], rules: R.DEFAULT_RULES, view: VIEWS.includes(qp.get("view")) ? qp.get("view") : "focus", wkOffset: 0, trends: false,
     flags: {}, focusExp: new Set(), laterOpen: false, noDateOpen: false, focusAnimated: false };
   // "now" for Snooze: the ?now= test clock if given, else the real clock.
@@ -68,10 +68,11 @@
     let s;
     try { s = R.readSnapshot(raw); } catch (e) { banner("Snapshot not loaded: " + e.message + " The previous data is kept.", true); if (!S.snap) render(); return false; }
     const wasExample = !!(S.snap && S.snap.example);
+    if (wasExample !== !!s.example) { S.tstore = TL.emptyStore(); S.tLoaded = false; S.rstore = null; S.rLoaded = false; S.rExample = false; S.timer = null; }   // 00.11.000: never mix example time or reports with real data
     s.from = from; s.raw_generated_at = raw.generated_at; S.snap = s; S.snapRaw = raw;
     // 00.09.001 (F2): leaving EXAMPLE DATA for a real snapshot drops the example's weekly totals; only the stored real history is kept
     if (wasExample && !s.example) { let h = []; try { h = (await DB.get("history")) || []; } catch (e) { h = []; } S.history = Array.isArray(h) ? h.filter(x => x && !x.example) : []; }
-    await calForSnapshot(s); await eventsForSnapshot(s); await loadLinks();
+    await calForSnapshot(s); await eventsForSnapshot(s); await loadLinks(); await timeForSnapshot(s); await loadReports();
     const cur = { generated_at: s.generatedAt, totals: R.totals(s.items, ctx()) };
     S.history = R.mergeHistory(R.mergeHistory(S.history, s.history), [cur]);
     if (!s.example) await DB.set("history", S.history);
@@ -334,10 +335,10 @@
   const isSnapName = n => SNAP_NAMES.includes(n) || /^inbox-snapshot(?:[^a-z0-9][^/]*)?\.jso?n?$/i.test(n);
   const isLogName = n => LOG_NAMES.includes(n) || /^notebook-log(?:[^a-z0-9][^/]*)?\.js$/i.test(n);
   const CAL_NAME = "calendar-snapshot.json", TRIPS_NAME = "trips.json", PROJ_NAME = "projects.json", STORE_NAME = "projects-store.json", ACC_NAME = "accounts-store.json", CONTACTS_NAME = "contacts.json", EVENTS_NAME = "events-store.json", LINKS_NAME = "links.json";   // 00.09.000: account plans + contacts, encrypted only   // 00.07.000: optional Planner export feed + the Projects store (source of truth), both encrypted only
-  const FEED_READ = { calendar: raw => R.readCalendar(raw), trips: raw => R.readTrips(raw), projects: raw => R.readProjects(raw), projstore: raw => R.readStore(raw), accstore: raw => A.readAccStore(raw), contacts: raw => A.readContacts(raw), events: raw => E.readEventsStore(raw), links: raw => E.readLinksStore(raw) };
+  const FEED_READ = { calendar: raw => R.readCalendar(raw), trips: raw => R.readTrips(raw), projects: raw => R.readProjects(raw), projstore: raw => R.readStore(raw), accstore: raw => A.readAccStore(raw), contacts: raw => A.readContacts(raw), events: raw => E.readEventsStore(raw), links: raw => E.readLinksStore(raw), timestore: raw => TL.readStore(raw), reports: raw => TM.readStore(raw) };
   const stampOf = raw => raw.generated_at || raw.updated_at;
     // 00.06.000: calendar / travel assistants feeds (encrypted only)
-  const purposeOf = n => R2.isTimeFile(n) ? "time" : n === CAL_NAME ? "calendar" : n === TRIPS_NAME ? "trips" : n === PROJ_NAME ? "projects" : n === STORE_NAME ? "projstore" : n === ACC_NAME ? "accstore" : n === CONTACTS_NAME ? "contacts" : n === EVENTS_NAME ? "events" : n === LINKS_NAME ? "links" : isSnapName(n) ? "snapshot" : isLogName(n) ? "log" : null;
+  const purposeOf = n => n === "time-store.json" ? "timestore" : n === "reports-store.json" ? "reports" : R2.isTimeFile(n) ? "time" : n === CAL_NAME ? "calendar" : n === TRIPS_NAME ? "trips" : n === PROJ_NAME ? "projects" : n === STORE_NAME ? "projstore" : n === ACC_NAME ? "accstore" : n === CONTACTS_NAME ? "contacts" : n === EVENTS_NAME ? "events" : n === LINKS_NAME ? "links" : isSnapName(n) ? "snapshot" : isLogName(n) ? "log" : null;
   async function writeText(name, text) {
     const fh = await S.dir.getFileHandle(name, { create: true });
     const w = await fh.createWritable();            // Chromium writes to a temporary swap file; close() swaps it in (atomic)
@@ -913,7 +914,7 @@
 
   // ---------- render ----------
   function render() {
-    renderHeader();
+    renderHeader(); renderTimer();
     document.querySelectorAll(".view").forEach(v => v.classList.toggle("hidden", v.id !== "view-" + S.view));
     document.querySelectorAll(".tab").forEach(t => t.setAttribute("aria-selected", String(t.dataset.view === S.view)));
     if (!S.snap) return;
@@ -923,6 +924,8 @@
     if (S.view === "projects") renderProjects();
     if (S.view === "accounts") renderAccounts();
     if (S.view === "calendar") renderEvCalendar();
+    if (S.view === "agenda") renderAgenda();
+    if (S.view === "manager") renderManagerExtras();
     if (S.view === "events") { renderEvents(); afterEventsRender(); }
     // Both sheets are always rendered so Ctrl+P from any tab prints a real sheet (F11).
     $("#sheet-print").innerHTML = sheet(false); $("#sheet-manager").innerHTML = sheet(true);
@@ -970,6 +973,7 @@
     if (S.trends) $("#trend-grid").innerHTML = R.TOTAL_KEYS.map(k => { const v = ser.map(p => p.totals[k] || 0);
       return `<div class="trow"><span>${LABEL[k]}</span><svg width="150" height="18"><polyline fill="none" stroke="#3a9ad6" stroke-width="1.4" points="${R.sparkPoints(v, 150, 18)}"/></svg><span class="mono">${v.join(" ") ? v[v.length - 1] : ""}</span></div>`; }).join("");
     renderCalendar();
+    { const tr = $("#timereport"); if (tr) tr.innerHTML = timeReportHtml(); }   // 00.11.000
     renderList(items.filter(R.isOpen), c);
     const cold = R.coldList(items, c);
     $("#coldlist").innerHTML = `<div class="rowhead"><span class="cap">Going Cold · ${cold.length} item${cold.length === 1 ? "" : "s"} with no activity in 14+ days</span><span class="faint" style="font-size:11px">activity = To Do edit, time logged on that item, or a meeting with the account</span></div>` +
@@ -1027,7 +1031,7 @@
         if (S.open[it.id]) html += `<div class="detail">${esc(it.list)} · ${it.due ? "next date " + R.dayLabel(it.due) : "no date"} · last activity ${la ? R.dayLabel(la) + " (" + R.diffDays(S.today, la) + " days ago)" : "none"}${it.withhold ? " · <b>Withheld</b> from Manager's sheet (To Do tag)" : ""}${it.importance === "high" ? " · high importance" : ""}${logged ? " · logged " + fmtMin(logged) : ""}</div>`;
       });
     });
-    $("#filterbar").insertAdjacentHTML("beforeend", `<span style="margin-left:auto"><button class="btn" data-logcall title="Phone, Teams chat, Teams call or Other — counted at once">+ Log call</button></span>`);
+    $("#filterbar").insertAdjacentHTML("beforeend", `<span style="margin-left:auto"><button class="btn" data-logcall title="Call, in-person meeting, email or Teams/text — counted at once">+ Log touch</button></span>`);
     $("#list").innerHTML = html || `<div class="detail">Nothing here${S.filter ? " for this filter" : ""}.</div>`;
   }
 
@@ -1775,6 +1779,10 @@ ${ask}
     if (!S.linksLoaded && S.vault && S.vault.key) track(loadLinks());   // B1: the key can arrive after the snapshot load; read the cache now
     if (feeds.links) track(useLinksFeed(feeds.links)); else if (S.linksDirty && !linksExample()) track(saveLinks(true));   // rev 3: Links merge per link
     if (feeds.events && !S.evExample && (!S.evStore || S.evExample || Date.parse(feeds.events.updated_at) > Date.parse(S.evStore.updated_at))) { S.evStore = E.readEventsStore(feeds.events); S.evExample = false; track(DB.set("eventsStore", feeds.events)); }
+    if (!S.tLoaded && S.vault && S.vault.key) track(loadTime().then(() => { if (S.tDirty) return saveTime(); }));   // 00.11.000: the key can arrive after the snapshot load
+    if (!S.rLoaded && S.vault && S.vault.key) track(loadReports());
+    if (feeds.timestore) useTimeFeed(feeds.timestore); else if (S.tDirty && tCanSave()) track(saveTime());
+    if (feeds.reports) useReportsFeed(feeds.reports);
     if (feeds.trips && (!S.tripsFeed || Date.parse(feeds.trips.generated_at) >= Date.parse(S.tripsFeed.generatedAt))) { S.tripsFeed = R.readTrips(feeds.trips); track(DB.set("trips", feeds.trips)); }
   }
   function stripModel(f) {
@@ -1953,7 +1961,7 @@ ${ask}
       <div class="t1list">${t1.map(a => `<label><input type="checkbox" data-t1="${esc(a.name)}" checked> ${esc(a.name)}</label>`).join("")}</div>
       <div class="vbtns"><button class="btn" id="t1o-no">Not now</button><button class="btn primary" id="t1o-yes">Star selected</button></div></div>` : "";
     const foc = document.activeElement && document.activeElement.closest && document.activeElement.closest(".frow"), keep = foc ? foc.dataset.row : null;
-    el.innerHTML = header + pinnedHtml("focus") + accFocusHtml() + evFocusHtml() + stripHtml(f) + offerHtml + sections + later + nd + `<div class="ffoot muted">Rows: ${f.sections.reduce((a, x) => a + x.rows.length, 0)} of ${f.sections.reduce((a, x) => a + x.total, 0)} (cap ${f.cap}) · keys: j/k move · d Done · s Snooze · t Log touch · Rev ${REV}</div>`;
+    el.innerHTML = header + pinnedHtml("focus") + quickLaunchHtml("focus") + accFocusHtml() + evFocusHtml() + stripHtml(f) + offerHtml + sections + later + nd + `<div class="ffoot muted">Rows: ${f.sections.reduce((a, x) => a + x.rows.length, 0)} of ${f.sections.reduce((a, x) => a + x.total, 0)} (cap ${f.cap}) · keys: j/k move · d Done · s Snooze · t Log touch · Rev ${REV}</div>`;
     if (S.snap) S.focusAnimated = true;
     if (keep) { const r = el.querySelector(`.frow[data-row="${CSS.escape(keep)}"]`); if (r) r.focus(); }
   }
@@ -1998,7 +2006,7 @@ ${ask}
   function focusTouch(btn) {
     const row = btn.closest(".frow"), acct = row.dataset.acct || null, person = row.dataset.person || "";
     const acc = acct && S.snap.accounts.find(a => a.name === acct), aud = acc && acc.domains.length ? R.guessAudience(acc.domains, S.rules).value : "Owner/operator";
-    logCall(btn, { title: "Log touch", sub: `${acct || "No account"}${person ? " · " + person : ""} · counts as a touch for Going cold`, account: acct, note: person, audience: aud, ok: "Log touch" });
+    logTouch(btn, { account: acct, note: person, audience: aud });   // 00.11.000: the Log Touch dialog
   }
   function goSection(key) {
     const h = document.getElementById("fh-" + key); if (!h) return;
@@ -2126,6 +2134,285 @@ ${ask}
     printProjects: () => doPrint("projects"), exportProjects: () => exportProjects("csv"), exportProjectsXlsx: () => exportProjects("xlsx"), exportProjectsGraph: () => exportProjects("graph"), importPlanner: () => importPlanner(), importProjectJson: () => pickFile(".json,application/json", (n, t) => importProjectJson(n, t)),
     hHelp: () => openHelp("help"), hHow: () => openHelp("howdoi"), hFaq: () => openHelp("faq"), hQuick: () => openHelp("quick"), hRev: () => openHelp("rev"), hKeys: () => openHelp("keys"),
   };
+  // ======================================================================================================================
+  // 00.11.000: time tracking (header timer bar, Add past, time report, snapshot feed), Log Touch, Agenda, Quick Launch and
+  // Copy for manager.  The time store is encrypted only (time-store.json.enc and the SECRET "timeStore" cache); nothing of it is
+  // written while locked or without an encrypted Data folder, and it never goes into Export local data.
+  // ======================================================================================================================
+  const TL = DASH.timelog, AG = DASH.agenda, TM = DASH.mreport;
+  const TIMESTORE_NAME = "time-store.json", REPORTS_NAME = "reports-store.json";
+  Object.assign(S, { tstore: TL.emptyStore(), tLoaded: false, timer: null, tLast: null, tg: "work", tType: "research", tAcc: "", tProj: "", tPast: false, tRep: "week", tGroups: new Set(TL.GROUPS), tDirty: false, tNotice: null,
+    ag: { mode: "week", anchor: null }, rstore: null, rLoaded: false, mgrMonth: null, mgrTicks: null, mgrOpen: true });
+  const tExample = () => !!(S.snap && S.snap.example);
+  const tCanSave = () => !tExample() && !!(S.vault && S.vault.kr && S.vault.key);   // encrypted and unlocked only: never plaintext
+  const accLabel = a => TL.accountLabel(a, CFG);
+  function tAccounts() { const names = S.snap ? S.snap.accounts.map(a => a.name) : []; return TL.FIXED_ACCOUNTS.concat(names.filter(n => !TL.FIXED_ACCOUNTS.includes(n)).sort((a, b) => a.localeCompare(b))); }
+  function tProjects() { const ps = S.projStore && Array.isArray(S.projStore.plans) ? S.projStore.plans.map(p => p.name).filter(Boolean) : []; return [...new Set(ps)].sort((a, b) => a.localeCompare(b)); }
+  const tEntries = () => TL.live(S.tstore);
+  async function loadTime() {
+    if (S.tLoaded) return; if (S.vault && S.vault.kr && !S.vault.key) return;   // locked: nothing is read
+    if (tExample()) { S.tLoaded = true; if (!Object.keys(S.tstore.entries).length) S.tstore = exampleTime(); return; }
+    try { const c = await DB.get("timeStore"); if (c && c.schema_version === 1) S.tstore = TL.merge(S.tstore, TL.readStore(c)); } catch (e) { /* a bad cache re-syncs from the folder */ }
+    try { const tm = await DB.get("timeTimer"); if (tm && !TL.timerProblem(tm)) { S.timer = tm; S.tg = tm.group; S.tType = tm.type; S.tAcc = tm.account; S.tProj = tm.project || ""; } } catch (e) { /* ignore */ }
+    try { const l = await DB.get("timeLast"); if (l && TL.GROUPS.includes(l.group)) S.tLast = l; } catch (e) { /* ignore */ }
+    S.tLoaded = true;
+  }
+  function exampleTime() {   // fictional entries for EXAMPLE DATA (screen only, never saved)
+    let s = TL.emptyStore(); const at = "2026-01-01T00:00:00Z", w = TL.weekRange(S.today).from, d = i => R.addDays(w, i);
+    [[0, "work", "design", 150, "Northwind Example", "Hall 2 layout"], [0, "touch", "call", 30, "Contoso Example", null], [1, "travel", "driving", 90, "Travel/General", null], [1, "work", "review_qa", 120, "Internal", "Template refresh"],
+     [2, "relationship", "meal", 75, "Fabrikam Example", null], [2, "touch", "email", 25, "Northwind Example", "Hall 2 layout"], [3, "work", "quoting_bom", 95, "Contoso Example", "Site walkdown"], [3, "travel", "flight", 160, "Travel/General", null],
+     [4, "work", "coordination", 60, "Fabrikam Example", null], [4, "touch", "in_person", 45, "Fabrikam Example", null], [-10, "work", "research", 200, "Internal", null]]
+      .forEach(([i, gp, ty, m, a, p], k) => { const day = d(i); s = TL.put(s, { id: "T-" + day.replace(/-/g, "") + "-" + (0xa0000000 + k).toString(16), date: day, start: null, minutes: m, group: gp, type: ty, account: a, project: p, notes: "", x_text: "", source: "example" }, at); });
+    return s;
+  }
+  async function saveTime() {
+    if (!tCanSave()) { if (!tExample()) S.tDirty = true; return; }
+    S.tDirty = false; await track(DB.set("timeStore", S.tstore));
+    if (S.dir && S.granted !== false) {
+      try { const h = await S.dir.getFileHandle(TIMESTORE_NAME + ".enc"); const cur = TL.readStore(JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, await (await h.getFile()).text(), "timestore"))); S.tstore = TL.merge(S.tstore, cur); } catch (e) { /* no file yet: write ours */ }   // 00.11.000 (00.10.000 open item): merge the folder copy first
+      await track(writeVerified(TIMESTORE_NAME + ".enc", "timestore", JSON.stringify(S.tstore)));
+      await track(DB.set("timeStore", S.tstore));
+    }
+  }
+  function useTimeFeed(raw) { if (tExample() || !raw) return; try { const inc = TL.readStore(raw), m = TL.merge(S.tstore, inc); const changed = !TL.same(m, S.tstore), stale = !TL.same(m, inc); S.tstore = m; if (changed) track(DB.set("timeStore", S.tstore)); if (stale || S.tDirty) track(saveTime()); } catch (e) { S.fileProblems[TIMESTORE_NAME + ".enc"] = `${TIMESTORE_NAME}.enc: ${e.message}`; } }
+  // Snapshot "time" block (Q1A): merged by id on unlock; the same id is a correction and the newest generated_at wins.
+  async function timeForSnapshot(s) {
+    await loadTime(); if (!s || s.example || !s.time) return;
+    if (!tCanSave()) { S.tNotice = "🔒 Time entries from the snapshot are waiting.  Unlock to add them."; return; }
+    const r = TL.mergeFeed(S.tstore, s.time); S.tstore = r.store; S.tNotice = null;
+    if (r.added || r.corrected) { await saveTime(); toast(`Time log: ${r.added} entr${r.added === 1 ? "y" : "ies"} added${r.corrected ? `, ${r.corrected} corrected` : ""} from the snapshot${r.review ? ` · ${r.review} need review` : ""}.`); }
+  }
+  function tAdd(e) { const p = TL.entryProblem(e); if (p) { toast("⚠ Not logged: " + p + "."); return false; } S.tstore = TL.put(S.tstore, e, nowDate().toISOString()); track(saveTime()); return true; }
+  const zoneDay = iso => R.isoDay(iso), zoneHm = iso => { const h = R.hourCT(iso), hh = Math.floor(h), mm = Math.min(59, Math.round((h - hh) * 60)); return String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0"); };   // the dashboard zone
+  // ---------- header timer bar (design timer-option-3) ----------
+  const opt = (v, l, sel) => `<option value="${esc(v)}"${v === sel ? " selected" : ""}>${esc(l)}</option>`;
+  function renderTimer() {
+    const el = $("#timerbar"); if (!el) return;
+    if (!S.snap) { el.innerHTML = ""; return; }
+    const run = !!S.timer, g0 = run ? S.timer.group : S.tg, types = TL.TYPES[g0], ty = run ? S.timer.type : (types.includes(S.tType) ? S.tType : types[0]), acc = run ? S.timer.account : S.tAcc, proj = run ? (S.timer.project || "") : S.tProj;
+    const accs = tAccounts(), projs = tProjects(), dis = run ? " disabled" : "";
+    const lock = S.vault && S.vault.kr && !S.vault.key ? `<span class="tbnote warnt">🔒 Unlock to save time</span>` : tExample() ? `<span class="tbnote faint">EXAMPLE DATA · not saved</span>` : !(S.vault && S.vault.kr) ? `<span class="tbnote warnt" title="Time is saved only encrypted.  File → Encryption… turns it on.">⚠ Not saved until the Data folder is encrypted</span>` : "";
+    const review = tEntries().filter(e => e.review).length;
+    el.innerHTML = `<div class="tbrow" role="group" aria-label="Time tracking">
+      <div class="tbseg" role="radiogroup" aria-label="Group">${TL.GROUPS.map(k => `<button type="button" role="radio" class="tbg${k === g0 ? " on" : ""}" data-tg="${k}" aria-checked="${k === g0}"${dis}>${k === "relationship" ? "Relation" : TL.GROUP_LABEL[k]}</button>`).join("")}</div>
+      <select id="tb-type" aria-label="Type"${dis}>${types.map(k => opt(k, TL.TYPE_LABEL[k], ty)).join("")}</select>
+      <select id="tb-acc" class="${acc ? "" : "need"}" aria-label="Account (required)" aria-invalid="${!acc}"${dis}>${opt("", "Pick an account…", acc)}${accs.map(a => opt(a, accLabel(a), acc)).join("")}</select>${acc ? "" : `<span class="tbreq" aria-hidden="true">!</span>`}
+      <select id="tb-proj" aria-label="Project (optional)"${dis}>${opt("", "— No project —", proj)}${projs.map(p => opt(p, p, proj)).join("")}</select>
+      <span id="tb-clock" class="tbclock mono${run ? " run" : ""}" aria-live="off">${TL.clock(run ? TL.elapsed(S.timer, nowDate().getTime()) : 0)}</span>
+      <button type="button" id="tb-go" class="tbgo${run ? " stop" : ""}" ${!run && !acc ? 'aria-disabled="true" title="Pick an account first"' : ""}>${run ? "Stop" : "Start"}</button>
+      <span class="tbsep"></span>
+      <button type="button" id="tb-resume" class="btn" ${S.tLast && !run ? "" : "disabled"} title="${S.tLast ? esc(`${TL.TYPE_LABEL[S.tLast.type]} · ${accLabel(S.tLast.account)}${S.tLast.project ? " · " + S.tLast.project : ""}`) : "Nothing to resume yet"}">↻ Resume last</button>
+      <button type="button" id="tb-past" class="btn${S.tPast ? " on" : ""}" aria-expanded="${S.tPast}">+ Add past</button>
+      ${review ? `<button type="button" class="chip warnt" id="tb-review" title="Entries from the snapshot with an account the dashboard doesn't know">${review} need review</button>` : ""}${lock}${S.tNotice ? `<span class="tbnote warnt">${esc(S.tNotice)}</span>` : ""}</div>
+      ${S.tPast ? `<div class="tbrow tbpast" role="group" aria-label="Add a past entry"><span class="cap">Add past entry</span>
+        <input id="tp-dur" class="mono" size="7" value="1:00" aria-label="Duration (for example 90, 1h 30m or 1:30)"><input id="tp-date" type="date" value="${S.today}" aria-label="Date">
+        <select id="tp-acc" class="${S.tpAcc ? "" : "need"}" aria-label="Account (required)">${opt("", "Pick an account…", S.tpAcc || "")}${accs.map(a => opt(a, accLabel(a), S.tpAcc || "")).join("")}</select>
+        <select id="tp-proj" aria-label="Project (optional)">${opt("", "— No project —", "")}${projs.map(p => opt(p, p, "")).join("")}</select>
+        <select id="tp-type" aria-label="Type">${TL.GROUPS.map(k => `<optgroup label="${TL.GROUP_LABEL[k]}">${TL.TYPES[k].map(t => opt(k + ":" + t, TL.TYPE_LABEL[t], g0 + ":" + ty)).join("")}</optgroup>`).join("")}</select>
+        <button type="button" id="tp-save" class="btn primary">Save entry</button><span id="tp-err" class="warnt" role="alert"></span></div>` : ""}`;
+  }
+  function tick() { const c = $("#tb-clock"); if (c && S.timer) c.textContent = TL.clock(TL.elapsed(S.timer, nowDate().getTime())); }
+  setInterval(tick, 1000);
+  async function timerStart(from) {
+    const t = Object.assign({ started_at: nowDate().toISOString() }, from || { group: S.tg, type: TL.TYPES[S.tg].includes(S.tType) ? S.tType : TL.TYPES[S.tg][0], account: S.tAcc, project: S.tProj || null });
+    const p = TL.timerProblem(t); if (p) { toast("⚠ " + p[0].toUpperCase() + p.slice(1) + " first."); const a = $("#tb-acc"); if (a) a.focus(); return; }
+    S.timer = t; S.tg = t.group; S.tType = t.type; S.tAcc = t.account; S.tProj = t.project || ""; if (!tExample()) track(DB.set("timeTimer", t)); renderTimer();
+  }
+  async function timerStop() {
+    if (!S.timer) return; const e = TL.stopEntry(S.timer, nowDate().getTime(), zoneDay, zoneHm);
+    S.tLast = { group: S.timer.group, type: S.timer.type, account: S.timer.account, project: S.timer.project || null }; S.timer = null;
+    if (!tExample()) { track(DB.set("timeTimer", undefined)); track(DB.set("timeLast", S.tLast)); }
+    if (tAdd(e)) toast(`Logged ${TL.fmtMin(e.minutes)} · ${TL.TYPE_LABEL[e.type]} · ${accLabel(e.account)}.`); render();
+  }
+  function addPast() {
+    const err = m => { $("#tp-err").textContent = m; }, mins = TL.parseDuration($("#tp-dur").value), acc = $("#tp-acc").value, [gp, ty] = $("#tp-type").value.split(":"), day = $("#tp-date").value;
+    if (!mins) return err("Duration: 1 minute to 24 hours (90, 1h 30m or 1:30)."); if (!acc) { $("#tp-acc").classList.add("need"); return err("Pick an account."); } if (!TL.isDay(day)) return err("Pick a date.");
+    if (tAdd({ id: TL.newId(day), date: day, start: null, minutes: mins, group: gp, type: ty, account: acc, project: $("#tp-proj").value || null, notes: "", x_text: "", source: "manual" })) { S.tPast = false; S.tpAcc = ""; toast(`Logged ${TL.fmtMin(mins)} · ${TL.TYPE_LABEL[ty]} · ${accLabel(acc)}.`); render(); }
+  }
+  function reviewDialog() {
+    const rows = tEntries().filter(e => e.review); if (!rows.length) return;
+    const accs = tAccounts();
+    dialog("tl-review", `<h2>Time entries to review</h2><p class="faint">These came from the snapshot with an account the dashboard doesn't know.  They're kept and counted; pick the account they belong to, or keep the name as is.</p>
+      <table class="tbl"><thead><tr><th>Date</th><th>Minutes</th><th>Type</th><th>Account given</th><th>Use account</th></tr></thead><tbody>${rows.map(e => `<tr><td class="mono">${esc(e.date)}</td><td class="mono">${e.minutes}</td><td>${esc(TL.TYPE_LABEL[e.type])}</td><td>${esc(e.account)}</td><td><select data-rv="${esc(e.id)}">${opt("", "Keep as is", "")}${accs.map(a => opt(a, accLabel(a), "")).join("")}</select></td></tr>`).join("")}</tbody></table>
+      <div class="dlgbtns"><button class="btn" id="rv-cancel">Cancel</button><button class="btn primary" id="rv-ok">Save</button></div>`, d => {
+      d.querySelector("#rv-cancel").onclick = () => d.remove();
+      d.querySelector("#rv-ok").onclick = () => { const now = nowDate().toISOString(); d.querySelectorAll("[data-rv]").forEach(s => { const e = S.tstore.entries[s.dataset.rv]; S.tstore = TL.put(S.tstore, Object.assign({}, e, { account: s.value || e.account, review: false }), now); }); track(saveTime()); d.remove(); render(); };
+    });
+  }
+  // ---------- time report (Totals, design report-option-1) ----------
+  function timeReportHtml() {
+    const rg = S.tRep === "month" ? TL.monthRange(S.today) : TL.weekRange(S.today), r = TL.report(tEntries(), Object.assign({ groups: [...S.tGroups], accountLabel: accLabel }, rg));
+    const row = x => `<tr><td>${esc(x.label)}</td><td class="mono r">${TL.fmtMin(x.minutes)}</td><td class="mono r faint">${x.pct}%</td></tr>`;
+    const card = (title, list, extra) => `<section class="trcard"><h3 class="cap">${title}</h3>${extra || ""}${list.length ? `<table class="trtab"><tbody>${list.map(row).join("")}</tbody></table>` : `<p class="faint">No time logged${S.tRep === "month" ? " this month" : " this week"}.</p>`}</section>`;
+    const bar = r.total ? `<div class="trbar" aria-hidden="true">${r.byGroup.filter(x => x.minutes).map(x => `<span class="g-${x.key}" style="width:${x.minutes / r.total * 100}%"></span>`).join("")}</div>` : "";
+    const groups = `<div class="trbig mono">${TL.fmtMin(r.total)}</div>${bar}<div class="trgroups">${r.byGroup.map(x => `<span class="g-${x.key}"><i></i>${x.label} <b class="mono">${TL.fmtMin(x.minutes)}</b> <span class="faint">(${x.pct}%)</span></span>`).join("")}</div>`;
+    return `<div class="rowhead trhead"><span><span class="trtitle">Time report</span> <span class="faint mono">${esc(R.dayLabel(rg.from))} – ${esc(R.dayLabel(rg.to))}${tExample() ? " · EXAMPLE DATA" : ""}</span></span>
+      <span class="trtools"><span class="trfilter" role="group" aria-label="Groups shown">${TL.GROUPS.map(k => `<label><input type="checkbox" data-trg="${k}"${S.tGroups.has(k) ? " checked" : ""}> ${TL.GROUP_LABEL[k]}</label>`).join("")}${r.hidden ? `<span class="faint mono">hiding ${TL.fmtMin(r.hidden)}</span>` : ""}</span>
+      <span class="seg" role="group" aria-label="Period"><button class="btn${S.tRep === "week" ? " on" : ""}" data-trm="week" aria-pressed="${S.tRep === "week"}">This week</button><button class="btn${S.tRep === "month" ? " on" : ""}" data-trm="month" aria-pressed="${S.tRep === "month"}">This month</button></span>
+      <button class="btn" data-act="exportTime" title="Plain CSV in your Downloads.  Restricted - Internal Use Only.">Export CSV</button></span></div>
+      <div class="trgrid">${card("Time by group", [], groups).replace(/<p class="faint">No time logged[^<]*<\/p>/, "")}${card("Activity types", r.byType)}${card("Accounts", r.byAccount)}${card("Projects", r.byProject)}</div>
+      <div class="faint" style="font-size:11px">Travel and meals count their full time; untick a group to leave it out.  Percentages are of the time shown.  No dollar figures.</div>`;
+  }
+  // ---------- Log Touch (design touch-option-1; replaces Log call) ----------
+  const TOUCH_ICON = { call: "☎", in_person: "👥", email: "✉", teams_text: "💬" };
+  const TOUCH_KIND = { call: "Phone", in_person: "Other", email: "Other", teams_text: "Teams chat" };   // the older time-file "kind", kept for Workload and the CSV
+  function logTouch(anchor, pre) {
+    pre = pre || {}; closePop(); const accs = tAccounts(); let type = pre.type || "call";
+    dialog("touchdlg", `<div class="tdhead"><h2>Log Touch</h2><button class="btn" id="td-x" aria-label="Close">✕</button></div>
+      <div class="cap">Select type</div><div class="tdtypes" role="radiogroup" aria-label="Touch type">${TL.TYPES.touch.map(k => `<button type="button" role="radio" class="tdtype${k === type ? " on" : ""}" data-tdt="${k}" aria-checked="${k === type}"><span class="tdi" aria-hidden="true">${TOUCH_ICON[k]}</span>${esc(TL.TYPE_LABEL[k])}</button>`).join("")}</div>
+      <div class="tdgrid"><label>Account<select id="td-acc" class="${pre.account ? "" : "need"}">${opt("", "Pick an account…", pre.account || "")}${accs.map(a => opt(a, accLabel(a), pre.account || "")).join("")}</select></label>
+        <label>Contact<input id="td-who" maxlength="80" value="${esc(pre.note || "")}" placeholder="e.g. Sam K."></label>
+        <label>Date<input id="td-date" type="date" value="${S.today}"></label><label>Duration (minutes)<input id="td-min" type="number" min="1" max="720" step="5" value="${pre.minutes || 15}"></label></div>
+      <label>Notes (stay encrypted in this dashboard)<textarea id="td-notes" maxlength="500" rows="3" placeholder="Summarize the interaction…"></textarea></label>
+      <label class="tdalso"><input type="checkbox" id="td-time" checked> Also add to time log</label>
+      <div class="tderr warnt" id="td-err" role="alert"></div>
+      <div class="dlgbtns"><button class="btn" id="td-cancel">Cancel</button><button class="btn primary" id="td-ok">Log touch</button></div>`, d => {
+      d.classList.add("touchdlg");
+      d.querySelectorAll("[data-tdt]").forEach(b => b.onclick = () => { type = b.dataset.tdt; d.querySelectorAll("[data-tdt]").forEach(x => { x.classList.toggle("on", x === b); x.setAttribute("aria-checked", String(x === b)); }); });
+      d.querySelector("#td-acc").onchange = e => e.target.classList.toggle("need", !e.target.value);
+      d.querySelector("#td-x").onclick = d.querySelector("#td-cancel").onclick = () => d.remove();
+      d.querySelector("#td-ok").onclick = () => {
+        const err = m => { d.querySelector("#td-err").textContent = m; }, acc = d.querySelector("#td-acc").value, m = Math.round(+d.querySelector("#td-min").value), day = d.querySelector("#td-date").value, who = d.querySelector("#td-who").value.trim(), notes = d.querySelector("#td-notes").value.trim();
+        if (!acc) { d.querySelector("#td-acc").classList.add("need"); return err("Pick an account."); }
+        if (!(m >= 1 && m <= 720)) return err("Minutes: 1 to 720."); if (!TL.isDay(day)) return err("Pick a date.");
+        if ([who, notes].some(x => R.hasMoney(x) || R.hasEmail(x))) return err("No dollar figures or email addresses, please.");
+        const snapAcc = S.snap.accounts.find(a => a.name === acc), aud = pre.audience || (snapAcc && snapAcc.domains.length ? R.guessAudience(snapAcc.domains, S.rules).value : "Owner/operator");
+        S.entries.push({ id: "i" + Date.now() + Math.random().toString(36).slice(2, 6), taskId: null, eventId: null, date: day, minutes: m, kind: TOUCH_KIND[type], touch: type, note: who,
+          audience: aud, subject: "Account strategy", account: TL.FIXED_ACCOUNTS.includes(acc) ? null : acc, source: "interaction", origin: "log-touch", confirmed: true, guessed: {}, title: `${TL.TYPE_LABEL[type]}${who ? ": " + who : ""}` });
+        saveEntries();
+        if (d.querySelector("#td-time").checked) tAdd({ id: TL.newId(day), date: day, start: null, minutes: m, group: "touch", type, account: acc, project: null, notes: [who, notes].filter(Boolean).join(" · ").slice(0, 500), x_text: "", source: "touch" });
+        d.remove(); toast(`Logged ${TL.TYPE_LABEL[type].toLowerCase()} · ${accLabel(acc)}${d.querySelector("#td-time").checked ? " · added to the time log" : ""}.`); render(); if (pre.after) pre.after();
+      };
+      setTimeout(() => d.querySelector(".tdtype.on").focus(), 0);
+    });
+  }
+  // ---------- Agenda (design agenda-option-1) ----------
+  function agendaSrc() { return { meetings: S.snap ? S.snap.calendar : [], events: (() => { try { return evModel().list; } catch (e) { return []; } })(), trips: S.tripsFeed ? S.tripsFeed.trips : [] }; }
+  function renderAgenda() {
+    const el = $("#view-agenda"); if (!el) return;
+    const a = S.ag; if (!a.anchor) a.anchor = S.today; const m = AG.model(a.mode, a.anchor, S.today, agendaSrc());
+    const md = d => { const x = new Date(d + "T12:00:00Z"); return x.toLocaleString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }); };
+    const range = a.mode === "month" ? new Date(a.anchor.slice(0, 7) + "-15T12:00:00Z").toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" }) : a.mode === "day" ? `${AG.dowOf(m.from)} ${md(m.from)}` : `${md(m.from)} – ${md(m.to)}`;
+    const head = `<div class="aghead"><div><h2>${a.mode === "month" ? "Monthly" : a.mode === "day" ? "Daily" : "Weekly"} Agenda</h2><div class="faint mono agsub">${esc(range)} · times in CT${S.evExample || tExample() ? " · EXAMPLE DATA" : ""}</div></div>
+      <div class="agtools"><span class="seg" role="group" aria-label="View">${["day", "week", "month"].map(k => `<button class="btn${a.mode === k ? " on" : ""}" data-agm="${k}" aria-pressed="${a.mode === k}">${k[0].toUpperCase() + k.slice(1)}</button>`).join("")}</span>
+      <button class="btn" data-agstep="-1" aria-label="Previous">‹</button><button class="btn" data-agstep="0">Today</button><button class="btn" data-agstep="1" aria-label="Next">›</button></div></div>`;
+    const bar = x => `<button class="agbar k-${x.kind}${x.flag ? " f-" + x.flag : ""}" ${x.id && x.kind === "event" ? `data-evgo="${esc(x.id)}"` : "disabled"} title="${esc(x.title)}">${x.kind === "event" ? (x.flag === "red" ? '<span class="agflag" aria-label="needs action">⚑</span>' : x.flag === "amber" ? '<span class="agflag am" aria-label="to check">⚑</span>' : "") : "🏨 "}${esc(x.title)}</button>`;
+    let body = "";
+    if (a.mode === "month") {
+      body = `<table class="agmonth" role="grid"><thead><tr>${["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(w => `<th>${w}</th>`).join("")}</tr></thead><tbody>${m.weeks.map(w => `<tr>${w.map(c => `<td class="${c.inMonth ? "" : "out"}${c.today ? " today" : ""}"><div class="agmd mono">${Number(c.day.slice(8))}${c.today ? " · Today" : ""}</div>${c.allDay.slice(0, 2).map(bar).join("")}${c.timed.slice(0, 3).map(t => `<div class="agmt k-${t.kind}"><span class="mono">${esc(t.time.replace(/ C[DS]?T$/, ""))}</span> ${esc(t.title)}</div>`).join("")}${c.allDay.length + c.timed.length > 5 ? `<div class="faint">+${c.allDay.length + c.timed.length - 5} more</div>` : ""}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    } else {
+      const cols = m.days.length, b = m.band, H = 44, cs = `grid-template-columns:64px repeat(${cols},minmax(0,1fr))`;
+      const dh = m.days.map(d => `<div class="agdh${d.today ? " today" : ""}"><span class="cap">${d.today ? "Today · " : ""}${d.dow}</span><b>${Number(d.day.slice(8))}</b></div>`).join("");
+      const ad = m.days.map(d => `<div class="agad${d.today ? " today" : ""}">${d.allDay.map(bar).join("")}</div>`).join("");
+      let grid = "";
+      if (b) { const hrs = []; for (let h = b.from; h < b.to; h++) hrs.push(h);
+        grid = `<div class="aggrid" style="${cs}"><div class="aghours">${hrs.map(h => `<div class="aghr mono" style="height:${H}px">${String(h % 12 || 12).padStart(2, "0")}:00 ${h < 12 ? "AM" : "PM"}</div>`).join("")}</div>${m.days.map(d => `<div class="agcol${d.today ? " today" : ""}" style="height:${hrs.length * H}px">${hrs.map((h, i) => `<i class="agline" style="top:${i * H}px"></i>`).join("")}${d.timed.map(t => { const top = (Math.max(t.h0, b.from) - b.from) * H, ht = Math.max(20, (Math.min(t.h1, b.to) - Math.max(t.h0, b.from)) * H - 2);
+          return `<div class="agev k-${t.kind}" style="top:${top}px;height:${ht}px" title="${esc(t.time + " · " + t.title + (t.location ? " · " + t.location : ""))}"><b>${t.kind === "flight" ? "✈ " : ""}${esc(t.title)}</b><span class="mono">${esc(t.time)}</span></div>`; }).join("")}</div>`).join("")}</div>`; }
+      else grid = `<div class="agempty faint">No timed meetings or flights ${a.mode === "day" ? "this day" : "this week"}.</div>`;
+      body = `<div class="agwrap"><div class="agrowh" style="${cs}"><div></div>${dh}</div><div class="agrowh agallday" style="${cs}"><div class="cap aglab">All day</div>${ad}</div>${grid}</div>`;
+    }
+    el.innerHTML = head + body + `<div class="faint projfoot">${S.tripsFeed ? "Flights and hotels come from the travel feed." : "Travel feed not loaded: no flight or hotel blocks."}  ⚑ red = an event that needs action.  Meetings and flights are shown in Central Time.  Rev ${REV}</div>`;
+  }
+  function agendaClick(e) {
+    const mb = e.target.closest("[data-agm]"); if (mb) { S.ag.mode = mb.dataset.agm; renderAgenda(); return true; }
+    const sb = e.target.closest("[data-agstep]"); if (sb) { const d = +sb.dataset.agstep; S.ag.anchor = d ? AG.step(S.ag.mode, S.ag.anchor || S.today, d) : S.today; renderAgenda(); return true; }
+    return false;
+  }
+  // ---------- Quick Launch (design quicklaunch-option-1) and Copy for manager ----------
+  // The manager's name (e.g. for the "<Name> report" button) comes from config.local.js managerName only; the repo says "Manager".
+  const mgrName = () => typeof CFG.managerName === "string" && /^[\p{L} .'-]{1,30}$/u.test(CFG.managerName.trim()) ? CFG.managerName.trim() : "Manager";
+  const QL = () => [["capture", "⊕", "Capture", "Log a touch"], ["sam", "☑", "SAM bullets", "Open this month's approved notebook file"], ["cold", "🌡", "Going cold", "Key accounts going cold on Daily Focus"], ["brief", "💼", "Account brief", "Open the Accounts tab"],
+    ["events", "📅", "Events", "Open the Events list"], ["reports", "📊", "Reports", "Time report on Totals"], ["mgr", "📄", mgrName() + " report", "Copy for " + mgrName() + " on the Manager's sheet"]];
+  const quickLaunchHtml = where => `<nav class="ql" aria-label="Quick Launch">${QL().map(([k, i, l, tip]) => `<button class="qlb${k === "mgr" && where === "manager" && S.mgrOpen ? " on" : ""}" data-ql="${k}" title="${esc(tip)}"><span class="qli" aria-hidden="true">${i}</span>${esc(l)}</button>`).join("")}</nav>`;
+  function quickLaunch(k, btn) {
+    if (k === "capture") return logTouch(btn);
+    if (k === "sam") return ACTIONS.samLink();
+    if (k === "cold") { setView("focus"); return goSection("cold"); }
+    if (k === "brief") return setView("accounts");
+    if (k === "events") return setView("events");
+    if (k === "reports") { setView("dashboard"); const r = $("#timereport"); if (r) r.scrollIntoView({ block: "start" }); return; }
+    if (k === "mgr") { S.mgrOpen = true; setView("manager"); const p = $("#mgrrep"); if (p) p.scrollIntoView({ block: "start" }); }
+  }
+  async function loadReports() {
+    if (S.rLoaded) return; if (S.vault && S.vault.kr && !S.vault.key) return;
+    if (tExample()) { S.rLoaded = true; if (!S.rstore && await loadScript("examples/example-sam-activity.js") && window.DASH_EXAMPLE_SAM) { try { S.rstore = TM.addReport(null, TM.parse("2026-10.md", window.DASH_EXAMPLE_SAM), "2026-01-01T00:00:00Z"); S.rExample = true; } catch (e) { S.rstore = null; } } return; }
+    if (S.rExample) { S.rstore = null; S.rExample = false; }
+    try { const c = await DB.get("reportsStore"); if (c) S.rstore = TM.readStore(c); } catch (e) { /* ignore */ }
+    S.rLoaded = true;
+  }
+  function useReportsFeed(raw) { if (tExample() || !raw) return; try { const r = TM.readStore(raw); if (!S.rstore || Date.parse(r.updated_at) > Date.parse(S.rstore.updated_at || 0)) { S.rstore = r; S.rExample = false; track(DB.set("reportsStore", raw)); } } catch (e) { /* reported by the sync chip */ } }
+  async function importReportFiles(files) {
+    if (tExample()) { toast("⚠ Load your real data first: reports are never mixed with EXAMPLE DATA.  Nothing was imported."); return; }
+    if (!tCanSave()) { toast("⚠ Reports are saved only encrypted.  Connect an encrypted Data folder and unlock it first.  Nothing was imported."); return; }
+    let s = S.rstore || TM.emptyStore(), n = 0; const now = nowDate().toISOString(), errs = [];
+    for (const [name, text] of files) { try { const r = TM.parse(name, text); s = TM.addReport(s, r, now); n++; S.mgrMonth = r.month; S.mgrTicks = null; } catch (e) { errs.push(e.message); } }
+    if (errs.length) { toast("⚠ " + errs.join(" · ")); if (!n) return; }
+    S.rstore = s; await track(DB.set("reportsStore", s)); if (S.dir) await track(writeVerified(REPORTS_NAME + ".enc", "reports", JSON.stringify(s)));
+    toast(`Imported ${n} report${n === 1 ? "" : "s"}.`); S.mgrOpen = true; render();
+  }
+  function mgrRep() { const months = S.rstore ? Object.keys(S.rstore.months).sort() : []; if (!S.mgrMonth || !months.includes(S.mgrMonth)) S.mgrMonth = months.includes(TM.defaultMonth(S.today)) ? TM.defaultMonth(S.today) : months[months.length - 1] || TM.defaultMonth(S.today);
+    const rep = S.rstore && S.rstore.months[S.mgrMonth]; if (rep && (!S.mgrTicks || S.mgrTicks.m !== S.mgrMonth)) S.mgrTicks = { m: S.mgrMonth, t: TM.defaultTicks(rep) }; return { rep, months }; }
+  const nameLine = rep => (typeof CFG.reportNameLine === "string" && CFG.reportNameLine.trim() ? CFG.reportNameLine.trim() : null) || rep.nameLine;
+  function mgrHtml() {
+    if (!S.mgrOpen) return "";
+    const { rep, months } = mgrRep(), mname = ym => new Date(ym + "-15T12:00:00Z").toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+    const head = `<div class="tmhead"><div><h2>Copy for ${esc(mgrName() === "Manager" ? "manager" : mgrName())}</h2><div class="faint mono">${rep ? `Imported ${esc(R.dayLabel(R.isoDay(rep.imported_at)))} from ${esc(rep.file)}` : "Nothing imported yet"}${S.rExample ? " · EXAMPLE DATA" : ""}</div></div>
+      <div class="tmtools"><select id="tm-month" aria-label="Month">${(months.length ? months : [S.mgrMonth]).map(m => opt(m, mname(m), S.mgrMonth)).join("")}</select><button class="btn" data-act="importReport">Import</button><button class="btn" id="tm-close" aria-label="Close">✕</button></div></div>`;
+    if (!rep) return `<section id="mgrrep" class="mgrrep">${head}<p class="faint">Import the approved file <code>reports/sam-activity/${esc(S.mgrMonth)}.md</code> from the notebook to copy it here (File → Import report…).  The SAM bullets button opens it.</p></section>`;
+    const tk = S.mgrTicks.t, plain = TM.plain(rep, tk, nameLine(rep));
+    const sec = (s, i) => `<div class="tmsec"><div class="cap">${esc(s.heading)}</div>${s.items.map((it, j) => { const m = it.text.match(/^([^:]{1,60}):\s*([\s\S]*)$/);
+      return `<label class="tmitem${it.alt ? " alt" : ""}"><input type="checkbox" data-tmi="${i}:${j}"${tk[i][j] ? " checked" : ""}><span>${m ? `<b>${esc(m[1])}:</b> ${esc(m[2])}` : esc(it.text)}${it.alt ? ' <span class="chip">alternate</span>' : ""}${it.marked ? ' <span class="chip warnt">check</span>' : ""}</span></label>`; }).join("") || `<p class="faint">No bullets in this section.</p>`}</div>`;
+    const dropped = rep.dropped && (rep.dropped.money || rep.dropped.email) ? `<p class="warnt">Left out on import: ${rep.dropped.money ? rep.dropped.money + " with a dollar figure" : ""}${rep.dropped.money && rep.dropped.email ? ", " : ""}${rep.dropped.email ? rep.dropped.email + " with an email address" : ""}.</p>` : "";
+    return `<section id="mgrrep" class="mgrrep">${head}<div class="tmbody"><div class="tmlist">${rep.sections.map(sec).join("")}${dropped}
+      <div class="tmbtns"><button class="btn" data-tmx="md">.md</button><button class="btn" data-tmx="docx">Word</button><button class="btn primary" data-tmx="copy">Copy to clipboard</button></div></div>
+      <aside class="tmprev"><div class="cap">Plain text preview</div><pre id="tm-pre" class="mono">${esc(plain)}</pre><div class="faint" style="font-size:11px">Pasted as plain text with two spaces after sentences kept.  No Restricted line in the paste; the .md and Word files carry it.</div></aside></div></section>`;
+  }
+  function renderManagerExtras() { const q = $("#ql-manager"); if (q) q.innerHTML = S.snap ? quickLaunchHtml("manager") + mgrHtml() : ""; }
+  async function mgrExport(kind) {
+    const { rep } = mgrRep(); if (!rep) return; const tk = S.mgrTicks.t, nl = nameLine(rep), base = `manager-report-${rep.month}`;
+    if (kind === "copy") { const txt = TM.plain(rep, tk, nl); try { await navigator.clipboard.writeText(txt); toast("Copied.  Paste it into the manager's document."); } catch (e) { const p = $("#tm-pre"); const r = document.createRange(); r.selectNodeContents(p); const s = getSelection(); s.removeAllRanges(); s.addRange(r); toast("Copy is blocked here: the preview is selected, press Ctrl+C."); } return; }
+    const blob = kind === "md" ? new Blob([TM.md(rep, tk, nl)], { type: "text/markdown" }) : new Blob([TM.docx(rep, tk, nl)], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = base + (kind === "md" ? ".md" : ".docx"); a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast("Plain file in your Downloads.  Restricted - Internal Use Only.  Keep it private.");
+  }
+  // ---------- wiring ----------
+  function newClick(e) {
+    const t = e.target;
+    const g0 = t.closest("[data-tg]"); if (g0 && !S.timer) { S.tg = g0.dataset.tg; S.tType = TL.TYPES[S.tg][0]; renderTimer(); return true; }
+    if (t.closest("#tb-go")) { if (S.timer) timerStop(); else timerStart(); return true; }
+    if (t.closest("#tb-resume")) { if (S.tLast) timerStart(Object.assign({}, S.tLast)); return true; }
+    if (t.closest("#tb-past")) { S.tPast = !S.tPast; renderTimer(); if (S.tPast) $("#tp-dur").focus(); return true; }
+    if (t.closest("#tp-save")) { addPast(); return true; }
+    if (t.closest("#tb-review")) { reviewDialog(); return true; }
+    const trm = t.closest("[data-trm]"); if (trm) { S.tRep = trm.dataset.trm; renderDashboard(); return true; }
+    const ql = t.closest("[data-ql]"); if (ql) { quickLaunch(ql.dataset.ql, ql); return true; }
+    if (t.closest("#tm-close")) { S.mgrOpen = false; renderManagerExtras(); return true; }
+    const tx = t.closest("[data-tmx]"); if (tx) { mgrExport(tx.dataset.tmx); return true; }
+    if (S.view === "agenda" && agendaClick(e)) return true;
+    return false;
+  }
+  function newChange(e) {
+    const t = e.target;
+    if (t.id === "tb-type") { S.tType = t.value; return true; }
+    if (t.id === "tb-acc") { S.tAcc = t.value; renderTimer(); return true; }
+    if (t.id === "tb-proj") { S.tProj = t.value; return true; }
+    if (t.id === "tp-acc") { S.tpAcc = t.value; t.classList.toggle("need", !t.value); return true; }
+    if (t.dataset && t.dataset.trg) { if (t.checked) S.tGroups.add(t.dataset.trg); else S.tGroups.delete(t.dataset.trg); renderDashboard(); return true; }
+    if (t.id === "tm-month") { S.mgrMonth = t.value; S.mgrTicks = null; renderManagerExtras(); return true; }
+    if (t.dataset && t.dataset.tmi) { const [i, j] = t.dataset.tmi.split(":").map(Number); S.mgrTicks.t[i][j] = t.checked; const { rep } = mgrRep(); const p = $("#tm-pre"); if (p) p.textContent = TM.plain(rep, S.mgrTicks.t, nameLine(rep)); return true; }
+    return false;
+  }
+  function wireNew() {
+    document.addEventListener("click", e => { if (newClick(e)) { e.stopPropagation(); } }, true);
+    document.addEventListener("change", e => { if (newChange(e)) e.stopPropagation(); }, true);
+    document.addEventListener("keydown", e => { if (e.key === "Escape") { const d = $("#touchdlg") || $("#tl-review"); if (d) d.remove(); } });
+    document.addEventListener("keydown", e => { if (e.key === "Enter" && e.target && e.target.closest && e.target.closest(".tbpast") && e.target.tagName === "INPUT") { e.preventDefault(); addPast(); } });
+  }
+  Object.assign(ACTIONS, {
+    logCall: () => logTouch($("#asof")), logTouch: () => logTouch($("#asof")), vAgenda: () => setView("agenda"),
+    importReport: () => pickFiles(".md,text/markdown", files => importReportFiles(files)),
+    exportTime: () => { if (!confirm("This saves your time log unencrypted (CSV) to Downloads.  Restricted - Internal Use Only.  Continue?")) return; const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([TL.csv(tEntries(), accLabel)], { type: "text/csv" })); a.download = `time-log-${S.today}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); },
+  });
   function setView(v) { S.view = v; closePop(); render(); }
 
   function wireMenus() {
@@ -2149,7 +2436,7 @@ ${ask}
         popover(cu, { title: "Log time", sub: R.formatLine(it), minutes: 45, audience: g2.a.value, subject: g2.s.value, account: it.account, ga: g2.a.why, gs: g2.s.why, ok: "Log time",
           save: v => { addEntry(it, v.minutes, v); if (v.audience !== g2.a.value) teach({ account: v.account }, v.audience); } }); return; }
       const at = e.target.closest("[data-attend]"); if (at) { markAttended(at.dataset.attend); return; }
-      if (e.target.closest("[data-logcall]")) { logCall(e.target.closest("[data-logcall]")); return; }
+      if (e.target.closest("[data-logcall]")) { logTouch(e.target.closest("[data-logcall]")); return; }
       if (e.target.closest("[data-exportcsv]")) { ACTIONS.exportCSV(); return; }
       const en = e.target.closest("[data-ent]"); if (en) { editCalendarEntry(en, S.entries.find(x => x.id === en.dataset.ent)); return; }
       const dl = e.target.closest("[data-del]"); if (dl) { removeEntry(dl.dataset.del); return; }
@@ -2163,13 +2450,13 @@ ${ask}
     $("#howdoi-input").addEventListener("input", e => { const q = e.target.value.toLowerCase(); document.querySelectorAll("#help-howdoi details").forEach(d => d.classList.toggle("hidden", q && !d.textContent.toLowerCase().includes(q))); });
     window.addEventListener("beforeprint", () => { const w = printTarget(); document.querySelectorAll(".view").forEach(v => v.classList.toggle("printing", v.id === "view-" + w)); });
     window.addEventListener("afterprint", () => document.querySelectorAll(".view").forEach(v => v.classList.remove("printing")));
-    $("#rev").textContent = "Rev " + REV;
+    $("#rev").textContent = "Rev " + REV; wireNew();
     const img = $("#avatar"); img.addEventListener("error", () => { img.style.display = "none"; $("#avatar-fb").style.display = "flex"; });
     if (img.complete && !img.naturalWidth) img.dispatchEvent(new Event("error"));
   }
   function closeMenus() { document.querySelectorAll(".mtop").forEach(b => { b.setAttribute("aria-expanded", "false"); b.nextElementSibling.classList.add("hidden"); }); }
 
-  window.DASH.app = { state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel, checkTz, setOwner, projectsModel, saveStore, projOps, accountsModel, importAccountFiles, importContactsFile, renameChoice };
+  window.DASH.app = { timeOps: { loadTime, saveTime, timerStart, timerStop, tEntries, importReportFiles, logTouch, renderAgenda }, state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel, checkTz, setOwner, projectsModel, saveStore, projOps, accountsModel, importAccountFiles, importContactsFile, renameChoice };
   window.addEventListener("beforeunload", e => { if (pending.size) { e.preventDefault(); e.returnValue = ""; } });
   boot();
 })();

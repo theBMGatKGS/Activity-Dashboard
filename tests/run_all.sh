@@ -3,11 +3,14 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"; ROOT="$(dirname "$HERE")"
 cd "$ROOT"
-node --check js/frame.js && node --check js/hub.js && node --check js/vault.js && node --check sw.js && node --check js/rules.js && node --check js/accounts.js && node --check js/events.js && node --check js/usage.js && node --check examples/example-events.js && node --check js/sync.js && node --check js/db.js && node --check js/app.js
+node --check js/frame.js && node --check js/hub.js && node --check js/vault.js && node --check sw.js && node --check js/rules.js && node --check js/accounts.js && node --check js/events.js && node --check js/usage.js && node --check js/timelog.js && node --check js/agenda.js && node --check js/mreport.js && node --check examples/example-events.js && node --check js/sync.js && node --check js/db.js && node --check js/app.js
 node "$HERE/rules.test.js"
 node "$HERE/accounts.test.js"
 node "$HERE/events.test.js"
 node "$HERE/usage.test.js"
+node "$HERE/timelog.test.js"
+node "$HERE/agenda.test.js"
+node "$HERE/mreport.test.js"
 node "$HERE/sync.test.js"
 node "$HERE/vault.test.js"
 node "$HERE/hub.test.js"

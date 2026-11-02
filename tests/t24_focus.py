@@ -76,9 +76,9 @@ with sync_playwright() as p:
     check(not pg.query_selector("#fs-overdue [data-row='EX-1']") and pg.inner_text(".sq.t-over b") == "1" and fl["until"] == "2026-10-19T16:00:00.000Z" and fl["due"] == "2026-10-16", "Snooze (Later today) hides the row until 11:00 CT; the due date is kept")
     pg.click("[data-later]"); check("snoozed to" in pg.inner_text("#later-list") and "send revised scope sheet" in pg.inner_text("#later-list"), "snoozed row listed in Later this week"); pg.click("[data-later]")
     # Log touch on the cold row creates a time entry with the account and clears it
-    pg.click("#fs-cold [data-ftouch]"); pg.wait_for_selector("#pop")
-    check(pg.input_value("#pop-acc") == "Account F" and pg.input_value("#pop-kind") == "Phone" and pg.input_value("#pop-min") == "15", "Log touch opens + Log call pre-filled (account, Phone, 15 min)")
-    pg.click("#pop-ok"); pg.wait_for_timeout(50)
+    pg.click("#fs-cold [data-ftouch]"); pg.wait_for_selector("#touchdlg")
+    check(pg.input_value("#td-acc") == "Account F" and pg.get_attribute("#touchdlg .tdtype.on", "data-tdt") == "call" and pg.input_value("#td-min") == "15", "Log touch (00.11.000 dialog) opens pre-filled (account, call, 15 min)")
+    pg.click("#td-ok"); pg.wait_for_timeout(50)
     check(pg.evaluate("DASH.app.state.entries.some(e => e.account === 'Account F' && e.date === '2026-10-19' && e.source === 'interaction')") and pg.inner_text(".sq.t-cold b") == "0", "Log touch creates the time entry and clears the cold row")
     # keyboard-only: j/k/d/s/t
     pg.focus(".sq.t-today"); pg.keyboard.press("Enter"); check(pg.evaluate("document.activeElement.id") == "fh-dueToday", "Enter on a square jumps to (and focuses) its section")
@@ -86,11 +86,11 @@ with sync_playwright() as p:
     check(first == "EX-2" and second == "EX-21" and pg.evaluate("document.activeElement.dataset.row") == "EX-2", f"j/k move between rows ({first}, {second})")
     pg.keyboard.press("j"); pg.keyboard.press("d"); check(pg.evaluate("DASH.app.state.flags['done:EX-21'] && DASH.app.state.flags['done:EX-21'].on") and pg.evaluate("!!document.activeElement.closest('.frow')"), "d = Done on the focused row; focus stays on a row")
     pg.click("#undo-btn"); pg.focus("#fs-dueToday [data-row='EX-2']"); pg.keyboard.press("s"); check(pg.query_selector("#snz") is not None, "s opens Snooze"); pg.keyboard.press("Escape")
-    pg.focus("#fs-dueToday [data-row='EX-2']"); pg.keyboard.press("t"); check(pg.query_selector("#pop") is not None and pg.input_value("#pop-acc") == "Account B", "t opens Log touch")
-    pg.keyboard.type("j"); check(pg.query_selector("#pop") is not None, "shortcuts are off while typing / in a dialog"); pg.keyboard.press("Escape")
+    pg.focus("#fs-dueToday [data-row='EX-2']"); pg.keyboard.press("t"); check(pg.query_selector("#touchdlg") is not None and pg.input_value("#td-acc") == "Account B", "t opens Log touch")
+    pg.keyboard.type("j"); check(pg.query_selector("#touchdlg") is not None, "shortcuts are off while typing / in a dialog"); pg.keyboard.press("Escape")
     # Tab order: squares → meetings → sections
     pg.evaluate("document.querySelector('.tab[data-view=focus]').focus()"); seq = []
-    for _ in range(28):   # 00.10.000 rev 3: one more tab (Calendar).  00.06.000: the Today strip's meetings come between the header and the sections
+    for _ in range(56):   # 00.11.000: + the Agenda tab, the header timer bar and Quick Launch.  00.10.000 rev 3: one more tab (Calendar).  00.06.000: the Today strip's meetings come between the header and the sections
         pg.keyboard.press("Tab"); seq.append(pg.evaluate("(a => a.dataset.sq ? 'sq' : a.dataset.prep ? 'meet' : a.dataset.cal ? 'strip' : a.closest('section.blk') ? 'sec' : a.closest('.fhead') ? 'head' : 'other')(document.activeElement)"))
     f = [x for x in seq if x in ("sq", "meet", "strip", "sec")]; last = lambda k: max(i for i, x in enumerate(f) if x == k)
     check(f[:4] == ["sq"] * 4 and "meet" in f and "strip" in f and "sec" in f and f.index("strip") > last("meet") and f.index("sec") > last("strip"), f"Tab order squares → meetings → Today strip → sections ({f[:12]})")
