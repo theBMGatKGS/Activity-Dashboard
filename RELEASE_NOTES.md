@@ -1,5 +1,21 @@
 # Release notes — Activity Dashboard
 
+## 00.11.000_261101 (Nov 1 2026)
+**Time tracking**: a timer bar under the header.
+- Pick a group, a type, and an account, then press Start, and Stop when you're done.  Add past covers time you forgot to time.  Time texted to the assistant arrives with the morning snapshot.
+- Time is saved only when the Data folder is encrypted and unlocked, and it syncs to your other computers.
+- Totals has a week and month time report, and File → Export time log (CSV)… saves it.
+
+**Agenda** tab, after Calendar: meetings, events, and trips by week, day, or month, in Central Time.
+
+**Log touch** replaces Log call, for calls, in-person meetings, emails, and Teams or text messages.
+
+**Quick Launch**: seven buttons on Daily Focus and the Manager view.
+
+**Manager report**: import the monthly sam-activity file, tick the bullets you want, and copy them as plain text, Markdown, or a Word file.
+
+- Smaller fixes: the usage ring's colour matches the percent shown, and times in the repeated autumn hour say CDT or CST.
+
 ## 00.10.001_261101 (Nov 1 2026)
 **Grok Bot usage on Daily Focus**: a fifth square, right of Going cold.
 - A glowing ring fills to the weekly percent used, with the percent in the middle.  It's green up to 80%, amber above 80%, and red at 100% or when on-demand is Maxed.

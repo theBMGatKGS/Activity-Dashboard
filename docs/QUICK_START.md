@@ -8,5 +8,8 @@
 2a. Check "As of" (amber ⚠ Stale = older than 24 h). Times and "today" follow this computer's time zone (shown in the top bar, e.g. "CT · America/Chicago"); there's no setting, and it updates by itself when you travel (00.05.001).
 3. Click a total to filter; click again to clear.
 4. +15/+30/+60/⋯ on a line logs time. Meeting time counts by itself (Adjust to change); on overlaps press Attended? on the one you went to. + Log call for phone/Teams; `- [log]` lines from the notebook log load by themselves (Data/notebook-log.js); File → Import notebook log… is the fallback.
+4a. **Time (00.11.000):** the timer bar under the header has a group, a type, and an account.  Press Start, then Stop when you're done, or use Add past for time you forgot.  Totals shows the week and month time report, and File → Export time log (CSV)… saves it.  The Agenda tab shows your meetings, events, and trips by week, day, or month.  + Log touch… records a call, meeting, email, or message.
 5. File → Print my sheet… / Print Manager's sheet… (landscape).
 The full Help, How Do I, FAQ and Revision log are in the app's Help menu.
+
+Want to build your own?  See `docs/COLLEAGUE_BUILD_GUIDE.md`.
