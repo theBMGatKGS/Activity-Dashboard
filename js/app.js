@@ -2199,7 +2199,7 @@ ${ask}
       <select id="tb-acc" class="${acc ? "" : "need"}" aria-label="Account (required)" aria-invalid="${!acc}"${dis}>${opt("", "Pick an account…", acc)}${accs.map(a => opt(a, accLabel(a), acc)).join("")}</select>${acc ? "" : `<span class="tbreq" aria-hidden="true">!</span>`}
       <select id="tb-proj" aria-label="Project (optional)"${dis}>${opt("", "— No project —", proj)}${projs.map(p => opt(p, p, proj)).join("")}</select>
       <span id="tb-clock" class="tbclock mono${run ? " run" : ""}" aria-live="off">${TL.clock(run ? TL.elapsed(S.timer, nowDate().getTime()) : 0)}</span>
-      <button type="button" id="tb-go" class="tbgo${run ? " stop" : ""}" ${!run && !acc ? 'aria-disabled="true" title="Pick an account first"' : ""}>${run ? "Stop" : "Start"}</button>
+      <button type="button" id="tb-go" class="tbgo${run ? " stop" : ""}${!run && !acc ? " dim" : ""}" ${!run && !acc ? 'title="Pick an account first"' : ""}>${run ? "Stop" : "Start"}</button>
       <span class="tbsep"></span>
       <button type="button" id="tb-resume" class="btn" ${S.tLast && !run ? "" : "disabled"} title="${S.tLast ? esc(`${TL.TYPE_LABEL[S.tLast.type]} · ${accLabel(S.tLast.account)}${S.tLast.project ? " · " + S.tLast.project : ""}`) : "Nothing to resume yet"}">↻ Resume last</button>
       <button type="button" id="tb-past" class="btn${S.tPast ? " on" : ""}" aria-expanded="${S.tPast}">+ Add past</button>
@@ -2335,7 +2335,7 @@ ${ask}
   }
   async function loadReports() {
     if (S.rLoaded) return; if (S.vault && S.vault.kr && !S.vault.key) return;
-    if (tExample()) { S.rLoaded = true; if (!S.rstore && await loadScript("examples/example-sam-activity.js") && window.DASH_EXAMPLE_SAM) { try { S.rstore = TM.addReport(null, TM.parse("2026-10.md", window.DASH_EXAMPLE_SAM), "2026-01-01T00:00:00Z"); S.rExample = true; } catch (e) { S.rstore = null; } } return; }
+    if (tExample()) { S.rLoaded = true; if (!S.rstore && await loadScript("examples/example-sam-activity.js") && window.DASH_EXAMPLE_SAM) { try { S.rstore = TM.addReport(null, TM.parse("2026-10.md", window.DASH_EXAMPLE_SAM), S.snap.generatedAt); S.rExample = true; } catch (e) { S.rstore = null; } } return; }
     if (S.rExample) { S.rstore = null; S.rExample = false; }
     try { const c = await DB.get("reportsStore"); if (c) S.rstore = TM.readStore(c); } catch (e) { /* ignore */ }
     S.rLoaded = true;

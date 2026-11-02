@@ -591,7 +591,7 @@ a.t-usage:focus-visible{outline:2px solid var(--info);outline-offset:2px}
 .timerbar select.need,.touchdlg select.need{border-color:var(--fail);box-shadow:0 0 0 1px var(--fail) inset}
 .tbreq{color:var(--fail);font-weight:700;margin-left:-4px}
 .tbclock{font-size:22px;font-weight:700;letter-spacing:.04em;color:var(--muted);margin-left:auto;min-width:118px;text-align:right}.tbclock.run{color:var(--pass)}
-.tbgo{background:var(--pass);color:#04140a;border:0;border-radius:4px;padding:5px 16px;font-weight:700;cursor:pointer}.tbgo.stop{background:var(--fail);color:#fff}.tbgo[aria-disabled=true]{opacity:.55}
+.tbgo{background:var(--pass);color:#04140a;border:0;border-radius:4px;padding:5px 16px;font-weight:700;cursor:pointer}.tbgo.stop{background:var(--fail);color:#fff}.tbgo.dim{opacity:.55}
 .tbsep{width:1px;height:22px;background:var(--line)}
 .btn.on{background:var(--panel3);border-color:var(--accent2)}
 .tbpast{border-top:1px solid var(--line2)}.tbpast .cap{margin-right:4px}
