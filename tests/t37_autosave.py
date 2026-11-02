@@ -87,6 +87,19 @@ with sync_playwright() as p:
     pg.evaluate("DASH.app.timeOps.logTouch(null, {type:'call', account:'Internal', minutes: 15})"); pg.wait_for_selector("#touchdlg")
     btn = pg.query_selector('#touchdlg button.primary'); btn.click(); pg.wait_for_timeout(1500)
     check(pg.evaluate(FOLDER) == base + 3, "Log Touch (Also add to time log) saves to the folder on its own")
+    # 6. IndexedDB connection closed under the app: reopened on its own, the save goes through, nothing counted as failed
+    pg.evaluate("""(() => { const t = IDBDatabase.prototype.transaction; let once = true;
+      IDBDatabase.prototype.transaction = function (...a) { if (once && a[1] === 'readwrite') { once = false; this.close(); } return t.apply(this, a); }; })()""")
+    n0 = pg.evaluate("DASH.db.reopenCount()"); pg.evaluate(STOPPED); pg.wait_for_timeout(2000)
+    check(pg.evaluate("DASH.db.reopenCount()") > n0, "a closed IndexedDB connection is reopened automatically")
+    check(pg.evaluate("DASH.db.get('timeStore').then(s => Object.values(s.entries).filter(e => !e.deleted).length)") == base + 4 and pg.evaluate(FOLDER) == base + 4, "after the reopen the entry is in the cache and the folder")
+    check("retrying save" not in pg.inner_text("#sync") and not pg.evaluate("DASH.app.state.saveProblems.write"), "no save problem is left after the reopen")
+    # 7. connection closed while saves are queued: the reopen triggers the retry at once
+    FAIL["on"] = True; pg.evaluate(STOPPED); pg.wait_for_timeout(1500); FAIL["on"] = False
+    pg.evaluate("""(() => { const t = IDBDatabase.prototype.transaction; let once = true;
+      IDBDatabase.prototype.transaction = function (...a) { if (once && a[1] === 'readwrite') { once = false; this.close(); } return t.apply(this, a); }; })()""")
+    pg.evaluate("DASH.db.set('prefs', {t37: 1})"); pg.wait_for_timeout(2500)
+    check(pg.evaluate(FOLDER) == base + 5 and pg.evaluate("localStorage.getItem('dash-pending-v1')") is None, "a reopen retries the queued save right away (before the backoff timer)")
     c.close(); b.close()
 check(not errors, "no page errors " + "; ".join(errors[:3]))
 print("T37 " + ("PASSED" if ok else "FAILED")); sys.exit(0 if ok else 1)

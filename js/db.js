@@ -13,15 +13,29 @@
   let dbp = null, mem = null;
   function open() {
     if (dbp) return dbp;
-    dbp = new Promise(res => {
+    const mine = dbp = new Promise(res => {
       try {
         const r = indexedDB.open(NAME, 1);
         r.onupgradeneeded = () => r.result.createObjectStore(STORE);
-        r.onsuccess = () => res(r.result);
+        r.onsuccess = () => { const db = r.result;   // 00.11.001: a closed connection (browser close, sleep, version change) is dropped and reopened on the next use
+          db.onclose = () => { if (dbp === mine) dbp = null; };
+          db.onversionchange = () => { try { db.close(); } catch (e) { /* already closed */ } if (dbp === mine) dbp = null; };
+          res(db); };
         r.onerror = () => { mem = {}; res(null); };
       } catch (e) { mem = {}; res(null); }
     });
-    return dbp;
+    return mine;
+  }
+  let reopened = 0, onReopen = null;
+  const isClosed = e => !!(e && (e.name === "InvalidStateError" || /connection is clos/i.test(e.message || "")));
+  // Runs fn(db); if the connection was closed or invalid, opens a fresh one once and runs fn again, then tells the app (retry queued saves).
+  async function withDb(fn) {
+    const db = await open(); if (!db) return fn(null);
+    try { return await fn(db); } catch (e) {
+      if (!isClosed(e)) throw e;
+      if (dbp) { const cur = await dbp; if (cur === db) dbp = null; }
+      const db2 = await open(); const out = await fn(db2); reopened++; if (onReopen) setTimeout(() => { try { onReopen(); } catch (x) { /* app retry only */ } }, 0); return out;
+    }
   }
   // 00.03.001: cached data (SECRET keys) is encrypted with the Data folder's key once the folder is encrypted. cipher = {enc, dec}
   // (text <-> envelope text, AES-256-GCM via DASH.vault) is set by the app while unlocked. "cacheEncrypted" (plain flag) is set as
@@ -30,7 +44,7 @@
   let cipher = null, mustEncrypt = false;
   const isEnv = v => !!(v && typeof v === "object" && v.dashCache === 1 && typeof v.env === "string");
   function getRaw(k) {
-    return open().then(db => { if (!db) return mem[k];
+    return withDb(db => { if (!db) return mem[k];
       return new Promise(res => { const q = db.transaction(STORE).objectStore(STORE).get(k); q.onsuccess = () => res(q.result); q.onerror = () => res(undefined); }); });
   }
   async function get(k) {
@@ -47,8 +61,8 @@
     return setRaw(k, v);
   }
   async function setRaw(k, v) {
-    const db = await open(); if (!db) { mem[k] = v; return; }
-    return new Promise((res, rej) => { const t = db.transaction(STORE, "readwrite"); t.objectStore(STORE).put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); });
+    return withDb(db => { if (!db) { mem[k] = v; return; }
+      return new Promise((res, rej) => { const t = db.transaction(STORE, "readwrite"); t.objectStore(STORE).put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error || new DOMException("transaction aborted", "AbortError")); }); });
   }
   async function exportAll() { const o = { app: "activity-dashboard", exportVersion: 1, exportedAt: new Date().toISOString() }; for (const k of KEYS) if (!NOT_EXPORTED.includes(k)) o[k] = await get(k); return o; }
   async function importAll(o) {
@@ -130,5 +144,5 @@
     for (const k of SECRET) { const v = await getRaw(k); if (v !== undefined && v !== null && !isEnv(v)) { await set(k, v); n++; } }
     return n;
   }
-  g.DASH = g.DASH || {}; g.DASH.db = { get, set, getRaw, exportAll, importAll, clearAll, migrateLegacy, setCipher, requireEncryption, verifyLegacy, deleteDb, dbGone, loadFlags, encryptExisting, SECRET, usingMemory: () => !!mem };
+  g.DASH = g.DASH || {}; g.DASH.db = { get, set, getRaw, exportAll, importAll, clearAll, migrateLegacy, setCipher, requireEncryption, verifyLegacy, deleteDb, dbGone, loadFlags, encryptExisting, SECRET, usingMemory: () => !!mem, reopenCount: () => reopened, setOnReopen: f => { onReopen = f; } };
 })(window);

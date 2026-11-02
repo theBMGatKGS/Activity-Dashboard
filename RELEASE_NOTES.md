@@ -5,6 +5,8 @@
 - A failed save stays queued on this computer (encrypted, never plaintext), retries with backoff (5 s up to 5 min), and survives a reload or an update.
 - Reload and updates park any unsaved work first, so nothing is thrown away.  One failure is counted once, not two or three times.
 - The sync chip only shows the status ("retrying save").
+- With GitHub sync and no Data folder, Projects, Accounts, Events and Links saves were refused by GitHub (a temporary file name it doesn't allow).  They now save, and a Projects copy kept on this computer is sent again on its own.
+- If the browser closes its local storage connection (after sleep, for example), the dashboard reopens it on its own and retries at once.
 
 ## 00.11.000_261101 (Nov 1 2026)
 **Time tracking**: a timer bar under the header.

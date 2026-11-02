@@ -168,7 +168,7 @@
   // 00.09.001 (L2): a failed tracked write is recorded and shown as a problem line at once; reloads stop while one is outstanding.
   const writeFails = [];
   const counted = new WeakSet();   // 00.11.001: a failure that bubbles through nested track() calls is counted once
-  function track(p) { if (p && p.then) { pending.add(p); p.finally(() => pending.delete(p)).catch(e => { if (e && typeof e === "object") { if (counted.has(e)) return; counted.add(e); } writeFails.push(e); S.saveProblems.write = `A save failed (${(e && e.message) || e}); not reloaded, so nothing in this window is lost`; renderSync(); }); } return p; }
+  function track(p) { if (p && p.then) { pending.add(p); p.finally(() => pending.delete(p)).catch(e => { if (e && typeof e === "object") { if (counted.has(e)) return; counted.add(e); } writeFails.push(e); S.saveProblems.write = `A save failed (${(e && e.message) || e}); kept on this computer and retrying on its own`; renderSync(); }); } return p; }
   function flush() { return Promise.all([...pending].map(p => p.catch(() => {}))); }
   async function reloadSafely() {
     await flush(); await new Promise(r => setTimeout(r, 0));
@@ -354,6 +354,16 @@
   // A failed write leaves the previous good file untouched.
   async function writeVerified(target, purpose, body) {
     const ct = await V.encrypt(S.vault.key, S.vault.kr, purpose, body), tmp = target + ".tmp";
+    // 00.11.001: the GitHub hub accepts only *.enc names, so "<name>.enc.tmp" was refused there and every hub save failed.  A hub write
+    // is one atomic commit, so the hub skips the temp file: check the envelope in memory, write, read back, put the old copy back if bad.
+    if (S.dir && S.dir.isHub) {
+      if (await V.decrypt(S.vault.key, S.vault.kr, ct, purpose) !== body) throw new Error("encryption check failed; nothing written");
+      let old = null; try { old = (await readName(target)).text; } catch (e) { old = null; }
+      await writeText(target, ct);
+      let ok = false; try { ok = await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, purpose) === body; } catch (e) { ok = false; }
+      if (!ok) { if (old != null) { try { await writeText(target, old); } catch (e) { /* reported below */ } } throw new Error("read-back check failed; the previous encrypted copy was put back"); }
+      return;
+    }
     await writeText(tmp, ct);
     let good = false; try { good = await V.decrypt(S.vault.key, S.vault.kr, (await readName(tmp)).text, purpose) === body; } catch (e) { good = false; }
     if (!good) { try { await S.dir.removeEntry(tmp); } catch (e) { /* left for the next try */ } throw new Error("read-back check failed; the previous encrypted copy is kept"); }
@@ -1780,6 +1790,7 @@ ${ask}
     if (feeds.calendar && (!S.calFeed || S.calExample || Date.parse(feeds.calendar.generated_at) >= Date.parse(S.calFeed.generatedAt))) { S.calFeed = R.readCalendar(feeds.calendar); S.calExample = false; track(DB.set("calendarSnap", feeds.calendar)); }
     if (feeds.projects && (!S.projFeed || S.projExample || Date.parse(feeds.projects.generated_at) >= Date.parse(S.projFeed.generatedAt))) { S.projFeed = R.readProjects(feeds.projects); S.projExample = false; track(DB.set("projectsFeed", feeds.projects)); }
     if (feeds.projstore && (!S.projStore || S.projExample || Date.parse(feeds.projstore.updated_at) > Date.parse(S.projStore.updated_at))) { S.projStore = R.readStore(feeds.projstore); S.projExample = false; track(DB.set("projectsStore", feeds.projstore)); }
+    else if (feeds.projstore && S.projStore && !S.projExample && Date.parse(S.projStore.updated_at) > Date.parse(feeds.projstore.updated_at)) S.projDirty = true;   // 00.11.001: edits cached here but never saved (e.g. a refused hub write) are saved again on their own
     if (feeds.accstore && (!S.accStore || S.accExample || Date.parse(feeds.accstore.updated_at) > Date.parse(S.accStore.updated_at))) { S.accStore = A.readAccStore(feeds.accstore); S.accExample = false; track(DB.set("accountsStore", feeds.accstore)); }
     if (feeds.contacts && (!S.contacts || S.accExample || Date.parse(feeds.contacts.updated_at) > Date.parse(S.contacts.updated_at))) { S.contacts = A.readContacts(feeds.contacts); track(DB.set("contacts", feeds.contacts)); }
     if (!S.linksLoaded && S.vault && S.vault.key) track(loadLinks());   // B1: the key can arrive after the snapshot load; read the cache now
@@ -2211,6 +2222,7 @@ ${ask}
     if (retryT) return; const d = delayS !== undefined ? delayS : RETRY_S[Math.min(retryN, RETRY_S.length - 1)]; retryN++;
     retryT = setTimeout(async () => { retryT = null; if (S.tDirty) await saveTime(); if (S.ownCacheDirty) { try { await DB.set("ownEvents", S.own); S.ownCacheDirty = false; } catch (e) { scheduleRetry(); } } if (S.ownDirty) await writeOwn(); settleRetry(); }, d * 1000);
   }
+  DB.setOnReopen(() => { if (saveOwed()) { clearTimeout(retryT); retryT = null; scheduleRetry(0); } });   // 00.11.001: storage came back, retry the queue now
   function settleRetry() { if (saveOwed()) return; retryN = 0; delete S.saveProblems.write; try { localStorage.removeItem(PQ_KEY); } catch (e) { /* ignore */ } }
   function useTimeFeed(raw) { if (tExample() || !raw) return; try { const inc = TL.readStore(raw), m = TL.merge(S.tstore, inc); const changed = !TL.same(m, S.tstore), stale = !TL.same(m, inc); S.tstore = m; if (changed) track(DB.set("timeStore", S.tstore)); if (stale || S.tDirty) track(saveTime()); } catch (e) { S.fileProblems[TIMESTORE_NAME + ".enc"] = `${TIMESTORE_NAME}.enc: ${e.message}`; } }
   // Snapshot "time" block (Q1A): merged by id on unlock; the same id is a correction and the newest generated_at wins.
