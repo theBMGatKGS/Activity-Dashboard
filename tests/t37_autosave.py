@@ -80,7 +80,9 @@ with sync_playwright() as p:
     pg.close(); pg = open_pg("08:10")
     check(len(live(pg)) == base + 2, "the unsaved entry survives the reload (restored from the encrypted pending queue)")
     # 4. retries on its own with backoff once the folder works again
-    FAIL["on"] = False; pg.wait_for_timeout(17000)   # backoff: 5 s, then 15 s
+    FAIL["on"] = False   # backoff 5, 15, 30 s...: wait up to 90 s for the automatic retry (no sync call here)
+    t0 = time.time()
+    while time.time() - t0 < 90 and not (pg.evaluate(FOLDER) == base + 2 and pg.evaluate("localStorage.getItem('dash-pending-v1')") is None): pg.wait_for_timeout(1000)
     check(pg.evaluate(FOLDER) == base + 2, "the queued save retries on its own and reaches the folder")
     check(pg.evaluate("localStorage.getItem('dash-pending-v1')") is None and "retrying save" not in pg.inner_text("#sync"), "the queue clears and the chip returns to normal after the retry")
     # 5. Log Touch saves automatically
@@ -98,7 +100,9 @@ with sync_playwright() as p:
     FAIL["on"] = True; pg.evaluate(STOPPED); pg.wait_for_timeout(1500); FAIL["on"] = False
     pg.evaluate("""(() => { const t = IDBDatabase.prototype.transaction; let once = true;
       IDBDatabase.prototype.transaction = function (...a) { if (once && a[1] === 'readwrite') { once = false; this.close(); } return t.apply(this, a); }; })()""")
-    pg.evaluate("DASH.db.set('prefs', {t37: 1})"); pg.wait_for_timeout(2500)
+    pg.evaluate("DASH.db.set('prefs', {t37: 1})")
+    t0 = time.time()
+    while time.time() - t0 < 4 and pg.evaluate(FOLDER) != base + 5: pg.wait_for_timeout(200)   # well before the 5 s backoff
     check(pg.evaluate(FOLDER) == base + 5 and pg.evaluate("localStorage.getItem('dash-pending-v1')") is None, "a reopen retries the queued save right away (before the backoff timer)")
     c.close(); b.close()
 check(not errors, "no page errors " + "; ".join(errors[:3]))
