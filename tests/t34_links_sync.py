@@ -116,6 +116,13 @@ with sync_playwright() as p:
     check(mac.evaluate("DASH.app.state.links.vault") == "Other Vault" and link(mac, "vault") == "Other Vault" and "2027" not in json.dumps(dec(mac)), "future stamp: refused, the file is written back without it")
     check(any("links.json.enc" in x and "dated in the future" in x and "clears once the other computer's clock is fixed" in x for x in mac.evaluate("DASH.app.state.problems")), "future stamp: a problem line names links.json.enc and says it clears once the other clock is fixed")
     links_dialog(ipad, vault="Later Vault"); save_dialog(ipad); check(link(ipad, "vault") == "Later Vault", "future stamp: a later real edit (iPad dialog) still wins")
+    # 00.11.000 (QA M4): Save merges the folder copy before it caches, so this computer's cache never drops another computer's newer link
+    mac.evaluate("(() => { const S = DASH.app.state; S.linksStore = JSON.parse(JSON.stringify(S.linksStore)); S.linksStore.links.vault = { v: 'Stale Mac Vault', at: '2026-10-01T00:00:00-05:00', by: 'mac1' }; })()")
+    ipad.evaluate("(() => { const S = DASH.app.state; S.linksStore = DASH.events.setLinks(S.linksStore, { repo: 'https://github.com/example-owner/m4-notebook' }, '2026-10-19T09:25:00-05:00', 'ipad1'); })()"); ipad.evaluate("DASH.app.saveLinksNow()"); ipad.evaluate("DASH.app.flush()")
+    until(ipad, lambda: link(ipad, "repo") == "https://github.com/example-owner/m4-notebook", "ipad repo in the file"); check(mac.evaluate("DASH.app.state.linksStore.links.repo.v") != "https://github.com/example-owner/m4-notebook", "M4 control: this computer has not merged the newer link yet")
+    mac.evaluate("DASH.app.saveLinksNow()"); mac.evaluate("DASH.app.flush()")
+    cached = mac.evaluate("DASH.db.get('links')")
+    check(cached and cached["links"]["repo"]["v"] == "https://github.com/example-owner/m4-notebook" and cached["links"]["vault"]["v"] == "Later Vault" and link(mac, "repo") == "https://github.com/example-owner/m4-notebook", "M4: Save merges the folder copy first, then caches the merged store (cache keeps the other computer's newer link)")
     until(mac, lambda: mac.evaluate("DASH.app.state.links.vault") == "Later Vault", "mac later")
     # 5. never exported; IndexedDB holds an envelope only
     exp = mac.evaluate("DASH.db.exportAll().then(x => JSON.stringify(x))"); check("example-owner" not in exp and "links" not in json.loads(exp), "Links are never in File → Export local data")

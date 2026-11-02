@@ -5,17 +5,17 @@ envelope; a running timer survives a reload; Stop and Add past log entries; Expo
 snapshot.  EXAMPLE DATA: timer idle / running / red no-account, Add past, time report week and month with group filters, Agenda week,
 day and month (today pinned on its real weekday, CT times, red flags, flight and hotel blocks, no empty band), Quick Launch (seven equal
 buttons), Copy for manager (ticks, plain-text preview with two spaces kept and no Restricted line, .md and Word labelled), Log Touch
-(four types, Also add to time log), iPad width.  argv[1]: shots dir.  DASH_MANAGER_NAME (optional) sets managerName for the shots."""
+(four types, Also add to time log), iPad width.  argv[1]: shots dir.  The manager name is the fictional placeholder "Sam Lee" (never from the environment)."""
 import pathlib, shutil, tempfile, json, os, sys, time, zipfile, io
 from playwright.sync_api import sync_playwright
 SRC = pathlib.Path(__file__).resolve().parents[1]; ok = True; errors = []
 SHOTS = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path(tempfile.mkdtemp(prefix="dash-t36-")); SHOTS.mkdir(parents=True, exist_ok=True)
 def check(c, m):
     global ok; print(("PASS " if c else "FAIL ") + m); ok = ok and c
-PASS = "correct horse battery 10000"; MGR = os.environ.get("DASH_MANAGER_NAME", "").strip()
+PASS = "correct horse battery 10000"; MGR = "Sam Lee"   # QA M5: a fictional placeholder only; never read from the environment
 FS_JS = (SRC / "tests/t21_vault.py").read_text().split('FS_JS = """', 1)[1].split('"""', 1)[0]
 tmp = pathlib.Path(tempfile.mkdtemp()); app = tmp / "Dashboard"; shutil.copytree(SRC, app, ignore=shutil.ignore_patterns("tests", ".git"))
-if MGR: (app / "config.local.js").write_text("Object.assign(window.DASH_CONFIG, " + json.dumps({"managerName": MGR, "internalAccountLabel": "Internal (Example Co)"}) + ");\n")
+(app / "config.local.js").write_text("Object.assign(window.DASH_CONFIG, " + json.dumps({"managerName": MGR, "internalAccountLabel": "Internal (Example Co)"}) + ");\n")
 snap = json.loads((app / "examples/example-snapshot.json").read_text()); snap.pop("example"); snap["generated_at"] = "2026-11-02T07:30:00-06:00"
 E1 = {"id": "T-20261102-0a1b2c3d", "date": "2026-11-02", "start": "06:30", "minutes": 90, "group": "travel", "type": "driving", "account": "Acme Fab", "project": None, "notes": "secretnote drive to site", "x_text": "90m drive, Travel, Acme"}
 E2 = {"id": "T-20261102-0a1b2c3e", "date": "2026-11-02", "start": None, "minutes": 45, "group": "relationship", "type": "meal", "account": "Mystery Example Co", "project": None, "notes": "", "x_text": "45m lunch"}
@@ -111,10 +111,13 @@ with sync_playwright() as p:
     pg.click("#tb-go"); pg.click("#tb-past"); pg.fill("#tp-dur", "45m"); pg.select_option("#tp-acc", "Travel/General"); pg.select_option("#tp-type", "travel:airport_wait")
     pg.screenshot(path=str(SHOTS / "36d-add-past.png"), clip={"x": 0, "y": 0, "width": 1440, "height": 160}); pg.click("#tp-save")
     rep = pg.inner_text("#timereport"); check("Time report" in rep and all(k in rep.upper() for k in ("TIME BY GROUP", "ACTIVITY TYPES", "ACCOUNTS", "PROJECTS")) and "%" in rep and "$" not in rep, "time report: four cards with percentages, no dollars")
-    pg.evaluate("document.querySelector('#timereport').scrollIntoView()"); pg.screenshot(path=str(SHOTS / "36e-time-report-week.png"))
+    pg.evaluate("(() => { const r = document.querySelector('#timereport'); window.scrollTo(0, r.getBoundingClientRect().top + window.scrollY - document.querySelector('header').getBoundingClientRect().height - 140); })()"); pg.screenshot(path=str(SHOTS / "36e-time-report-week.png"))
     t_all = pg.inner_text("#timereport .trbig"); pg.uncheck("[data-trg='travel']"); t_no = pg.inner_text("#timereport .trbig"); check(t_all != t_no and "hiding" in pg.inner_text("#timereport"), f"untick Travel: total {t_all} -> {t_no}, 'hiding' shown"); pg.check("[data-trg='travel']")
-    pg.click("[data-trm='month']"); pg.evaluate("document.querySelector('#timereport').scrollIntoView()"); check("Nov 1" in pg.inner_text("#timereport .trhead") or "11/1" in pg.inner_text("#timereport .trhead"), "This month starts on the 1st")
-    pg.screenshot(path=str(SHOTS / "36f-time-report-month.png"))
+    wk_head = pg.inner_text("#timereport .trhead")
+    pg.click("[data-trm='month']"); pg.wait_for_selector("[data-trm='month'][aria-pressed='true']"); pg.evaluate("document.querySelector('#timereport').scrollIntoView()")
+    mo_head = pg.inner_text("#timereport .trhead"); rg = pg.evaluate("(() => { const r = DASH.timelog.monthRange(DASH.app.state.today); return [DASH.rules.dayLabel(r.from), DASH.rules.dayLabel(r.to)]; })()")
+    check(mo_head != wk_head and (rg[0] + " – " + rg[1]) in mo_head and rg[0].endswith("/1"), f"This month: the header shows the month range ({rg}), not the week ({wk_head!r})")
+    pg.evaluate("(() => { const r = document.querySelector('#timereport'); window.scrollTo(0, r.getBoundingClientRect().top + window.scrollY - document.querySelector('header').getBoundingClientRect().height - 140); })()"); pg.screenshot(path=str(SHOTS / "36f-time-report-month.png"))   # QA L3: the element itself, after the re-render, so the header range shows
     # Agenda: events sit 20-22 days after the example's load day; move "today" to the day before (test only) and add CT meetings and a trip
     pg.goto((app / "index.html").as_uri() + "?now=2026-10-15T10:00:00-05:00&machine=test&view=agenda"); pg.wait_for_selector(".aghead", timeout=60000)
     pg.evaluate("""() => { const S = DASH.app.state; S.today = '2026-11-03'; S.ag.anchor = null;

@@ -1393,11 +1393,12 @@
   }
   async function saveLinks(fileToo) {
     if (!S.linksStore || linksExample() || !(S.vault && (!S.vault.kr || S.vault.key))) return;
-    track(DB.set("links", S.linksStore));
-    if (fileToo && canSaveToFolder()) {
+    if (fileToo && canSaveToFolder()) {   // 00.11.000 (QA M4): merge the folder copy first, then cache and write the merged store
       try { const h = await S.dir.getFileHandle(LINKS_NAME + ".enc"); const cur = readLinksChecked(JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, await (await h.getFile()).text(), "links")), "synced");
         S.linksStore = E.mergeLinks(S.linksStore, cur); S.links = Object.keys(S.linksStore.links).length ? E.linksValues(S.linksStore) : null; } catch (e) { /* no file yet, or unreadable: write ours */ }   // never overwrite another computer's newer link
-      S.linksDirty = false; await track(writeVerified(LINKS_NAME + ".enc", "links", JSON.stringify(S.linksStore))); }
+      await track(DB.set("links", S.linksStore));
+      S.linksDirty = false; await track(writeVerified(LINKS_NAME + ".enc", "links", JSON.stringify(S.linksStore))); return; }
+    track(DB.set("links", S.linksStore));
   }
   async function useLinksFeed(raw) {
     if (linksExample() || !(S.vault && S.vault.key)) return;
@@ -2456,7 +2457,7 @@ ${ask}
   }
   function closeMenus() { document.querySelectorAll(".mtop").forEach(b => { b.setAttribute("aria-expanded", "false"); b.nextElementSibling.classList.add("hidden"); }); }
 
-  window.DASH.app = { timeOps: { loadTime, saveTime, timerStart, timerStop, tEntries, importReportFiles, logTouch, renderAgenda }, state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel, checkTz, setOwner, projectsModel, saveStore, projOps, accountsModel, importAccountFiles, importContactsFile, renameChoice };
+  window.DASH.app = { saveLinksNow: () => saveLinks(true), timeOps: { loadTime, saveTime, timerStart, timerStop, tEntries, importReportFiles, logTouch, renderAgenda }, state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel, checkTz, setOwner, projectsModel, saveStore, projOps, accountsModel, importAccountFiles, importContactsFile, renameChoice };
   window.addEventListener("beforeunload", e => { if (pending.size) { e.preventDefault(); e.returnValue = ""; } });
   boot();
 })();

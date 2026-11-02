@@ -31,41 +31,118 @@ This guide explains how the Activity Dashboard is put together, so you can build
 
 ## 4. How the builder works (example data only)
 
-The builder reads your notes and writes the snapshot.  Here is the idea with example data.
+The builder reads your notes and writes the snapshot.  Here is the idea with example data.  The real field rules are in `docs/inbox-snapshot-schema.md`, and the example below follows them.
 
-Input, a few lines in a Markdown notes file:
+Input, a few lines in a Markdown notes file (this input format is only an illustration, and you can use any format your builder understands):
 
 ```markdown
-- [ ] Send the revised quote to Northwind Example (due 2026-11-04) #account/northwind
-- [x] Book the site visit for Contoso Sample
-- [waiting] Fabrikam Demo to confirm the room size (since 2026-10-28)
+- [ ] Follow-ups: send revised scope sheet, Northwind Example, Jordan P., due 2026-11-04
+- [x] Account touches: book the site visit, Contoso Example
+- [waiting] Waiting on: confirm the room size, Fabrikam Example, due 2026-11-06
 ```
 
-Output, part of the snapshot:
+Output, part of the snapshot (`docs/inbox-snapshot-schema.md` §2 and §3):
 
 ```json
 {
-  "generated": "2026-11-02T08:00:00-06:00",
+  "schema_version": 1,
+  "generated_at": "2026-11-02T07:30:00-06:00",
+  "source": "inbox-export",
+  "example": true,
   "tasks": [
-    { "id": "t1", "title": "Send the revised quote", "account": "Northwind Example", "due": "2026-11-04", "status": "open" },
-    { "id": "t2", "title": "Book the site visit", "account": "Contoso Sample", "due": null, "status": "done" },
-    { "id": "t3", "title": "Confirm the room size", "account": "Fabrikam Demo", "due": null, "status": "waiting", "since": "2026-10-28" }
+    { "id": "ex-t1", "list": "Follow-ups", "title": "send revised scope sheet", "account": "Northwind Example", "person": "Jordan P.",
+      "next_date": "2026-11-04", "status": "not_started", "last_modified": "2026-11-01T16:10:00-06:00", "withhold": false },
+    { "id": "ex-t2", "list": "Account touches", "title": "book the site visit", "account": "Contoso Example", "person": null,
+      "next_date": null, "status": "done", "last_modified": "2026-11-01T11:00:00-06:00", "withhold": false, "completed_at": "2026-11-01T11:00:00-06:00" },
+    { "id": "ex-t3", "list": "Waiting on", "title": "confirm the room size", "account": "Fabrikam Example", "person": null,
+      "next_date": "2026-11-06", "status": "waiting", "last_modified": "2026-10-28T09:00:00-05:00", "withhold": false }
   ],
+  "accounts": [
+    { "name": "Northwind Example", "tier": "T1", "domains": ["northwind.example"] },
+    { "name": "Contoso Example", "tier": "other" },
+    { "name": "Fabrikam Example", "tier": "other" }
+  ],
+  "calendar": [],
   "time": null
 }
 ```
 
 The rules the builder follows:
 
-1. Read each line, decide its status from the box (`[ ]`, `[x]`, or `[waiting]`), and pull out a due date and an account tag.
+1. Read each line, decide its status, and pull out the list, the action, the account, and the due date.
 2. Match account names against a list of known accounts.  Put anything it can't match in a separate "unmatched" list instead of guessing.
-3. Read each optional feed (calendar, usage, time) on its own.  If one is missing or broken, set it to `null`, write one log line that names the problem but not the contents, and carry on.
+3. Read each optional feed (events, usage, and time) on its own.  If one is missing or broken, set it to `null`, write one log line that names the problem but not the contents, and carry on.
 4. Check every text field for things that must never be in the snapshot, such as prices or email addresses, and drop that item.
 5. Write the snapshot to a temporary file and rename it, so the dashboard never reads a half-written file.
 
-The time feed format is in `docs/time-feed-schema.md`.
+## 5. Settings: `config.js` and `config.local.js`
 
-## 5. Security habits
+`config.js` is in the repo and holds safe defaults.  Copy `config.local.example.js` to `config.local.js` for anything personal.  `config.local.js` is git-ignored, loads after `config.js`, and may be missing.  It isn't on GitHub Pages, so a hosted copy uses the defaults.
+
+Parameters in `config.local.example.js` (all optional, example values):
+
+| Parameter | Example | What it does |
+|---|---|---|
+| `legacyDbNames` | `["old-dashboard-db"]` | Older IndexedDB database names to copy the browser cache from, once. |
+| `legacyTimeKinds` | `["old-time-log"]` | Older `kind` values still accepted in `time-<machine>.json`. |
+| `snapshotNames` | `["old-snapshot.js", "old-snapshot.json"]` | Extra snapshot file names read from the Data folder. |
+| `internalAccountLabel` | `"Internal (Example Co)"` | What the fixed "Internal" time account is called on screen. |
+| `managerName` | `"Alex"` | The name on the Quick Launch report button and "Copy for <name>".  "Manager" if unset. |
+| `reportNameLine` | `"Jordan P.:"` | The first line of the pasted manager report, if the monthly file has none. |
+
+Other settings you can override the same way (defaults from `config.js`): `tier1Accounts` (`[]`), `snapshotPath` (`"Data/inbox-snapshot.js"`), `notebookLogPath` (`"Data/notebook-log.js"`), `examplePath` (`"examples/example-snapshot.js"`), `staleHours` (`24`), `holdHours` (`24`), `focusRowCap` (`12`), `pollSeconds` (`60`), `projectOwners` (`[]`), and `notebookLogNames` (`[]`).  Put real names only in `config.local.js`, never in `config.js`.
+
+## 6. Hosting
+
+The app is static files, so any static host works.  There is no server code and no build step.
+
+- **Open the file.**  Put the app in a synced folder (for example `<synced folder>/Dashboard/`) and open `index.html` in Chrome or Edge.  This is enough on one computer.
+- **GitHub Pages.**  Push the app (never the `Data/` folder) to a repo, then Settings → Pages → Deploy from a branch → `main` / root.  The https address lets you install it as an app (Edge: ⋯ → Apps → Install this site as an app; iPad Safari: Share → Add to Home Screen).
+- **Any other static host** (an internal web server, Azure Static Web Apps, Netlify, and so on) works the same way.  Serve it over https, and keep the Content Security Policy in `index.html`.
+- `sw.js` caches the app for offline use.  Change its `REV` with every release so browsers pick up the new files.
+
+## 7. Data folder and encryption
+
+1. **Name each computer** on first run (for example `laptop` or `desk`).  It goes into file names such as `time-laptop.json`.
+2. **Connect the Data folder:** click "Connect Data folder", pick `Dashboard/Data` (capital D) in your synced folder, and allow edit.  The app ships no `Data/` folder, so updates never overwrite it.
+3. **Encrypt:** File → Encryption…, choose a passphrase of 12 or more characters, save the recovery key in a password manager, and print a copy.  From then on every data file is an AES-256-GCM envelope (`*.json.enc`), and the browser cache is encrypted too.  A plain file dropped into an encrypted folder is checked, encrypted, and then deleted.
+4. **Other computers:** open the app, connect the same folder, and enter the same passphrase.
+5. **Optional GitHub sync:** create an empty private repo, make a fine-grained token on each device (only that repo, Contents read and write), and enter it under File → GitHub sync….  Only encrypted files are sent, under opaque names.
+
+## 8. Feed schemas
+
+Each feed is a file the dashboard reads from the Data folder or from the snapshot.  All of them use `schema_version: 1` and ISO 8601 times with an offset.
+
+| Feed | File | Spec |
+|---|---|---|
+| Inbox snapshot (tasks, accounts, touches, and meetings) | `inbox-snapshot.js` and `.json` | `docs/inbox-snapshot-schema.md` |
+| Calendar and trips | `calendar-snapshot.json`, `trips.json` | `docs/calendar-feed-schema.md` |
+| Projects | `projects.json`, `projects-store.json` | `docs/projects-feed-schema.md` |
+| Events | the snapshot's `events[]`, plus an imported `events.md` | Below |
+| Usage | the snapshot's `usage` block | Below |
+| Time | the snapshot's `time` block | `docs/time-feed-schema.md` |
+
+**Events.**  The snapshot's optional `events[]` holds dates, times, and places from a shared events calendar:
+
+```json
+{ "id": "ev-expo-1", "title": "Example Expo 2026", "start_date": "2026-11-18", "end_date": "2026-11-20", "all_day": true,
+  "start": null, "end": null, "zone": "America/Chicago", "location": "Hall B, Springfield", "category": null, "show_as": null }
+```
+
+`title`, `start_date`, `end_date`, and `all_day` are required.  A timed event (`all_day: false`) needs `start` and `end` with an offset.  `zone` is an IANA zone.  A bad item is dropped and the rest are kept.  Details come from an `events.md` file (File → Import events (events.md)…) with front matter `type: data` and a table with these 14 columns: event, start date, end date, location, series/organizer, status, role, target accounts, registration deadline, room-block deadline, travel, trip ref, follow-ups, and source note.  See `examples/example-events.js` and `tests/fixtures/example-events.md`.
+
+**Usage.**  The snapshot's optional `usage` block feeds the usage square on Daily Focus:
+
+```json
+{ "as_of": "2026-11-02T07:00:00-06:00", "weekly_used_pct": 42, "weekly_resets": "2026-11-06T00:00:00-06:00",
+  "on_demand_pct": 18.5, "on_demand_maxed": false, "on_demand_resets": "2026-11-04T00:00:00-06:00", "detail_url": "https://usage.example/dashboard" }
+```
+
+The three times need an offset, the two percents are numbers from 0, and `on_demand_maxed` is true or false.  `detail_url` is kept only if it is https with no user name or password.  Percentages only, never dollar amounts.
+
+The time feed is described in full in `docs/time-feed-schema.md`.
+
+## 9. Security habits
 
 - Keep real data out of the code repo.  Put only fictional examples there, and add a check script that fails if anything real slips in.
 - Encrypt in the browser with the Web Crypto API (AES-GCM, with a key derived from your passphrase).  Never store the passphrase.
@@ -73,7 +150,7 @@ The time feed format is in `docs/time-feed-schema.md`.
 - Label anything you print or copy with your company's classification label, if it has one.
 - Test with example data and a scratch copy of any real folder, never the real folder itself.
 
-## 6. A build prompt you can paste
+## 10. A build prompt you can paste
 
 This prompt works with any AI coding assistant.  Change the parts in angle brackets.
 
@@ -115,7 +192,7 @@ Ask me before adding anything that sends data off my computer.
 - Ask it to run the tests and take screenshots with example data after each step, so you can check the views before moving on.
 - Tell it which folders it may write to, and that it must never push or publish without asking you.
 
-## 7. Checklist before you use real data
+## 11. Checklist before you use real data
 
 - [ ] All tests pass with example data.
 - [ ] The check script finds no real names, accounts, or figures in the repo.
