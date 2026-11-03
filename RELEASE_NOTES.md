@@ -1,5 +1,12 @@
 # Release notes — Activity Dashboard
 
+## 00.11.002_261103 (Nov 3 2026)
+- **SAM bullets** open in a side drawer, straight from the notebook.  Copy one account or Copy all once Notebook marks the month final; a Draft month shows the bullets with Copy turned off.  Until the 19th it opens last month, from the 20th this month.
+- **Notebook access** (File menu): add a notebook-only token once per computer.  It's stored encrypted, cleared when you Lock, and never exported.
+- **Notebook Outbox**: when you clear a to-do or update a project, a short line waits in the Outbox (unchecked), and any note you type goes in checked.  You pick what to send.  Sending adds them to that day's inbox file on the dashboard/inbox branch, which Notebook merges.  Notes you don't send stay until you send or discard them.
+- **Opened snapshots sync**: File → Open snapshot… now saves the snapshot encrypted, so your other computers get it.  The newer snapshot always wins.
+- Saves that wait for the next sync (Projects, Accounts, Events, Links) now hold a reload instead of being dropped, and say so in the sync chip.
+
 ## 00.11.001_261102 (Nov 2 2026)
 - Saves run on their own.  Time entries and Log Touch save to the Data folder automatically, with no manual sync step.
 - A failed save stays queued on this computer (encrypted, never plaintext), retries with backoff (5 s up to 5 min), and survives a reload or an update.

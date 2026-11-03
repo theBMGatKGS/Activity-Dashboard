@@ -13,3 +13,11 @@
 The full Help, How Do I, FAQ and Revision log are in the app's Help menu.
 
 Want to build your own?  See `docs/COLLEAGUE_BUILD_GUIDE.md`.
+
+## Notebook access (00.11.002)
+1. File → Links…: set the notebook repo address (for example `https://github.com/your-account/notebook`).
+2. On github.com: your picture → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token.
+3. Expiration 90 days.  Repository access: Only select repositories → the notebook repo.  Repository permissions → Contents: Read and write (Metadata: Read-only is added on its own).
+4. Store the token in your password manager.  Never paste it in a chat.
+5. File → Notebook access…: paste it and Save.  It's stored encrypted in this browser only, and cleared from memory when you Lock.
+6. SAM bullets (Quick Launch or File → SAM bullets…) now loads the month's bullets.  The Outbox chip (📓) shows notes waiting to send; sending appends to `inbox/dashboard/YYYY-MM-DD.md` on the `dashboard/inbox` branch, which Notebook merges.
