@@ -2785,7 +2785,7 @@ ${ask}
   }
   function closeMenus() { document.querySelectorAll(".mtop").forEach(b => { b.setAttribute("aria-expanded", "false"); b.nextElementSibling.classList.add("hidden"); }); }
 
-  window.DASH.app = { nbOps: { attachNotebook, saveNotebookToken, nbForget, openSamDrawer, samLoad, openOutbox, sendOutbox, queueNote, noteForNotebook, openSnapshotFile, runRetry, focusDone: id => focusDone(id) }, saveLinksNow: () => saveLinks(true), timeOps: { loadTime, saveTime, timerStart, timerStop, tEntries, importReportFiles, logTouch, renderAgenda }, state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel, checkTz, setOwner, projectsModel, saveStore, projOps, accountsModel, importAccountFiles, importContactsFile, renameChoice };
+  window.DASH.app = { nbOps: { attachNotebook, saveNotebookToken, nbForget, openSamDrawer, samLoad, openOutbox, sendOutbox, queueNote, noteForNotebook, openSnapshotFile, runRetry: () => { clearTimeout(retryT); retryT = null; return runRetry(); }, focusDone: id => focusDone(id) }, saveLinksNow: () => saveLinks(true), timeOps: { loadTime, saveTime, timerStart, timerStop, tEntries, importReportFiles, logTouch, renderAgenda }, state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel, checkTz, setOwner, projectsModel, saveStore, projOps, accountsModel, importAccountFiles, importContactsFile, renameChoice };
   window.addEventListener("beforeunload", e => { if (pending.size) { e.preventDefault(); e.returnValue = ""; } });
   boot();
 })();
