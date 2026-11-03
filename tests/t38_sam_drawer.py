@@ -85,6 +85,13 @@ with sync_playwright() as p:
     pg.click('.mtop:has-text("File")'); pg.click('[data-act="notebook"]'); pg.wait_for_selector("#nbdlg"); pg.click("#nb-off"); pg.wait_for_function("() => DASH.app.state.nb === null && !document.querySelector('#nbdlg')", timeout=30000)
     check(pg.evaluate("DASH.app.state.nb === null"), "Forget on this computer drops the client")
     c.close()
+    # H1: a New York browser still shows CT times in the drawer
+    cN = env.context(b, "America/New_York"); pn = env.page(cN, Q(), errors, logs); NH.unlock(pn); NH.sync(pn); NH.token(pn)
+    env.forced["reports/sam-activity/2026-07.md"] = (429, 1); pn.evaluate("DASH.app.nbOps.openSamDrawer('2026-07')"); drawer_state(pn)
+    check("limiting requests until 13:40 CT" in pn.inner_text("#samdrawer"), "H1: New York browser: reset time in CT (" + pn.inner_text("#sd-msg") + ")")
+    pn.evaluate("DASH.app.nbOps.openSamDrawer('2026-10')"); drawer_state(pn)
+    check(pn.inner_text("#sd-at") == "Loaded 10:00 CT", "H1: New York browser: Loaded time in CT (" + pn.inner_text("#sd-at") + ")")
+    cN.close()
     # example mode: no requests
     env2 = NH.Env(); (env2.data / "inbox-snapshot.json").unlink(); c = env2.context(b); pg = env2.page(c, Q(), errors, logs)
     pg.evaluate("DASH.app.nbOps.openSamDrawer()"); drawer_state(pg)

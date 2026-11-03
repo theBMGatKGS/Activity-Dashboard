@@ -381,7 +381,7 @@
   async function readName(name) { const h = await S.dir.getFileHandle(name); return readText(h); }
   async function loadKeyring() {
     try { const r = await readName(KEYRING); S.seen[KEYRING] = r.sig; const kr = V.parseKeyring(r.text);
-      if (S.vault.kr && S.vault.kr.keyId !== kr.keyId) { S.vault.key = null; }   // a different keyring replaced this one
+      if (S.vault.kr && S.vault.kr.keyId !== kr.keyId) { S.vault.key = null; nbDetach(); }   // QA L2: the notebook token leaves memory too   // a different keyring replaced this one
       S.vault.kr = kr; await DB.requireEncryption(); return kr; }
     catch (e) { if (e && e.name !== "NotFoundError") S.problems.push(`${KEYRING}: ${e.message || e}`); return null; }
   }
@@ -668,7 +668,7 @@
       if (hubKr && hubKr.keyId !== S.vault.kr.keyId) throw new Error("That repo already holds data from a different encryption setup (another keyring). Use an empty repo, or this folder's passphrase setup everywhere.");
       await saveHub(repo, token); attachHub(repo, token);
     } else if (hubKr) {                             // iPad / no folder, hub already set up by another computer
-      if (!S.vault.kr || S.vault.kr.keyId !== hubKr.keyId) { S.vault.kr = hubKr; S.vault.key = null; await DB.requireEncryption(); }
+      if (!S.vault.kr || S.vault.kr.keyId !== hubKr.keyId) { S.vault.kr = hubKr; S.vault.key = null; nbDetach(); await DB.requireEncryption(); }
       if (!(await ensureUnlocked())) return "cancelled";
       await saveHub(repo, token); attachHub(repo, token);
     } else {                                        // no folder and an empty hub: start encryption here, straight into GitHub
@@ -1461,8 +1461,10 @@
   const NB = DASH.notebook, SD = DASH.samdrawer, NI = DASH.nbinbox;
   Object.assign(S, { nb: null, nbState: { k: "missing" }, samCache: {}, samMonth: null, samView: null, outbox: NI.empty(), outboxLoaded: false, nbSend: { err: null, readOnly: null, lastUrl: null }, retryLog: [] });
   const nbRepo = l => String(l && l.repo || "").replace(/^https?:\/\/github\.com\//, "").replace(/\/+$/, "").replace(/\.git$/, "");
-  const nbTz = () => (R.getTimeZone && R.getTimeZone()) || "America/Chicago";
-  const nbZone = () => ZONE_LAB[nbTz()] || nbTz();
+  // 00.11.002 (QA H1): drawer and Outbox times are always Central Time with a CT label, whatever this computer's zone is (Notebook: entries carry a CT timestamp)
+  const nbTz = () => "America/Chicago";
+  const nbZone = () => "CT";
+  const ctHm = iso => new Intl.DateTimeFormat("en-GB", { timeZone: "America/Chicago", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(iso));
   async function nbCfg() { try { return (await DB.get("nbCfg")) || null; } catch (e) { return null; } }
   async function attachNotebook() {
     S.nb = null; const cfg = await nbCfg();
@@ -1541,7 +1543,7 @@
     }
     S.samCache[month] = v; return v;
   }
-  const resetCT = s => { if (!s) return "later"; const iso = new Date(s * 1000).toISOString(); return zoneHm(iso) + " " + nbZone(); };
+  const resetCT = s => { if (!s) return "later"; const iso = new Date(s * 1000).toISOString(); return ctHm(iso) + " " + nbZone(); };
   async function openSamDrawer(month) {
     S.samMonth = month || TM.defaultMonth(S.today); S.drawerKind = "sam";
     drawerShell("SAM bullets"); renderDrawer(); await samRefresh(false);
@@ -1583,7 +1585,7 @@
     return `<div class="sdhead"><b>☑ SAM bullets</b>${chip}<span class="sdsp"></span><button class="btn" data-sd="refresh" aria-label="Reload from the notebook" title="Reload">↻</button><button class="btn" id="sd-close" data-sd="close" aria-label="Close">✕</button></div>
       <div class="sdmonth"><button class="btn" data-sd="prev" aria-label="Previous month">‹</button><b id="sd-month">${esc(mLabel(m))}</b><button class="btn" data-sd="next" aria-label="Next month"${m >= cur ? " disabled" : ""}>›</button>${v.example ? ` <span class="sdchip draft">EXAMPLE</span>` : ""}</div>
       <div class="sdbody">${body}</div>
-      <div class="sdfoot"><span class="mono faint">${esc(srcPath)}</span>${a(srcUrl, "Sources")}${a(gh, "Open on GitHub", "sd-gh")}${a(ob, "Open in Obsidian")}${v.at ? `<span class="faint" id="sd-at">Loaded ${esc(zoneHm(v.at))} ${esc(nbZone())}</span>` : ""}</div>`;
+      <div class="sdfoot"><span class="mono faint">${esc(srcPath)}</span>${a(srcUrl, "Sources")}${a(gh, "Open on GitHub", "sd-gh")}${a(ob, "Open in Obsidian")}${v.at ? `<span class="faint" id="sd-at">Loaded ${esc(ctHm(v.at))} ${esc(nbZone())}</span>` : ""}</div>`;
   }
   async function copyPlain(txt) {
     try { await navigator.clipboard.writeText(txt); toast("Copied."); }
@@ -1617,7 +1619,7 @@
   async function saveOutbox() { renderOutboxChip(); if (!obCanKeep()) return; try { await DB.set("outbox", S.outbox); } catch (e) { await persistPending(); } }
   function queueNote(n) {
     if (!obCanKeep()) { if (!n.auto && !tExample()) toast("⚠ Notebook notes need an encrypted, unlocked Data folder."); return null; }
-    const before = S.outbox.notes.length; S.outbox = NI.addNote(S.outbox, n); if (S.outbox.notes.length === before) return null;
+    const before = S.outbox.notes.length; S.outbox = NI.addNote(S.outbox, Object.assign({ at: nowDate().toISOString() }, n)); if (S.outbox.notes.length === before) return null;
     saveOutbox(); return S.outbox.notes[S.outbox.notes.length - 1].id;
   }
   function renderOutboxChip() { const c = $("#outboxchip"); if (!c) return; const n = S.outbox.notes.length; c.textContent = `📓 Outbox${n ? " · " + n : ""}${outboxOwed() ? " · ⟳" : ""}`; c.classList.toggle("hidden", tExample() || !obCanKeep() && !n); c.classList.toggle("stale", !!(S.nbSend.readOnly || outboxOwed())); }
@@ -1634,7 +1636,7 @@
     const kind = x => x.kind === "project" ? "Project update" : x.kind === "todo" ? "To Do cleared" : "Note";
     return `<div class="sdhead"><b>📓 Notebook Outbox</b><span class="sdsp"></span><button class="btn" id="sd-close" data-sd="close" aria-label="Close">✕</button></div>
       <div class="sdbody">${roMsg}${S.nbSend.err ? `<div class="sdwarn" id="ob-err">⟳ Not sent yet (${esc(S.nbSend.err)}); retrying on its own.  Notes stay in the Outbox.</div>` : ""}
-      ${n.length ? `<ul class="oblist">${n.map(x => `<li class="obitem${x.auto ? " auto" : ""}"><label class="obck"><input type="checkbox" data-obchk="${esc(x.id)}"${x.checked ? " checked" : ""} aria-label="Send: ${esc(x.ref)}"> <span class="faint">${esc(zoneHm(x.at))} ${esc(nbZone())} · ${kind(x)}${x.auto ? " · automatic" : ""}${(S.outbox.sending || []).includes(x.id) ? " · sending" : ""}</span></label>
+      ${n.length ? `<ul class="oblist">${n.map(x => `<li class="obitem${x.auto ? " auto" : ""}"><label class="obck"><input type="checkbox" data-obchk="${esc(x.id)}"${x.checked ? " checked" : ""} aria-label="Send: ${esc(x.ref)}"> <span class="faint">${esc(ctHm(x.at))} ${esc(nbZone())} · ${kind(x)}${x.auto ? " · automatic" : ""}${(S.outbox.sending || []).includes(x.id) ? " · sending" : ""}</span></label>
         <div class="obref">${esc(x.ref)}</div><textarea class="obtext" rows="2" data-obtext="${esc(x.id)}" aria-label="Note text">${esc(x.text)}</textarea><button class="btn linkbtn" data-ob="discard" data-id="${esc(x.id)}">Discard</button></li>`).join("")}</ul>`
         : `<p class="sdmsg" id="ob-empty">No notes waiting.  Add one when you clear a to-do or update a project.</p>`}
       <p class="faint">Appends to <span class="mono" id="ob-target">${esc(obTarget())}</span> on the <span class="mono">${esc(NB.WRITE_BRANCH)}</span> branch (Notebook merges it).</p>

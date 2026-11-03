@@ -10,11 +10,12 @@
   const REPO_RE = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/, BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,99}$/;
   const BULLETS = /^reports\/sam-activity\/\d{4}-(0[1-9]|1[0-2])\.md$/;
   const INBOX = /^inbox\/dashboard\/\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\.md$/;
+  const realDay = p => { const m = p.match(/(\d{4})-(\d\d)-(\d\d)\.md$/); const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])); return d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3]; };   // QA L1: no 2026-02-31
   const SAFE = p => typeof p === "string" && !p.includes("..") && !p.includes("\\") && !p.startsWith("/") && /^[A-Za-z0-9._\/-]{1,200}$/.test(p);
   function pathKind(p, sources) {
     if (!SAFE(p)) return null;
     if (BULLETS.test(p)) return "bullets";
-    if (INBOX.test(p)) return "inbox";
+    if (INBOX.test(p)) return realDay(p) ? "inbox" : null;
     if (sources && SAFE(sources.replace("{month}", "2000-01"))) {
       const re = new RegExp("^" + sources.split("{month}").map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\d{4}-(0[1-9]|1[0-2])") + "$");
       if (sources.includes("{month}") && re.test(p)) return "sources";

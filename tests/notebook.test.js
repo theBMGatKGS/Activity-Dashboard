@@ -10,8 +10,8 @@ const TOKEN = "github_pat_" + "N".repeat(40), SRC = "crm/outbox/sam-report/{mont
 (async () => {
   check(NB.pathKind("reports/sam-activity/2026-10.md") === "bullets", "NB1 bullets path");
   check(NB.pathKind("crm/outbox/sam-report/2026-10/sources.md", SRC) === "sources", "NB2 sources path from the Links pattern");
-  check(NB.pathKind(DAY) === "inbox", "NB3 inbox path");
-  const bad = ["reports/sam-activity/../x.md", "inbox/dashboard/2026-11-03.md/../../Home.md", "Home.md", "inbox/dashboard/notes.md", "/inbox/dashboard/2026-11-03.md", "inbox\\dashboard\\2026-11-03.md", "reports/sam-activity/2026-13.md", "inbox/dashboard/2026-11-32.md", "crm/outbox/sam-report/x/sources.md", "", null];
+  check(NB.pathKind(DAY) === "inbox" && NB.pathKind("inbox/dashboard/2028-02-29.md") === "inbox", "NB3 inbox path (leap day ok)");
+  const bad = ["reports/sam-activity/../x.md", "inbox/dashboard/2026-11-03.md/../../Home.md", "Home.md", "inbox/dashboard/notes.md", "/inbox/dashboard/2026-11-03.md", "inbox\\dashboard\\2026-11-03.md", "reports/sam-activity/2026-13.md", "inbox/dashboard/2026-11-32.md", "inbox/dashboard/2026-02-31.md", "inbox/dashboard/2026-04-31.md", "inbox/dashboard/2025-02-29.md", "crm/outbox/sam-report/x/sources.md", "", null];
   check(bad.every(b => NB.pathKind(b, SRC) === null), "NB4 traversal, other files and bad dates refused");
   check(NB.WRITE_BRANCH === "dashboard/inbox", "NB5 the write branch is hard-coded dashboard/inbox");
   const fake = fakeNotebook(); const c = NB.client({ repo: "owner/notebook", token: TOKEN, branch: "main", sources: SRC, fetch: fake.fetch });

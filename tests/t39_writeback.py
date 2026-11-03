@@ -94,6 +94,16 @@ with sync_playwright() as p:
     rest = NH.at_rest(pg) + env.folder_text()
     check(not any(t in rest for t in ("Placeholder follow-up booked", "Placeholder update two", "Placeholder retry note", "Placeholder reload note", "Example retry", "Placeholder wrap-up note")), "(k) no plaintext note text in IndexedDB, localStorage or the Data folder")
     exp = json.dumps(pg.evaluate("DASH.db.exportAll()")); check("outbox" not in exp and "Placeholder" not in exp, "the Outbox is not in Export local data")
+    # H1: a New York browser writes the CT day file and CT line times
+    cN = env.context(b, "America/New_York"); pn = env.page(cN, "?now=2026-11-03T23:30:00-06:00&machine=desk2&view=dashboard", errors, logs); NH.unlock(pn); NH.sync(pn); NH.token(pn)
+    pn.evaluate("DASH.app.nbOps.queueNote({kind: 'todo', ref: 'Example late', text: 'Placeholder late note.', auto: false})")
+    pn.evaluate("DASH.app.nbOps.openOutbox()"); pn.wait_for_selector("#ob-target")
+    check(pn.inner_text("#ob-target") == DAY and "23:30 CT · To Do cleared" in pn.inner_text("#ob-preview"), "H1: New York browser at 00:30 ET: day file and line time in CT (" + pn.inner_text("#ob-target") + ")")
+    pn.click("#ob-send"); pn.evaluate("DASH.app.nbOps.sendOutbox([])")
+    check("- 23:30 CT · To Do cleared · Example late: Placeholder late note." in (env.get(DAY, BR) or "") and "America/New_York" not in env.get(DAY, BR), "H1: the appended line carries a CT timestamp")
+    cN.close()
+    # L4: Clear local data wipes the encrypted Outbox
+    pg.evaluate("DASH.db.clearAll()"); check(pg.evaluate("DASH.db.getRaw('outbox')") is None, "L4: Clear local data wipes the Outbox")
     # locked: Send disabled
     pg.click('.mtop:has-text("File")'); pg.click('[data-act="encryption"]'); pg.click('[data-v="lock"]'); pg.wait_for_function("() => DASH.app.state.vault.locked && DASH.app.state.nb === null", timeout=30000)
     check(pg.evaluate("DASH.app.state.nb === null"), "Lock clears the notebook client")

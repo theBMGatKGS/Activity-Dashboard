@@ -76,8 +76,8 @@ class Env:
         return reply(405, {"message": "nope"})
     def puts(self): return [c for c in self.calls if c["method"] in ("PUT", "POST", "DELETE", "PATCH")]
     # ---- browser ----
-    def context(self, b):
-        c = b.new_context(viewport={"width": 1440, "height": 900}); c.expose_function("__fs", self.fs); c.add_init_script(FS_JS)
+    def context(self, b, tz=None):
+        c = b.new_context(viewport={"width": 1440, "height": 900}, **({"timezone_id": tz} if tz else {})); c.expose_function("__fs", self.fs); c.add_init_script(FS_JS)
         c.route("https://api.github.com/**", self.handle); return c
     def page(self, c, q, errors, logs=None):
         pg = c.new_page(); pg.on("pageerror", lambda e: errors.append(str(e))); pg.on("dialog", lambda d: d.accept())
