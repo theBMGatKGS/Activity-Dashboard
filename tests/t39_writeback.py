@@ -79,6 +79,12 @@ with sync_playwright() as p:
     nid = [n["id"] for n in OB(pg)["notes"] if "denied" in n["text"]][0]
     pg.evaluate("DASH.app.nbOps.openOutbox()"); pg.click(f'[data-ob="discard"][data-id="{nid}"]'); pg.evaluate("DASH.app.flush()")
     check(not any(n["id"] == nid for n in OB(pg)["notes"]), "Discard removes a note"); close(pg)
+    # task editor: typed note (checked) + automatic status line (unchecked)
+    pg.evaluate("(() => { const o = DASH.app.projOps; o.addPlan('Example plan'); const S = DASH.app.state, pl = S.projStore.plans[0]; o.saveTask(pl.id, { id: 'T-ex1', title: 'Example task', bucketId: pl.buckets[0].id, assignees: [], status: 'notStarted', percent: 0, start: null, due: null, priority: 'medium', labels: [], notes: '', account: null, checklist: [] }); })()")
+    pg.evaluate("document.querySelector('[data-act=vProjects]').click()"); pg.wait_for_selector("[data-pedit='T-ex1']"); pg.click("[data-pedit='T-ex1']"); pg.wait_for_selector("#pd-nbnote")
+    n0 = len(OB(pg)["notes"]); pg.select_option("#pd-status", "completed"); pg.fill("#pd-nbnote", "Placeholder wrap-up note."); pg.click("#pd-save"); pg.evaluate("DASH.app.flush()")
+    new = OB(pg)["notes"][n0:]
+    check(len(new) == 2 and new[0]["auto"] and not new[0]["checked"] and "Completed" in new[0]["text"] and not new[1]["auto"] and new[1]["checked"] and new[1]["text"] == "Placeholder wrap-up note." and new[1]["ref"] == "Example plan › Example task", "task editor: automatic status line unchecked, typed note checked (1C)")
     # (c) only the inbox day file is ever written, only on dashboard/inbox
     w = env.puts(); puts = [x for x in w if x["method"] == "PUT"]; posts = [x for x in w if x["method"] == "POST"]
     check({x["url"].split("/contents/")[1] for x in puts} == {DAY} and all(json.loads(x["body"])["branch"] == BR for x in puts), "(c) every PUT is inbox/dashboard/2026-11-03.md on dashboard/inbox")
@@ -86,7 +92,7 @@ with sync_playwright() as p:
     check(not [x for x in w if x["method"] in ("DELETE", "PATCH")], "(c) no DELETE or PATCH")
     # (k) nothing plaintext at rest
     rest = NH.at_rest(pg) + env.folder_text()
-    check(not any(t in rest for t in ("Placeholder follow-up booked", "Placeholder update two", "Placeholder retry note", "Placeholder reload note", "Example retry")), "(k) no plaintext note text in IndexedDB, localStorage or the Data folder")
+    check(not any(t in rest for t in ("Placeholder follow-up booked", "Placeholder update two", "Placeholder retry note", "Placeholder reload note", "Example retry", "Placeholder wrap-up note")), "(k) no plaintext note text in IndexedDB, localStorage or the Data folder")
     exp = json.dumps(pg.evaluate("DASH.db.exportAll()")); check("outbox" not in exp and "Placeholder" not in exp, "the Outbox is not in Export local data")
     # locked: Send disabled
     pg.click('.mtop:has-text("File")'); pg.click('[data-act="encryption"]'); pg.click('[data-v="lock"]'); pg.wait_for_timeout(300)
