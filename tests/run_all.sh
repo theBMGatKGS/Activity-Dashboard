@@ -3,7 +3,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"; ROOT="$(dirname "$HERE")"
 cd "$ROOT"
-node --check js/frame.js && node --check js/hub.js && node --check js/vault.js && node --check sw.js && node --check js/rules.js && node --check js/accounts.js && node --check js/events.js && node --check js/usage.js && node --check js/timelog.js && node --check js/agenda.js && node --check js/mreport.js && node --check examples/example-events.js && node --check js/sync.js && node --check js/db.js && node --check js/app.js
+node --check js/frame.js && node --check js/hub.js && node --check js/vault.js && node --check sw.js && node --check js/rules.js && node --check js/accounts.js && node --check js/events.js && node --check js/usage.js && node --check js/timelog.js && node --check js/agenda.js && node --check js/mreport.js && node --check js/notebook.js && node --check js/samdrawer.js && node --check js/nbinbox.js && node --check examples/example-sam-accounts.js && node --check examples/example-events.js && node --check js/sync.js && node --check js/db.js && node --check js/app.js
 node "$HERE/rules.test.js"
 node "$HERE/accounts.test.js"
 node "$HERE/events.test.js"
@@ -14,6 +14,9 @@ node "$HERE/mreport.test.js"
 node "$HERE/sync.test.js"
 node "$HERE/vault.test.js"
 node "$HERE/hub.test.js"
+node "$HERE/notebook.test.js"
+node "$HERE/samdrawer.test.js"
+node "$HERE/nbinbox.test.js"
 node --check tools/encrypt_file.js
 python3 "$HERE/check_no_real_data.py" "$ROOT"
 python3 "$HERE/test_make_log_js.py"
@@ -37,5 +40,8 @@ python3 "$HERE/t34_links_sync.py" "${SHOTS_DIR:-$(mktemp -d -t dash-t34-XXXX)}"
 python3 "$HERE/t35_usage.py" "${SHOTS_DIR:-$(mktemp -d -t dash-t35-XXXX)}"
 python3 "$HERE/t36_time_agenda.py" "${SHOTS_DIR:-$(mktemp -d -t dash-t36-XXXX)}"
 python3 "$HERE/t37_autosave.py" "${SHOTS_DIR:-$(mktemp -d -t dash-t37-XXXX)}"
+python3 "$HERE/t38_sam_drawer.py" "${SHOTS_DIR:-$(mktemp -d -t dash-t38-XXXX)}"
+python3 "$HERE/t39_writeback.py"
+python3 "$HERE/t40_snapshot_hub.py"
 python3 "$HERE/shots.py" "${SHOTS_DIR:-$(mktemp -d -t dash-shots-XXXX)}"
 echo "ALL TESTS PASSED"

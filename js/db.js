@@ -40,7 +40,7 @@
   // 00.03.001: cached data (SECRET keys) is encrypted with the Data folder's key once the folder is encrypted. cipher = {enc, dec}
   // (text <-> envelope text, AES-256-GCM via DASH.vault) is set by the app while unlocked. "cacheEncrypted" (plain flag) is set as
   // soon as a keyring is seen: from then on a SECRET key is never written in the clear, and while locked it isn't written at all.
-  const SECRET = new Set(["timeStore", "timeTimer", "timeLast", "reportsStore", "ownEvents", "timeEntries", "calTombstones", "history", "audienceRules", "openedSnapshot", "clearBase", "calendarSnap", "trips", "projectsFeed", "projectsStore", "accountsStore", "contacts", "historyBackup0901", "eventsStore", "links"]);
+  const SECRET = new Set(["timeStore", "timeTimer", "timeLast", "reportsStore", "ownEvents", "timeEntries", "calTombstones", "history", "audienceRules", "openedSnapshot", "clearBase", "calendarSnap", "trips", "projectsFeed", "projectsStore", "accountsStore", "contacts", "historyBackup0901", "eventsStore", "links", "outbox"]);
   let cipher = null, mustEncrypt = false;
   const isEnv = v => !!(v && typeof v === "object" && v.dashCache === 1 && typeof v.env === "string");
   function getRaw(k) {

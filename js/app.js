@@ -3,7 +3,7 @@
   "use strict";
   if (window.DASH && window.DASH.framed) return;   // 00.04: inside another site's frame nothing starts (js/frame.js)
   const R = DASH.rules, A = DASH.accounts, E = DASH.events, DB = DASH.db, CFG = window.DASH_CONFIG || {};
-  const REV = "00.11.001_261102";
+  const REV = "00.11.002_261103";
   const $ = s => document.querySelector(s);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const qp = new URLSearchParams(location.search);
@@ -174,6 +174,8 @@
     await flush(); await new Promise(r => setTimeout(r, 0));
     // 00.11.001: unsaved time and touches are parked in the encrypted pending queue; once parked, a reload loses nothing.
     if (writeFails.length && (!saveOwed() || await persistPending())) { writeFails.length = 0; delete S.saveProblems.write; }
+    // 00.11.002 (QA M1): a store that only saves at the next sync is never dropped by a reload, locked or not, encrypted or not
+    if (S.unsyncedStores.size || S.pendingHeld) { const n = S.unsyncedStores.size; banner(S.pendingHeld ? "⚠ Pending saves are too large for this browser's storage, so the dashboard did not reload.  It reloads once the next save succeeds." : `⚠ ${n} store${n > 1 ? "s" : ""} (${[...S.unsyncedStores].join(", ")}) not saved to the Data folder yet, so the dashboard did not reload.  ${n > 1 ? "They save" : "It saves"} at the next sync; try again after that.`, true); renderSync(); writeFails.length = 0; return false; }
     if (writeFails.length) { const n = writeFails.length; if (!S.problems.includes(S.saveProblems.write)) S.problems.push(S.saveProblems.write); banner(`⚠ ${n} save${n > 1 ? "s" : ""} failed, so the dashboard did not reload.  Check the sync chip, then try again.`, true); renderSync(); writeFails.length = 0; return false; }
     location.reload(); return true;
   }
@@ -191,7 +193,7 @@
   // This machine writes only Data/time-<machine>.json; it reads every Data/time-*.json (conflict copies too) and folds
   // them with DASH.sync (last writer wins per entry: timestamp, then machine name). IndexedDB keeps a cache + this machine's events.
   const R2 = DASH.sync, POLL_MS = (CFG.pollSeconds || 60) * 1000;
-  Object.assign(S, { saveProblems: {}, clock: R2.clock(), future: [], fileProblems: {}, machine: null, own: [], fileEvents: {}, seen: {}, problems: [], dir: null, dirStored: null, granted: false, lastSync: null, machines: [], view0: { entries: [], removedCal: [], domainMap: {} } });
+  Object.assign(S, { unsyncedStores: new Set(), pendingHeld: false, saveProblems: {}, clock: R2.clock(), future: [], fileProblems: {}, machine: null, own: [], fileEvents: {}, seen: {}, problems: [], dir: null, dirStored: null, granted: false, lastSync: null, machines: [], view0: { entries: [], removedCal: [], domainMap: {} } });
   const isExample = () => S.snap && S.snap.example && !S.allowExampleWrites;
   function learned(rules) { const d = (rules && rules.domainMap) || {}, b = R.DEFAULT_RULES.domainMap, o = {}; Object.keys(d).forEach(k => { if (b[k] !== d[k]) o[k] = d[k]; }); return o; }
   function recompute() {
@@ -577,7 +579,7 @@
     (d, done) => d.querySelectorAll("[data-v]").forEach(b => b.onclick = () => done(b.dataset.v)));
     if (act === "rem") { await rememberKey(!S.vault.remembered); toast(S.vault.remembered ? "Remembered on this computer." : "Forgotten: you'll be asked for the passphrase next time."); }
     // Lock: the hub client (and the token it holds) and the name codec leave memory too; unlocking attaches them again.
-    if (act === "lock") { detachHub(); hubCodec = null; DB.setCipher(null); S.vault.key = null; await rememberKey(false); S.vault.locked = true; banner("🔒 Locked. File → Encryption… to unlock.", true); renderSync(); }
+    if (act === "lock") { detachHub(); nbDetach(); hubCodec = null; DB.setCipher(null); S.vault.key = null; await rememberKey(false); S.vault.locked = true; banner("🔒 Locked. File → Encryption… to unlock.", true); renderSync(); }
     if (act === "del") await deletePlainNow();
     if (act === "discardHist" && confirm("Discard the backup of your trend history kept by the 00.09.001 cleanup?\n\nYour current history is not changed.  Without the backup, the removed example weeks can't be put back.\n\nOK = discard. Cancel = keep it (it is discarded on its own after 30 days).")) { await DB.set("historyBackup0901", undefined); S.vault.hasHistBackup = false; toast("History backup discarded."); }
     if (act && act.startsWith("ref:")) await deleteRefused(act.slice(4));
@@ -922,14 +924,15 @@
       if (hubDown) { warn = true; act = "hub"; }
       txt = `${hubDown ? "⚠ GitHub not connected" : `${warn ? "⚠" : S.vault && S.vault.kr ? "🔐" : "⟳"} Synced ${hhmm(S.lastSync)}`} · ${ms}${warn ? ` · ${S.problems.length} problem${S.problems.length > 1 ? "s" : ""}` : ""}`; tip = (warn ? S.problems.join("\n") + "\n\n" : "") + `Machines seen: ${ms}. Checks ${S.hubOnly ? "GitHub" : S.hub ? "the Data folder and GitHub" : "the Data folder"} every ${POLL_MS / 1000} s. Click to sync now.`;
       if (S.hub) txt += S.hubState.error ? " · ☁ ⚠" : " · ☁"; }
-    if (S.saveProblems && S.saveProblems.write) { txt += " · ⟳ retrying save"; tip = S.saveProblems.write + "\n\n" + tip; }   // 00.11.001: status only; retries run on their own
+    if (S.saveProblems && S.saveProblems.write) { txt += " · ⟳ retrying save"; tip = S.saveProblems.write + "\n\n" + tip; }
+    else if (S.unsyncedStores && S.unsyncedStores.size) { txt += " · ⚠ save pending"; tip = [...S.unsyncedStores].map(x => S.saveProblems["u:" + x]).filter(Boolean).join("\n") + "\n\n" + tip; }   // 00.11.002 (QA M2)   // 00.11.001: status only; retries run on their own
     c.textContent = txt; c.title = tip; c.dataset.act = act; c.classList.toggle("stale", warn);
   }
   function pickFiles(accept, cb) { const i = document.createElement("input"); i.type = "file"; i.accept = accept; i.multiple = true; i.onchange = async () => { const out = []; for (const f of i.files) out.push([f.name, await f.text()]); cb(out); }; i.click(); }
 
   // ---------- render ----------
   function render() {
-    renderHeader(); renderTimer();
+    renderHeader(); renderTimer(); renderOutboxChip();
     document.querySelectorAll(".view").forEach(v => v.classList.toggle("hidden", v.id !== "view-" + S.view));
     document.querySelectorAll(".tab").forEach(t => t.setAttribute("aria-selected", String(t.dataset.view === S.view)));
     if (!S.snap) return;
@@ -1251,7 +1254,7 @@
     if (S.evExample || (S.snap && S.snap.example) || !S.evStore) { render(); return; }   // rev 3: never written while EXAMPLE DATA is shown
     const body = { schema_version: 1, updated_at: S.evStore.updated_at, events: S.evStore.events, answers: S.evStore.answers, source_sha256: S.evStore.source_sha256 };
     track(DB.set("eventsStore", body));
-    if (canSaveToFolder()) await track(writeVerified(EVENTS_NAME + ".enc", "events", JSON.stringify(body)));
+    if (canSaveToFolder()) await track(storeWrite("events", () => writeVerified(EVENTS_NAME + ".enc", "events", JSON.stringify(body))));
     render();
   }
   function importEventsFiles(files) {
@@ -1412,7 +1415,7 @@
       try { const h = await S.dir.getFileHandle(LINKS_NAME + ".enc"); const cur = readLinksChecked(JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, await (await h.getFile()).text(), "links")), "synced");
         S.linksStore = E.mergeLinks(S.linksStore, cur); S.links = Object.keys(S.linksStore.links).length ? E.linksValues(S.linksStore) : null; } catch (e) { /* no file yet, or unreadable: write ours */ }   // never overwrite another computer's newer link
       await track(DB.set("links", S.linksStore));
-      S.linksDirty = false; await track(writeVerified(LINKS_NAME + ".enc", "links", JSON.stringify(S.linksStore))); return; }
+      S.linksDirty = false; await track(storeWrite("links", () => writeVerified(LINKS_NAME + ".enc", "links", JSON.stringify(S.linksStore)))); return; }
     track(DB.set("links", S.linksStore));
   }
   async function useLinksFeed(raw) {
@@ -1450,19 +1453,239 @@
         done(true); toast("Links saved, encrypted, in links.json.enc.  They sync to your other computers."); render(); };
     });
   }
-  async function samDialog() {
-    const l = await loadLinks(), s = E.samLinks(l, S.today);
-    const btn = (u, lab) => u ? `<a class="btn" href="${esc(u)}" target="_blank" rel="noopener noreferrer">${lab}</a>` : "";
-    const row = (t, x) => `<div class="samrow"><b>${t}</b> <span class="mono">${esc(x.path)}</span><div>${btn(x.urls.obsidian, "Open in Obsidian")} ${btn(x.urls.github, "Open on GitHub")}${!x.urls.obsidian && !x.urls.github ? `<span class="faint">Set the vault or repo in File → Links… first.</span>` : ""}</div></div>`;
-    const mname = new Date(s.month + "-15T12:00:00Z").toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
-    await dialog("samdlg", `<b class="vt">📝 SAM bullets · ${esc(mname)}${s.toDate ? " (month to date)" : ""}</b>
-      <p>${s.toDate ? "From the 20th the link points at this month, to date." : "Until the 19th the link points at last month."}  The bullets live in the notebook; nothing is copied into the dashboard.</p>
-      ${row("Approved bullets", s.final)}${row("Sources", s.sources)}
-      <div class="vbtns"><button class="btn" id="sam-links">Links…</button><button class="btn primary" id="sam-close">Close</button></div>`, (d, done) => {
-      d.querySelector("#sam-close").onclick = () => done(true); d.querySelector("#sam-links").onclick = () => { done(true); linksDialog(); };
-      d.querySelectorAll("a.btn").forEach(a => a.addEventListener("click", () => setTimeout(() => done(true), 0)));
-    });
+  // ---------- 00.11.002: notebook access (separate encrypted token), SAM bullets side drawer, notebook Outbox ----------
+  // The notebook token is its own fine-grained token (only the notebook repo, Contents: Read and write), kept in IndexedDB only as
+  // a vault envelope (purpose "nbtoken") under the data key, cleared from memory on Lock, never exported and never hub-synced.
+  // js/notebook.js holds the hard allowlist: reads of reports/sam-activity/YYYY-MM.md and the sources file; the only write is an
+  // append to inbox/dashboard/YYYY-MM-DD.md on the dashboard/inbox branch (2B: Notebook merges it; main is never written).
+  const NB = DASH.notebook, SD = DASH.samdrawer, NI = DASH.nbinbox;
+  Object.assign(S, { nb: null, nbState: { k: "missing" }, samCache: {}, samMonth: null, samView: null, outbox: NI.empty(), outboxLoaded: false, nbSend: { err: null, readOnly: null, lastUrl: null }, retryLog: [] });
+  const nbRepo = l => String(l && l.repo || "").replace(/^https?:\/\/github\.com\//, "").replace(/\/+$/, "").replace(/\.git$/, "");
+  const nbTz = () => (R.getTimeZone && R.getTimeZone()) || "America/Chicago";
+  const nbZone = () => ZONE_LAB[nbTz()] || nbTz();
+  async function nbCfg() { try { return (await DB.get("nbCfg")) || null; } catch (e) { return null; } }
+  async function attachNotebook() {
+    S.nb = null; const cfg = await nbCfg();
+    if (!cfg || !cfg.tokenEnv) { S.nbState = { k: "missing" }; return null; }
+    if (!(S.vault && S.vault.key && S.vault.kr)) { S.nbState = { k: "locked" }; return null; }
+    if (cfg.keyId !== S.vault.kr.keyId) { S.nbState = { k: "missing", msg: "The saved notebook token belongs to another encryption setup.  Add it again." }; return null; }
+    const l = await loadLinks(), repo = nbRepo(l);
+    if (!repo) { S.nbState = { k: "missing", msg: "Set the notebook repo in File → Links… first." }; return null; }
+    let token; try { token = await V.decrypt(S.vault.key, S.vault.kr, cfg.tokenEnv, "nbtoken"); } catch (e) { S.nbState = { k: "missing", msg: "The saved notebook token can't be opened.  Add it again." }; return null; }
+    S.nb = NB.client({ repo, token, branch: (l && l.branch) || "main", sources: (l && l.sources) || E.DEFAULT_SOURCES }); token = null; S.nbState = { k: "ok" };
+    return S.nb;
   }
+  function nbDetach() { S.nb = null; S.samCache = {}; S.samView = null; S.nbState = { k: "locked" }; if (S.drawerKind) closeDrawer(); }   // Lock: the token and the cached bullets leave memory
+  async function saveNotebookToken(token) {
+    const pr = H.tokenProblem(token); if (pr) throw new Error(pr.replace("the one data repo", "the notebook repo only"));
+    if (!(S.vault && S.vault.key && S.vault.kr)) throw new Error("Unlock the encrypted Data folder first: the notebook token is stored encrypted.");
+    const l = await loadLinks(); if (!nbRepo(l)) throw new Error("Set the notebook repo in File → Links… first.");
+    const tokenEnv = await V.encrypt(S.vault.key, S.vault.kr, "nbtoken", token);
+    await DB.set("nbCfg", { keyId: S.vault.kr.keyId, tokenEnv, saved: new Date().toISOString() });
+    S.samCache = {}; S.nbSend.readOnly = null; await attachNotebook();
+  }
+  async function nbForget() { await DB.set("nbCfg", undefined); S.nb = null; S.samCache = {}; S.nbState = { k: "missing" }; }
+  async function notebookDialog() {
+    if (tExample()) { toast("⚠ Load your real data first: the notebook isn't used while EXAMPLE DATA is shown."); return; }
+    if (S.vault && S.vault.kr && !S.vault.key && !(await ensureUnlocked())) return;
+    if (!(S.vault && S.vault.kr && S.vault.key)) { toast("⚠ The notebook token needs an encrypted, unlocked Data folder (File → Encryption…)."); return; }
+    const cfg = await nbCfg(), l = (await loadLinks()) || {}, repo = nbRepo(l);
+    await dialog("nbdlg", `<b class="vt">📓 Notebook access</b>
+      <p>Lets the dashboard read the approved SAM bullets and add your chosen notes to <span class="mono">inbox/dashboard/YYYY-MM-DD.md</span> on the <span class="mono">${esc(NB.WRITE_BRANCH)}</span> branch.  Notebook merges that branch; the dashboard never writes to <span class="mono">main</span>, and never edits or deletes a notebook file.</p>
+      <p>Notebook repo: <span class="mono" id="nb-repo">${repo ? esc(repo) : "not set (File → Links…)"}</span>${cfg ? ` · token saved ${esc(R.dayLabel(R.isoDay(cfg.saved)))}` : ""}</p>
+      <details class="hubsteps"${cfg ? "" : " open"}><summary>Make the notebook token (2 minutes)</summary><ol>
+        <li>github.com → your picture → <b>Settings</b> → <b>Developer settings</b> → <b>Personal access tokens</b> → <b>Fine-grained tokens</b> → <b>Generate new token</b>.</li>
+        <li>Expiration: <b>90 days</b>.  Repository access: <b>Only select repositories</b> → the notebook repo only.</li>
+        <li>Repository permissions → <b>Contents: Read and write</b>.  Metadata: Read-only is added on its own.  Everything else: No access.</li>
+        <li>Store it in your password manager, then paste it below.  Never paste it in a chat.</li></ol></details>
+      <label class="vlab">Notebook token${cfg ? " (leave empty to keep the saved one)" : ""}<input type="password" id="nb-token" autocomplete="off" spellcheck="false" placeholder="github_pat_…"></label>
+      <p class="faint">Stored only in this browser, encrypted with your data key.  It's gone from memory when you Lock, and it is never exported or synced.</p>
+      <div id="nb-err" class="verr" role="alert"></div>
+      <div class="vbtns"><button class="btn" id="nb-cancel">Close</button>${cfg ? `<button class="btn" id="nb-off">Forget on this computer</button>` : ""}<button class="btn primary" id="nb-ok">Save</button></div>`,
+    (d, done) => {
+      const err = m => { d.querySelector("#nb-err").textContent = m || ""; };
+      d.querySelector("#nb-cancel").onclick = () => done(null);
+      const off = d.querySelector("#nb-off"); if (off) off.onclick = async () => { if (!confirm("Forget the notebook token on this computer?  Also delete it on github.com.")) return; await nbForget(); toast("Notebook token forgotten here."); done(null); };
+      d.querySelector("#nb-ok").onclick = async () => {
+        const inp = d.querySelector("#nb-token"), tok = inp.value.trim();
+        if (!tok && cfg) { done(null); return; }
+        try { await saveNotebookToken(tok); inp.value = ""; toast("Notebook token saved, encrypted."); done(true); } catch (e) { inp.value = ""; err(e.message || String(e)); }
+      };
+    });
+    if ($("#samdrawer")) renderDrawer();
+  }
+
+  // ---- SAM bullets side drawer (option B) ----
+  const mLabel = m => new Date(m + "-15T12:00:00Z").toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+  const mShift = (m, k) => { const d = new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7) - 1 + k, 1)); return d.toISOString().slice(0, 7); };
+  async function exampleSam() {
+    if (!window.DASH_EXAMPLE_SAM_ACCOUNTS) await loadScript(CFG.exampleSamAccountsPath || "examples/example-sam-accounts.js");
+    return window.DASH_EXAMPLE_SAM_ACCOUNTS || null;
+  }
+  async function samLoad(month, force) {
+    if (tExample()) { const t = await exampleSam(); if (!t) return { k: "notfound" }; try { const rep = SD.parse(month + ".md", t); return { k: rep.status, rep, at: nowDate().toISOString(), example: true }; } catch (e) { return { k: "error", msg: e.message }; } }
+    if (!S.nb) await attachNotebook();
+    if (!S.nb) return { k: "noaccess", msg: S.nbState.k === "locked" ? "Unlock the Data folder to read the notebook." : (S.nbState.msg || "Add the notebook token to load the bullets here.") };
+    if (!force && S.samCache[month]) return S.samCache[month];
+    let v;
+    try {
+      const r = await S.nb.read(`reports/sam-activity/${month}.md`);
+      if (!r) v = { k: "notfound" };
+      else { const rep = SD.parse(month + ".md", r.text); v = { k: rep.status, rep, at: nowDate().toISOString() }; }
+    } catch (e) {
+      if (e.name === "RateLimit") v = { k: "rate", reset: e.reset };
+      else if (e.name === "AuthError" || e.status === 401 || e.status === 403) v = { k: "noaccess", msg: e.message };
+      else if (e.name === "NetworkError") v = { k: "offline" };
+      else v = { k: "error", msg: e.message || String(e) };
+      return v;   // failures are never cached: ↻ or the next open tries again
+    }
+    S.samCache[month] = v; return v;
+  }
+  const resetCT = s => { if (!s) return "later"; const iso = new Date(s * 1000).toISOString(); return zoneHm(iso) + " " + nbZone(); };
+  async function openSamDrawer(month) {
+    S.samMonth = month || TM.defaultMonth(S.today); S.drawerKind = "sam";
+    drawerShell("SAM bullets"); renderDrawer(); await samRefresh(false);
+  }
+  async function samRefresh(force) { const m = S.samMonth; S.samView = { k: "loading" }; renderDrawer(); const v = await samLoad(m, force); if (S.samMonth === m && S.drawerKind === "sam") { S.samView = v; renderDrawer(); } }
+  function drawerShell(label) {
+    let d = $("#samdrawer");
+    if (!d) { d = document.createElement("aside"); d.id = "samdrawer"; d.className = "sdrawer"; d.setAttribute("role", "dialog"); d.setAttribute("aria-modal", "true"); document.body.appendChild(d);
+      S.drawerReturn = document.activeElement;
+      d.addEventListener("keydown", e => { if (e.key === "Escape") { e.stopPropagation(); closeDrawer(); return; }
+        if (e.key === "Tab") { const f = [...d.querySelectorAll("button:not([disabled]),a[href],input,textarea,select")]; if (!f.length) return; const a = f[0], z = f[f.length - 1];
+          if (e.shiftKey && document.activeElement === a) { e.preventDefault(); z.focus(); } else if (!e.shiftKey && document.activeElement === z) { e.preventDefault(); a.focus(); } } });
+      d.addEventListener("click", drawerClick); d.addEventListener("change", drawerChange); d.addEventListener("input", drawerInput); }
+    d.setAttribute("aria-label", label); return d;
+  }
+  function closeDrawer() { const d = $("#samdrawer"); if (d) d.remove(); S.drawerKind = null; if (S.drawerReturn && S.drawerReturn.focus) try { S.drawerReturn.focus(); } catch (e) { /* gone */ } }
+  function renderDrawer() { const d = $("#samdrawer"); if (!d) return; d.innerHTML = S.drawerKind === "outbox" ? outboxHtml() : samHtml(); const f = d.querySelector("#sd-close"); if (f && !d.contains(document.activeElement)) f.focus(); }
+  function samHtml() {
+    const m = S.samMonth, v = S.samView || { k: "loading" }, cur = S.today.slice(0, 7), l = S.links || {}, links = E.samLinks(l, S.today);
+    const gh = links.final && links.final.urls && links.final.urls.github ? links.final.urls.github.replace(/\d{4}-\d\d(?=\.md)/, m) : "";
+    const ob = links.final && links.final.urls && links.final.urls.obsidian ? links.final.urls.obsidian.replace(/\d{4}-\d\d/, m) : "";
+    const srcPath = (l.sources || E.DEFAULT_SOURCES).replace("{month}", m), srcUrl = links.sources && links.sources.urls && links.sources.urls.github ? links.sources.urls.github.replace(/\d{4}-\d\d/, m) : "";
+    const a = (u, t, id) => u ? `<a class="btn" ${id ? `id="${id}" ` : ""}href="${esc(u)}" target="_blank" rel="noopener noreferrer">${t}</a>` : "";
+    const fallbacks = `<div class="sdfall"><button class="btn primary" data-sd="token">${S.nbState.k === "missing" || !S.nb ? "Add notebook token…" : "Update notebook token…"}</button>${a(gh, "Open on GitHub")}<button class="btn" data-sd="import">Import report…</button></div>`;
+    const chip = v.k === "approved" ? `<span class="sdchip ok" id="sd-status">Approved</span>` : v.k === "draft" ? `<span class="sdchip draft" id="sd-status">Draft</span>` : "";
+    let body;
+    if (v.k === "loading") body = `<div class="sdskel" aria-busy="true"><i></i><i></i><i></i><i></i></div>`;
+    else if (v.k === "approved" || v.k === "draft") {
+      const dis = v.k === "draft" ? ` disabled title="Draft: copy turns on once Notebook marks it final"` : "";
+      body = `${v.rep.dropped.money || v.rep.dropped.email ? `<p class="faint">${v.rep.dropped.money + v.rep.dropped.email} bullet(s) with a dollar figure or email left out.</p>` : ""}
+        ${v.rep.accounts.map((x, i) => `<section class="sdacc"><div class="sdah"><b>${esc(x.name)}</b><button class="btn" data-sdcopy="${i}"${dis}>Copy</button></div><ul>${x.bullets.map(b => `<li>${esc(b)}</li>`).join("")}</ul></section>`).join("")}
+        <div class="sdall"><button class="btn primary" data-sdcopy="all"${dis}>Copy all</button></div><pre id="sd-plain" class="sdplain hidden"></pre>`;
+    }
+    else if (v.k === "notfound") body = `<p class="sdmsg" id="sd-msg">No bullets for ${esc(mLabel(m))} yet.</p>`;
+    else if (v.k === "noaccess") body = `<p class="sdmsg" id="sd-msg">No access to the notebook.  ${esc(v.msg || "")}</p>${fallbacks}`;
+    else if (v.k === "rate") body = `<p class="sdmsg" id="sd-msg">GitHub is limiting requests until ${esc(resetCT(v.reset))}.</p>${fallbacks}`;
+    else if (v.k === "offline") body = `<p class="sdmsg" id="sd-msg">Offline: can't reach GitHub.</p>${fallbacks}`;
+    else body = `<p class="sdmsg" id="sd-msg">Couldn't read the bullets file: ${esc(v.msg || "")}</p>${fallbacks}`;
+    return `<div class="sdhead"><b>☑ SAM bullets</b>${chip}<span class="sdsp"></span><button class="btn" data-sd="refresh" aria-label="Reload from the notebook" title="Reload">↻</button><button class="btn" id="sd-close" data-sd="close" aria-label="Close">✕</button></div>
+      <div class="sdmonth"><button class="btn" data-sd="prev" aria-label="Previous month">‹</button><b id="sd-month">${esc(mLabel(m))}</b><button class="btn" data-sd="next" aria-label="Next month"${m >= cur ? " disabled" : ""}>›</button>${v.example ? ` <span class="sdchip draft">EXAMPLE</span>` : ""}</div>
+      <div class="sdbody">${body}</div>
+      <div class="sdfoot"><span class="mono faint">${esc(srcPath)}</span>${a(srcUrl, "Sources")}${a(gh, "Open on GitHub", "sd-gh")}${a(ob, "Open in Obsidian")}${v.at ? `<span class="faint" id="sd-at">Loaded ${esc(zoneHm(v.at))} ${esc(nbZone())}</span>` : ""}</div>`;
+  }
+  async function copyPlain(txt) {
+    try { await navigator.clipboard.writeText(txt); toast("Copied."); }
+    catch (e) { const p = $("#sd-plain"); if (p) { p.textContent = txt; p.classList.remove("hidden"); const r = document.createRange(); r.selectNodeContents(p); const s = getSelection(); s.removeAllRanges(); s.addRange(r); } toast("Copy is blocked here: the text is selected, press Ctrl+C."); }
+  }
+  async function drawerClick(e) {
+    const t = e.target.closest("button"); if (!t || t.disabled) return;
+    const k = t.dataset.sd;
+    if (k === "close") return closeDrawer();
+    if (k === "prev") { S.samMonth = mShift(S.samMonth, -1); return samRefresh(false); }
+    if (k === "next") { S.samMonth = mShift(S.samMonth, 1); return samRefresh(false); }
+    if (k === "refresh") return samRefresh(true);
+    if (k === "token") { await notebookDialog(); if (S.drawerKind === "sam") samRefresh(true); else renderDrawer(); return; }
+    if (k === "import") return ACTIONS.importReport ? ACTIONS.importReport() : null;
+    if (t.dataset.sdcopy != null) { const v = S.samView; if (!v || v.k !== "approved") return; const i = t.dataset.sdcopy; return copyPlain(i === "all" ? SD.plainAll(v.rep) : SD.plainAccount(v.rep.accounts[+i])); }
+    if (t.dataset.ob) return outboxAction(t.dataset.ob, t.dataset.id);
+  }
+  function drawerChange(e) { const t = e.target; if (t.dataset.obchk) { S.outbox = NI.update(S.outbox, t.dataset.obchk, { checked: t.checked }); saveOutbox(); renderDrawer(); } }
+  function drawerInput(e) { const t = e.target; if (t.dataset.obtext) { S.outbox = NI.update(S.outbox, t.dataset.obtext, { text: t.value }); clearTimeout(drawerInput.h); drawerInput.h = setTimeout(() => { saveOutbox(); const p = $("#ob-preview"); if (p) p.textContent = obPreview(); }, 300); } }
+
+  // ---- Outbox (option 1: daily inbox file; 1C both kinds; 3A kept until sent or discarded) ----
+  const obCanKeep = () => !tExample() && !!(S.vault && S.vault.kr && S.vault.key);
+  const outboxOwed = () => !!(S.outbox && S.outbox.sending && S.outbox.sending.length);
+  async function loadOutbox() {
+    if (S.outboxLoaded || !obCanKeep()) return;
+    try { const o = await DB.get("outbox"); if (o && Array.isArray(o.notes)) S.outbox = obMerge(o, S.outbox); } catch (e) { /* a bad cache: start empty */ }
+    S.outboxLoaded = true; renderOutboxChip();
+  }
+  function obMerge(a, b) { const ids = new Set(a.notes.map(n => n.id)), sentIds = new Set((a.sent || []).concat(b.sent || []).map(n => n.id));
+    return { v: 1, notes: a.notes.concat(b.notes.filter(n => !ids.has(n.id))).filter(n => !sentIds.has(n.id)), sent: (a.sent || []).concat((b.sent || []).filter(n => !(a.sent || []).some(x => x.id === n.id))).slice(-50), sending: [...new Set((a.sending || []).concat(b.sending || []))] }; }
+  async function saveOutbox() { renderOutboxChip(); if (!obCanKeep()) return; try { await DB.set("outbox", S.outbox); } catch (e) { await persistPending(); } }
+  function queueNote(n) {
+    if (!obCanKeep()) { if (!n.auto && !tExample()) toast("⚠ Notebook notes need an encrypted, unlocked Data folder."); return null; }
+    const before = S.outbox.notes.length; S.outbox = NI.addNote(S.outbox, n); if (S.outbox.notes.length === before) return null;
+    saveOutbox(); return S.outbox.notes[S.outbox.notes.length - 1].id;
+  }
+  function renderOutboxChip() { const c = $("#outboxchip"); if (!c) return; const n = S.outbox.notes.length; c.textContent = `📓 Outbox${n ? " · " + n : ""}${outboxOwed() ? " · ⟳" : ""}`; c.classList.toggle("hidden", tExample() || !obCanKeep() && !n); c.classList.toggle("stale", !!(S.nbSend.readOnly || outboxOwed())); }
+  function openOutbox() { S.drawerKind = "outbox"; drawerShell("Notebook Outbox"); renderDrawer(); }
+  const obTarget = () => NI.dayFile(nowDate().toISOString(), nbTz());
+  const obChecked = () => S.outbox.notes.filter(n => n.checked);
+  const obPreview = () => obChecked().length ? NI.render(obChecked(), nbTz()) : "(nothing checked)";
+  function outboxHtml() {
+    const n = S.outbox.notes, ch = obChecked().length, ro = S.nbSend.readOnly || (!S.nb && S.nbState.k !== "ok" ? (S.nbState.k === "locked" ? "locked" : "missing") : null);
+    const roMsg = ro === "noWrite" ? `<div class="sdwarn" id="ob-ro">The notebook token can't write.  Notes stay in the Outbox. <button class="btn" data-sd="token">Update notebook token…</button></div>`
+      : ro === "missing" ? `<div class="sdwarn" id="ob-ro">No notebook token on this computer.  Notes stay in the Outbox. <button class="btn" data-sd="token">Add notebook token…</button></div>`
+      : ro === "locked" ? `<div class="sdwarn" id="ob-ro">🔒 Locked.  Unlock to send; notes stay in the Outbox.</div>` : "";
+    const sentToday = (S.outbox.sent || []).filter(x => R.isoDay(x.sentAt) === S.today);
+    const kind = x => x.kind === "project" ? "Project update" : x.kind === "todo" ? "To Do cleared" : "Note";
+    return `<div class="sdhead"><b>📓 Notebook Outbox</b><span class="sdsp"></span><button class="btn" id="sd-close" data-sd="close" aria-label="Close">✕</button></div>
+      <div class="sdbody">${roMsg}${S.nbSend.err ? `<div class="sdwarn" id="ob-err">⟳ Not sent yet (${esc(S.nbSend.err)}); retrying on its own.  Notes stay in the Outbox.</div>` : ""}
+      ${n.length ? `<ul class="oblist">${n.map(x => `<li class="obitem${x.auto ? " auto" : ""}"><label class="obck"><input type="checkbox" data-obchk="${esc(x.id)}"${x.checked ? " checked" : ""} aria-label="Send: ${esc(x.ref)}"> <span class="faint">${esc(zoneHm(x.at))} ${esc(nbZone())} · ${kind(x)}${x.auto ? " · automatic" : ""}${(S.outbox.sending || []).includes(x.id) ? " · sending" : ""}</span></label>
+        <div class="obref">${esc(x.ref)}</div><textarea class="obtext" rows="2" data-obtext="${esc(x.id)}" aria-label="Note text">${esc(x.text)}</textarea><button class="btn linkbtn" data-ob="discard" data-id="${esc(x.id)}">Discard</button></li>`).join("")}</ul>`
+        : `<p class="sdmsg" id="ob-empty">No notes waiting.  Add one when you clear a to-do or update a project.</p>`}
+      <p class="faint">Appends to <span class="mono" id="ob-target">${esc(obTarget())}</span> on the <span class="mono">${esc(NB.WRITE_BRANCH)}</span> branch (Notebook merges it).</p>
+      <pre class="sdplain" id="ob-preview">${esc(obPreview())}</pre>
+      <div class="sdall"><button class="btn primary" data-ob="send" id="ob-send"${!ch || ro || tExample() ? " disabled" : ""}>Send ${ch} note${ch === 1 ? "" : "s"}</button></div>
+      ${S.nbSend.lastUrl ? `<p id="ob-sent">Sent · <a href="${esc(S.nbSend.lastUrl)}" target="_blank" rel="noopener noreferrer" id="ob-commit">View commit</a></p>` : ""}
+      ${sentToday.length ? `<details class="obsent"><summary>Sent today (${sentToday.length})</summary><ul>${sentToday.map(x => `<li>${esc(x.ref)}: ${esc(x.text)}${x.commitUrl ? ` · <a href="${esc(x.commitUrl)}" target="_blank" rel="noopener noreferrer">commit</a>` : ""}</li>`).join("")}</ul></details>` : ""}</div>`;
+  }
+  async function outboxAction(k, id) {
+    if (k === "discard") { if (!confirm("Discard this note?  It won't be sent.")) return; S.outbox = NI.discard(S.outbox, [id]); S.outbox.sending = (S.outbox.sending || []).filter(x => x !== id); await saveOutbox(); renderDrawer(); return; }
+    if (k === "send") { await sendOutbox(obChecked().map(n => n.id)); renderDrawer(); }
+  }
+  let obBusy = null;
+  async function sendOutbox(ids) {
+    if (obBusy) return obBusy;
+    return (obBusy = sendOutbox1(ids).finally(() => { obBusy = null; renderOutboxChip(); if (S.drawerKind === "outbox") renderDrawer(); }));
+  }
+  async function sendOutbox1(ids) {
+    if (tExample() || !obCanKeep()) return false;
+    if (!S.nb) await attachNotebook();
+    if (!S.nb) { S.nbSend.readOnly = S.nbState.k === "locked" ? "locked" : "missing"; return false; }
+    const notes = NI.pick(S.outbox, ids || []); if (!notes.length) return false;
+    S.outbox.sending = notes.map(n => n.id); await saveOutbox();
+    const path = obTarget();
+    try {
+      const r = await S.nb.append(path, NI.render(notes, nbTz()), `dashboard: ${notes.length} note${notes.length === 1 ? "" : "s"}`);
+      S.outbox = NI.markSent(S.outbox, notes.map(n => n.id), r.commitUrl); S.outbox.sending = [];
+      S.nbSend = { err: null, readOnly: null, lastUrl: r.commitUrl || S.nbSend.lastUrl }; await saveOutbox(); settleRetry();
+      toast(`Sent ${notes.length} note${notes.length === 1 ? "" : "s"} to ${path}.`); return true;
+    } catch (e) {
+      if (e.name === "AuthError" || e.status === 401 || (e.status === 403 && e.name !== "RateLimit") || e.name === "Refused") {   // permanent until the token changes: no retry loop
+        S.outbox.sending = []; S.nbSend.readOnly = "noWrite"; S.nbSend.err = null; await saveOutbox(); settleRetry(); return false; }
+      S.nbSend.err = e.message || String(e); await saveOutbox(); await persistPending(); scheduleRetry(); return false;
+    }
+  }
+  // Called by Daily Focus Done and the task editor.  1C: typed notes go in checked, automatic lines unchecked.
+  function noteForNotebook(kind, ref, typed, autoText) {
+    const ids = [];
+    if (autoText) { const id = queueNote({ kind, ref, text: autoText, at: nowDate().toISOString(), auto: true }); if (id) ids.push(id); }
+    if (typed && String(typed).trim()) { const id = queueNote({ kind, ref, text: typed, at: nowDate().toISOString(), auto: false }); if (id) ids.push(id); }
+    return ids;
+  }
+  async function focusNoteDialog(ref, autoId) {
+    const txt = await dialog("nbnotedlg", `<b class="vt">📓 Note for notebook</b><p class="faint">${esc(ref)}</p>
+      <label class="vlab">Note (optional, one line)<textarea id="nbnote-text" rows="3" maxlength="600"></textarea></label>
+      <div class="vbtns"><button class="btn" id="nbnote-cancel">Cancel</button><button class="btn primary" id="nbnote-ok">Add to Outbox</button></div>`,
+      (d, done) => { d.querySelector("#nbnote-cancel").onclick = () => done(null); d.querySelector("#nbnote-ok").onclick = () => done(d.querySelector("#nbnote-text").value); d.addEventListener("keydown", e => { if (e.key === "Escape") done(null); }); });
+    if (txt && txt.trim()) { noteForNotebook("todo", ref, txt, null); toast("Added to the notebook Outbox."); }
+    return autoId;
+  }
+  async function samDialog() { return openSamDrawer(); }
 
   // ---------- 00.07.000 Projects: the dashboard is the source of truth; Planner-ready exports (CSV, xlsx, Graph JSON) ----------
   // Ruling (Oct 27 2026): "Projects is the source of truth and exports Planner-ready CSV, xlsx and Graph JSON". No network calls.
@@ -1487,8 +1710,8 @@
     track(DB.set("projectsStore", body));   // while locked the encrypted cache writes nothing
     S.projDirty = !canSaveToFolder() && !!(S.vault && S.vault.kr);
     if (canSaveToFolder()) {
-      try { await track(writeVerified(STORE_NAME + ".enc", "projstore", JSON.stringify(body))); delete S.saveProblems[STORE_NAME]; }   // D1
-      catch (e) { S.saveProblems[STORE_NAME] = `${STORE_NAME}.enc: not saved (${e.message || e}); the previous copy is kept`; S.projDirty = true; }
+      try { await track(storeWrite("projects", () => writeVerified(STORE_NAME + ".enc", "projstore", JSON.stringify(body)))); delete S.saveProblems[STORE_NAME]; }   // D1
+      catch (e) { S.projDirty = true; }   // 00.11.002 (QA M2): storeWrite words it "will save at the next sync"
     }
     render();
   }
@@ -1554,7 +1777,8 @@
   function taskEditor(planId, task) {
     closeTaskEditor();
     const p = S.projStore.plans.find(x => x.id === planId), t = task ? JSON.parse(JSON.stringify(task)) : { id: projUid("T"), title: "", bucketId: (p.buckets[0] || {}).id || null, assignees: [], status: "notStarted", percent: 0, start: null, due: null, priority: "medium", labels: [], notes: "", account: null, checklist: [] };
-    const d = document.createElement("div"); d.id = "projdlg"; d.className = "overlay open";
+    const d = document.createElement("div"); d.id = "projdlg"; d.className = "overlay open"; let nbTyped = "";   // 00.11.002: kept across redraws
+    const was = task ? { status: task.status, percent: task.percent } : null;
     const ck = () => t.checklist.map((c, i) => `<li><label><input type="checkbox" data-ck="${i}"${c.done ? " checked" : ""}> ${esc(c.title)}</label> <button class="btn linkbtn" data-ckdel="${i}" aria-label="Remove ${esc(c.title)}">✕</button></li>`).join("");
     const draw = () => { d.innerHTML = `<div class="dlg projdlg" role="dialog" aria-modal="true" aria-labelledby="pd-h" tabindex="-1"><h3 id="pd-h">${task ? "Edit task" : "New task"} · ${esc(p.name)}</h3>
       <label>Title <input id="pd-title" value="${esc(t.title)}" maxlength="255"></label>
@@ -1568,9 +1792,10 @@
       <label>Account <input id="pd-acct" value="${esc(t.account || "")}"></label>
       <label>Notes <textarea id="pd-notes" rows="3" maxlength="2000">${esc(t.notes || "")}</textarea></label>
       <div><b>Checklist</b> <span class="faint">(${t.checklist.filter(c => c.done).length}/${t.checklist.length})</span><ul class="pdck">${ck()}</ul><input id="pd-cknew" placeholder="Add a checklist item, Enter" maxlength="100"></div>
+      ${S.projExample ? "" : `<label>Note for notebook (optional) <textarea id="pd-nbnote" rows="2" maxlength="600" placeholder="Goes to the notebook Outbox, checked; you pick before sending">${esc(nbTyped)}</textarea></label>`}
       <div id="pd-err" class="danger" role="alert"></div>
       <div class="pdbtns"><button class="btn" id="pd-save">Save</button><button class="btn" id="pd-cancel">Cancel</button>${task ? '<button class="btn dangerbtn" id="pd-del">Delete task</button>' : ""}</div></div>`; };
-    const read = () => { const v = id => d.querySelector(id).value;
+    const read = () => { const v = id => d.querySelector(id).value; const nbn = d.querySelector("#pd-nbnote"); if (nbn) nbTyped = nbn.value;
       Object.assign(t, { title: v("#pd-title"), bucketId: v("#pd-bucket") || null, assignees: v("#pd-owner").split(/[,;]/).map(x => x.trim()).filter(Boolean), status: v("#pd-status"), percent: Number(v("#pd-pct")),
         priority: v("#pd-pri"), start: v("#pd-start") || null, due: v("#pd-due") || null, labels: v("#pd-labels").split(",").map(x => x.trim()).filter(Boolean), account: v("#pd-acct").trim() || null, notes: v("#pd-notes") }); };
     draw(); document.body.appendChild(d); d.querySelector("#pd-title").focus();
@@ -1580,7 +1805,10 @@
       if (e.target.dataset.ckdel != null) { read(); t.checklist.splice(+e.target.dataset.ckdel, 1); draw(); return; }
       if (e.target.id === "pd-cancel" || e.target === d) return closeTaskEditor();
       if (e.target.id === "pd-del") { if (!confirm("Delete this task?")) return; projOps.deleteTask(t.id); closeTaskEditor(); toast("Task deleted."); return; }
-      if (e.target.id === "pd-save") { read(); const err = projOps.saveTask(planId, t); if (err) { d.querySelector("#pd-err").textContent = "⚠ " + err; return; } closeTaskEditor(); toast("Task saved."); }
+      if (e.target.id === "pd-save") { read(); const err = projOps.saveTask(planId, t); if (err) { d.querySelector("#pd-err").textContent = "⚠ " + err; return; }
+        if (!S.projExample) { const ch = !was ? "added" : was.status !== t.status ? (R.PROJ_STATUS_WORD[t.status] || t.status) + (t.status === "inProgress" ? ` (${t.percent}%)` : "") : was.percent !== t.percent ? `${t.percent}% done` : null;
+          noteForNotebook("project", `${p.name} › ${t.title}`, nbTyped, ch ? (ch === "added" ? "task added" : "now " + ch) : null); }   // 00.11.002 (1C)
+        closeTaskEditor(); toast("Task saved."); }
     });
   }
   function closeTaskEditor() { const d = $("#projdlg"); if (d) d.remove(); }
@@ -1659,7 +1887,7 @@
     const key = which === "contacts" ? "contacts" : "accountsStore", name = which === "contacts" ? CONTACTS_NAME : ACC_NAME, purpose = which === "contacts" ? "contacts" : "accstore";
     const body = which === "contacts" ? { schema_version: 1, updated_at: o.updated_at, contacts: o.contacts } : { schema_version: 1, updated_at: o.updated_at, accounts: o.accounts };
     track(DB.set(key, body));
-    if (canSaveToFolder()) await track(writeVerified(name + ".enc", purpose, JSON.stringify(body)));
+    if (canSaveToFolder()) await track(storeWrite(which === "contacts" ? "contacts" : "accounts", () => writeVerified(name + ".enc", purpose, JSON.stringify(body))));
     render();
   }
   function importRefused(what) {
@@ -1785,6 +2013,7 @@ ${ask}
     S.accTier = t.value; render(); return true;
   }
   function useFeeds(feeds) {
+    retryUnsynced();   // 00.11.002 (QA M1)
     if (S.projDirty && canSaveToFolder() && S.projStore && !S.projExample) { S.projDirty = false; saveStore(); }   // edits made while locked are saved once unlocked
     if (S.snap && S.snap.example) return;
     if (feeds.calendar && (!S.calFeed || S.calExample || Date.parse(feeds.calendar.generated_at) >= Date.parse(S.calFeed.generatedAt))) { S.calFeed = R.readCalendar(feeds.calendar); S.calExample = false; track(DB.set("calendarSnap", feeds.calendar)); }
@@ -1982,8 +2211,9 @@ ${ask}
     if (S.snap) S.focusAnimated = true;
     if (keep) { const r = el.querySelector(`.frow[data-row="${CSS.escape(keep)}"]`); if (r) r.focus(); }
   }
-  function undoToast(msg, undo) {
-    const t = $("#undo"); t.innerHTML = `<span>${esc(msg)}</span> <button class="btn" id="undo-btn">Undo</button>`; t.classList.remove("hidden");
+  function undoToast(msg, undo, extra) {
+    const t = $("#undo"); t.innerHTML = `<span>${esc(msg)}</span> <button class="btn" id="undo-btn">Undo</button>${extra ? ` <button class="btn" id="undo-note">${esc(extra[0])}</button>` : ""}`; t.classList.remove("hidden");
+    if (extra) $("#undo-note").onclick = () => { clearTimeout(undoToast.h); t.classList.add("hidden"); extra[1](); };
     clearTimeout(undoToast.h); undoToast.h = setTimeout(() => t.classList.add("hidden"), 8000);
     $("#undo-btn").onclick = () => { clearTimeout(undoToast.h); t.classList.add("hidden"); undo(); };
   }
@@ -1991,7 +2221,9 @@ ${ask}
     const it = S.snap.items.find(x => x.id === id); if (!it) return;
     const fid = "done:" + id, prev = S.flags[fid];
     setFlag(fid, { on: true, at: nowDate().toISOString(), snapAt: S.snap.generatedAt }); render();
-    undoToast(`Marked done here: "${it.title}". Remember to tick it off in To Do.`, () => { setFlag(fid, Object.assign({}, S.flags[fid] || prev || {}, { on: false })); render(); });
+    const autoIds = noteForNotebook("todo", it.title, null, "done");   // 00.11.002 (1C): an automatic line, unchecked
+    undoToast(`Marked done here: "${it.title}". Remember to tick it off in To Do.`, () => { setFlag(fid, Object.assign({}, S.flags[fid] || prev || {}, { on: false })); if (autoIds.length) { S.outbox = NI.discard(S.outbox, autoIds); saveOutbox(); } render(); },
+      obCanKeep() ? ["📓 Note…", () => focusNoteDialog(it.title)] : null);
   }
   function focusSnooze(id, choice, picked) {
     const it = S.snap.items.find(x => x.id === id); if (!it) return;
@@ -2132,9 +2364,25 @@ ${ask}
     const m = text.match(/window\.[A-Z][A-Z0-9_]*SNAPSHOT\s*=\s*([\s\S]*?);?\s*$/); return JSON.parse(m ? m[1] : text);   // 00.03: older snapshot.js variable names too
   }
   function download(name, obj, text) { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text != null ? text : JSON.stringify(obj, null, 1)], { type: "application/json" })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
+  // 00.11.002: File → Open snapshot… also saves the snapshot encrypted as inbox-snapshot.json.enc (to the Data folder, or the hub when
+  // the hub is the store; the normal sync carries it to other computers).  The newer generated_at wins; an older or equal one is not written.
+  async function openSnapshotFile(n, raw) {
+    if (S.vault && S.vault.kr && !S.vault.key) { banner("🔒 Unlock first (File → Encryption…): an opened snapshot is saved encrypted.", true); return false; }
+    if (raw && !raw.example && futureSnap(raw)) { const m = `${n}: generated_at is in the future; not used`; S.fileProblems[n] = m; if (!S.problems.includes(m)) S.problems.push(m); banner("⚠ " + m, true); renderSync(); return false; }
+    if (!(await useSnapshot(raw, "opened file"))) return false;
+    await DB.set("openedSnapshot", raw);
+    if (raw.example) { toast("Opened " + n); return true; }
+    if (!canSaveToFolder()) { toast(`Opened ${n}.  Encrypt the Data folder to sync opened snapshots.`); return true; }
+    const target = "inbox-snapshot.json" + ENC; let keep = false;
+    try { const old = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, (await readName(target)).text, "snapshot")); R.readSnapshot(old); if (!futureSnap(old) && new Date(old.generated_at) >= new Date(raw.generated_at)) keep = true; } catch (e) { /* none yet, or unreadable: replace it */ }
+    if (keep) { toast(`Opened ${n}.  The synced snapshot is the same or newer, so it was kept.`); return true; }
+    try { await track(writeVerified(target, "snapshot", JSON.stringify(raw))); toast(`Opened ${n} (${raw.generated_at}).  Saved encrypted; it syncs to your other computers.`); if (S.hub && !S.hubOnly) syncNow(); }
+    catch (e) { banner(`Opened ${n}, but saving it encrypted failed (${e.message || e}).  It is used on this computer only for now.`, true); }
+    return true;
+  }
   const ACTIONS = {
     open: () => pickFile(".js,.json,.csv", async (n, t) => { let raw; try { raw = parseSnapshotText(n, t); } catch (e) { banner("Could not read " + n + ": " + e.message, true); return; }
-      if (await useSnapshot(raw, "opened file")) { await DB.set("openedSnapshot", raw); toast("Opened " + n); } }),
+      await openSnapshotFile(n, raw); }),
     export: async () => { if (S.vault.kr && !confirm("This saves your local data unencrypted (plain JSON) to Downloads. Continue?")) return; download(`dash-local-data-${S.today}.json`, await DB.exportAll()); },
     import: () => pickFile(".json", async (n, t) => { try { const r = await DB.importAll(JSON.parse(t)); toast(`Imported local data${r && r.dropped ? ` (${r.dropped} event(s) from other machines ignored)` : ""}. Reloading…`); setTimeout(reloadSafely, 600); } catch (e) { banner("Import failed: " + e.message, true); } }),
     clear: () => clearDialog(),
@@ -2146,7 +2394,7 @@ ${ask}
     importLog: () => pickFile(".md,.txt", (n, t) => importLog(n, t)), logCall: () => logCall($("#asof")),
     print: () => doPrint("print"), printManager: () => doPrint("manager"), printFocus: () => doPrint("focus"), reload: () => reloadSafely(),
     keyAccounts: () => keyAccountsDialog(), vFocus: () => setView("focus"), vDash: () => setView("dashboard"), vWork: () => setView("workload"), vPrint: () => setView("print"), vManager: () => setView("manager"), vProjects: () => setView("projects"), vAccounts: () => setView("accounts"), vEvents: () => setView("events"), vCalendar: () => setView("calendar"),
-    importEvents: () => pickFiles(".md,text/markdown", files => importEventsFiles(files)), printEvents: () => doPrint("events"), links: () => linksDialog(), samLink: () => samDialog(),
+    importEvents: () => pickFiles(".md,text/markdown", files => importEventsFiles(files)), printEvents: () => doPrint("events"), links: () => linksDialog(), samLink: () => samDialog(), notebook: () => notebookDialog(), outbox: () => openOutbox(),
     importAccounts: () => pickFiles(".md,text/markdown", files => importAccountFiles(files)), importContacts: () => pickFile(".csv,text/csv", (n, t) => importContactsFile(n, t)), printAccounts: () => doPrint("accounts"),
     printProjects: () => doPrint("projects"), exportProjects: () => exportProjects("csv"), exportProjectsXlsx: () => exportProjects("xlsx"), exportProjectsGraph: () => exportProjects("graph"), importPlanner: () => importPlanner(), importProjectJson: () => pickFile(".json,application/json", (n, t) => importProjectJson(n, t)),
     hHelp: () => openHelp("help"), hHow: () => openHelp("howdoi"), hFaq: () => openHelp("faq"), hQuick: () => openHelp("quick"), hRev: () => openHelp("rev"), hKeys: () => openHelp("keys"),
@@ -2172,7 +2420,7 @@ ${ask}
     try { const c = await DB.get("timeStore"); if (c && c.schema_version === 1) S.tstore = TL.merge(S.tstore, TL.readStore(c)); } catch (e) { /* a bad cache re-syncs from the folder */ }
     try { const tm = await DB.get("timeTimer"); if (tm && !TL.timerProblem(tm)) { S.timer = tm; S.tg = tm.group; S.tType = tm.type; S.tAcc = tm.account; S.tProj = tm.project || ""; } } catch (e) { /* ignore */ }
     try { const l = await DB.get("timeLast"); if (l && TL.GROUPS.includes(l.group)) S.tLast = l; } catch (e) { /* ignore */ }
-    S.tLoaded = true; await restorePending();
+    S.tLoaded = true; unsyncedLoad(); await loadOutbox(); await restorePending();
   }
   function exampleTime() {   // fictional entries for EXAMPLE DATA (screen only, never saved)
     let s = TL.emptyStore(); const at = "2026-01-01T00:00:00Z", w = TL.weekRange(S.today).from, d = i => R.addDays(w, i);
@@ -2202,28 +2450,59 @@ ${ask}
   }
   // ---------- 00.11.001: durable pending queue + automatic retry ----------
   // localStorage holds only an AES-GCM envelope (purpose "pending") of the unsaved time store and own events: never plaintext.
-  const PQ_KEY = "dash-pending-v1", RETRY_S = [5, 15, 30, 60, 120, 300];
-  let retryN = 0, retryT = null;
-  const saveOwed = () => !!(S.tDirty || S.ownDirty || S.ownCacheDirty);
+  const PQ_KEY = "dash-pending-v1", RETRY_S = [5, 15, 30, 60, 120, 300], PQ_MAX = 2 * 1024 * 1024;   // 00.11.002 (QA L2): the envelope is capped at 2 MB
+  let retryN = 0, retryT = null, reopenKicked = false;
+  // 00.11.002: the Outbox rides in the same envelope while a send is owed; QA M1: Accounts/Events/Links/Projects write failures are owed too.
+  const saveOwed = () => !!(S.tDirty || S.ownDirty || S.ownCacheDirty || outboxOwed());
   async function persistPending() {
     if (!(S.vault && S.vault.kr && S.vault.key)) return false;
-    try { const body = JSON.stringify({ v: 1, at: new Date().toISOString(), time: S.tstore, own: (S.own || []).filter(e => e.machine === S.machine) });
-      localStorage.setItem(PQ_KEY, await V.encrypt(S.vault.key, S.vault.kr, "pending", body)); return true; } catch (e) { return false; }
+    try { const body = JSON.stringify({ v: 1, at: new Date().toISOString(), time: S.tstore, own: (S.own || []).filter(e => e.machine === S.machine), outbox: outboxOwed() || S.outbox.notes.length ? S.outbox : undefined });
+      const env = await V.encrypt(S.vault.key, S.vault.kr, "pending", body);
+      if (env.length > PQ_MAX) { pendingTooBig(); return false; }
+      localStorage.setItem(PQ_KEY, env); if (S.saveProblems.pendingBig) { delete S.saveProblems.pendingBig; S.pendingHeld = false; } return true;
+    } catch (e) { if (e && (e.name === "QuotaExceededError" || /quota/i.test(e.message || ""))) pendingTooBig(); return false; }
   }
+  function pendingTooBig() { S.pendingHeld = true; S.saveProblems.pendingBig = "Pending saves are too large for this browser's storage; reload is held until the next save succeeds."; if (!S.problems.includes(S.saveProblems.pendingBig)) S.problems.push(S.saveProblems.pendingBig); renderSync(); }
   async function restorePending() {
     let t = null; try { t = localStorage.getItem(PQ_KEY); } catch (e) { return; } if (!t || !(S.vault && S.vault.key)) return;
     try { const o = JSON.parse(await V.decrypt(S.vault.key, S.vault.kr, t, "pending"));
       if (o.time) { S.tstore = TL.merge(S.tstore, TL.readStore(o.time)); S.tDirty = true; }
       if (Array.isArray(o.own) && o.own.length) { S.own = R2.dedupe((S.own || []).concat(o.own)); S.ownDirty = true; try { recompute(); } catch (e) { /* recomputed on the next sync */ } }
+      if (o.outbox && Array.isArray(o.outbox.notes)) { try { const c = await DB.get("outbox"); if (c && Array.isArray(c.notes)) S.outbox = obMerge(c, S.outbox); } catch (e) { /* ignore */ } S.outbox = obMerge(S.outbox, o.outbox); S.outboxLoaded = true; renderOutboxChip(); }
       scheduleRetry(0);
     } catch (e) { S.problems.push("Pending saves could not be read (kept for the next unlock)"); }
   }
   function scheduleRetry(delayS) {
-    if (retryT) return; const d = delayS !== undefined ? delayS : RETRY_S[Math.min(retryN, RETRY_S.length - 1)]; retryN++;
-    retryT = setTimeout(async () => { retryT = null; if (S.tDirty) await saveTime(); if (S.ownCacheDirty) { try { await DB.set("ownEvents", S.own); S.ownCacheDirty = false; } catch (e) { scheduleRetry(); } } if (S.ownDirty) await writeOwn(); settleRetry(); }, d * 1000);
+    if (retryT) return; const d = delayS !== undefined ? delayS : RETRY_S[Math.min(retryN, RETRY_S.length - 1)]; retryN++; S.retryLog.push(d);
+    retryT = setTimeout(runRetry, d * 1000);
   }
-  DB.setOnReopen(() => { if (saveOwed()) { clearTimeout(retryT); retryT = null; scheduleRetry(0); } });   // 00.11.001: storage came back, retry the queue now
-  function settleRetry() { if (saveOwed()) return; retryN = 0; delete S.saveProblems.write; try { localStorage.removeItem(PQ_KEY); } catch (e) { /* ignore */ } }
+  async function runRetry() { retryT = null; if (S.tDirty) await saveTime(); if (S.ownCacheDirty) { try { await DB.set("ownEvents", S.own); S.ownCacheDirty = false; } catch (e) { scheduleRetry(); } } if (S.ownDirty) await writeOwn(); if (outboxOwed()) await sendOutbox(S.outbox.sending); settleRetry(); }
+  // 00.11.001: storage came back, retry the queue now.  00.11.002 (QA L1): at most once per backoff cycle, so a DB that keeps closing can't spin at 0 s.
+  DB.setOnReopen(() => { if (saveOwed() && !reopenKicked) { reopenKicked = true; clearTimeout(retryT); retryT = null; scheduleRetry(0); } });
+  function settleRetry() { if (saveOwed()) return; retryN = 0; reopenKicked = false; delete S.saveProblems.write; S.nbSend.err = null; if (S.saveProblems.pendingBig) { delete S.saveProblems.pendingBig; S.pendingHeld = false; } try { localStorage.removeItem(PQ_KEY); } catch (e) { /* ignore */ } }
+  // ---- 00.11.002 (QA M1, M2): stores that save at the next sync (Accounts, Events, Links, Projects) ----
+  const UNSYNCED_KEY = "dash-unsynced-v1";   // store names only, never data
+  const STORE_FILE = { accounts: "accounts-store.json.enc", contacts: "contacts.json.enc", events: "events-store.json.enc", links: "links.json.enc", projects: "projects-store.json.enc" };
+  function unsyncedSave() { try { if (S.unsyncedStores.size) localStorage.setItem(UNSYNCED_KEY, JSON.stringify([...S.unsyncedStores])); else localStorage.removeItem(UNSYNCED_KEY); } catch (e) { /* ignore */ } }
+  function unsyncedLoad() { try { const a = JSON.parse(localStorage.getItem(UNSYNCED_KEY) || "[]"); if (Array.isArray(a)) a.filter(x => STORE_FILE[x]).forEach(x => S.unsyncedStores.add(x)); } catch (e) { /* ignore */ } }
+  async function storeWrite(store, fn) {
+    try { const r = await fn(); if (S.unsyncedStores.delete(store)) { unsyncedSave(); delete S.saveProblems["u:" + store]; renderSync(); } return r; }
+    catch (e) {
+      S.unsyncedStores.add(store); unsyncedSave();
+      S.saveProblems["u:" + store] = `${STORE_FILE[store]}: not saved (${(e && e.message) || e}); kept on this computer; will save at the next sync`;
+      if (e && typeof e === "object") counted.add(e);   // M2: not reported as "retrying on its own"
+      renderSync(); throw e;
+    }
+  }
+  function retryUnsynced() {
+    if (!S.unsyncedStores.size || !canSaveToFolder()) return;
+    for (const st of [...S.unsyncedStores]) {
+      if (st === "projects" && S.projStore && !S.projExample) { S.projDirty = false; saveStore(); }
+      else if ((st === "accounts" && S.accStore) || (st === "contacts" && S.contacts)) track(saveAccounts(st === "contacts" ? "contacts" : "accounts")).catch(() => {});
+      else if (st === "events" && S.evStore) track(saveEvents()).catch(() => {});
+      else if (st === "links" && S.linksStore) track(saveLinks(true)).catch(() => {});
+    }
+  }
   function useTimeFeed(raw) { if (tExample() || !raw) return; try { const inc = TL.readStore(raw), m = TL.merge(S.tstore, inc); const changed = !TL.same(m, S.tstore), stale = !TL.same(m, inc); S.tstore = m; if (changed) track(DB.set("timeStore", S.tstore)); if (stale || S.tDirty) track(saveTime()); } catch (e) { S.fileProblems[TIMESTORE_NAME + ".enc"] = `${TIMESTORE_NAME}.enc: ${e.message}`; } }
   // Snapshot "time" block (Q1A): merged by id on unlock; the same id is a correction and the newest generated_at wins.
   async function timeForSnapshot(s) {
@@ -2506,7 +2785,7 @@ ${ask}
   }
   function closeMenus() { document.querySelectorAll(".mtop").forEach(b => { b.setAttribute("aria-expanded", "false"); b.nextElementSibling.classList.add("hidden"); }); }
 
-  window.DASH.app = { saveLinksNow: () => saveLinks(true), timeOps: { loadTime, saveTime, timerStart, timerStop, tEntries, importReportFiles, logTouch, renderAgenda }, state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel, checkTz, setOwner, projectsModel, saveStore, projOps, accountsModel, importAccountFiles, importContactsFile, renameChoice };
+  window.DASH.app = { nbOps: { attachNotebook, saveNotebookToken, nbForget, openSamDrawer, samLoad, openOutbox, sendOutbox, queueNote, noteForNotebook, openSnapshotFile, runRetry, focusDone: id => focusDone(id) }, saveLinksNow: () => saveLinks(true), timeOps: { loadTime, saveTime, timerStart, timerStop, tEntries, importReportFiles, logTouch, renderAgenda }, state: S, useSnapshot, render, REV, flush, syncNow, recompute, commit, innerName, writeOwn, hubConnect, hubForget, setFlag, focusModel, checkTz, setOwner, projectsModel, saveStore, projOps, accountsModel, importAccountFiles, importContactsFile, renameChoice };
   window.addEventListener("beforeunload", e => { if (pending.size) { e.preventDefault(); e.returnValue = ""; } });
   boot();
 })();
