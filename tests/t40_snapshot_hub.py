@@ -26,7 +26,9 @@ with sync_playwright() as p:
     fc.value.set_files(str(newer)); A.wait_for_function("() => document.querySelector('#toast').textContent.includes('Saved encrypted')", timeout=30000); A.evaluate("DASH.app.flush()")
     check(A.evaluate(DEC) == "2026-11-03T09:45:00-06:00", "(a) the opened, newer snapshot is saved encrypted as inbox-snapshot.json.enc")
     check("2026-11-03T09:45" in A.inner_text("#toast") and "opened-snapshot.json" in A.inner_text("#toast"), "toast shows only the file name and generated_at")
-    for _ in range(3): NH.sync(B); B.wait_for_timeout(300)
+    for _ in range(40):
+        NH.sync(B); B.wait_for_timeout(300)
+        if B.evaluate("DASH.app.state.snap && DASH.app.state.snap.raw_generated_at") == "2026-11-03T09:45:00-06:00": break
     check(B.evaluate("DASH.app.state.snap.raw_generated_at") == "2026-11-03T09:45:00-06:00", "(a) computer B shows the opened snapshot after sync")
     # (b) an older one writes nothing
     m0 = ENC.stat().st_mtime_ns; r = A.evaluate(f"DASH.app.nbOps.openSnapshotFile('older.json', {json.dumps(snap('2026-11-03T08:00:00-06:00'))})"); A.evaluate("DASH.app.flush()")
@@ -38,7 +40,7 @@ with sync_playwright() as p:
     check(r is False and ENC.stat().st_mtime_ns == m0 and "future" in A.inner_text("#banner") and any("future.json" in x for x in A.evaluate("DASH.app.state.problems")), "(c) a future-dated snapshot is refused with a problem line")
     check(A.evaluate("DASH.app.state.snap.raw_generated_at") == "2026-11-03T09:45:00-06:00", "(c) the screen keeps the current snapshot")
     # (d) locked → Unlock first
-    A.click('.mtop:has-text("File")'); A.click('[data-act="encryption"]'); A.click('[data-v="lock"]'); A.wait_for_timeout(300)
+    A.click('.mtop:has-text("File")'); A.click('[data-act="encryption"]'); A.click('[data-v="lock"]'); A.wait_for_function("() => DASH.app.state.vault.locked", timeout=30000)
     m0 = ENC.stat().st_mtime_ns; r = A.evaluate(f"DASH.app.nbOps.openSnapshotFile('locked.json', {json.dumps(snap('2026-11-03T09:55:00-06:00'))})")
     check(r is False and "Unlock first" in A.inner_text("#banner") and ENC.stat().st_mtime_ns == m0, "(d) locked: refused with Unlock first, nothing written")
     # (e) never plaintext

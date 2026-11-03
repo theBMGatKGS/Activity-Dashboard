@@ -70,7 +70,7 @@ with sync_playwright() as p:
     # (h) Lock clears the token and the cache
     check(pg.evaluate("Object.keys(DASH.app.state.samCache).length") >= 2, "bullets cached in memory")
     pg.keyboard.press("Escape")
-    pg.click('.mtop:has-text("File")'); pg.click('[data-act="encryption"]'); pg.click('[data-v="lock"]'); pg.wait_for_timeout(300)
+    pg.click('.mtop:has-text("File")'); pg.click('[data-act="encryption"]'); pg.click('[data-v="lock"]'); pg.wait_for_function("() => DASH.app.state.vault.locked && DASH.app.state.nb === null", timeout=30000)
     check(pg.evaluate("DASH.app.state.nb === null && Object.keys(DASH.app.state.samCache).length === 0"), "(h) Lock: notebook client and bullets cache cleared")
     n2 = len(gh()); pg.evaluate("DASH.app.nbOps.openSamDrawer()"); drawer_state(pg)
     check("Unlock" in pg.inner_text("#samdrawer") and len(gh()) == n2, "locked: No access (unlock), no request")
@@ -82,7 +82,7 @@ with sync_playwright() as p:
     pg.keyboard.press("Escape"); pg.click('.mtop:has-text("File")'); pg.click('[data-act="links"]'); pg.wait_for_selector("#linksdlg")
     check(pg.input_value("#lk-src") == "crm/outbox/sam-report/{month}/sources.md", "(i) Links dialog keeps the sources default"); pg.click("#lk-cancel")
     NH.token(pg); check(pg.evaluate("DASH.app.state.nbState.k") == "ok", "a second browser adds its own token (one token per computer, never synced)")
-    pg.click('.mtop:has-text("File")'); pg.click('[data-act="notebook"]'); pg.wait_for_selector("#nbdlg"); pg.click("#nb-off"); pg.wait_for_timeout(300)
+    pg.click('.mtop:has-text("File")'); pg.click('[data-act="notebook"]'); pg.wait_for_selector("#nbdlg"); pg.click("#nb-off"); pg.wait_for_function("() => DASH.app.state.nb === null && !document.querySelector('#nbdlg')", timeout=30000)
     check(pg.evaluate("DASH.app.state.nb === null"), "Forget on this computer drops the client")
     c.close()
     # example mode: no requests

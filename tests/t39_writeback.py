@@ -17,7 +17,7 @@ Q = "?now=2026-11-03T10:00:00-06:00&machine=desk1&view=dashboard"
 OB = lambda pg: pg.evaluate("JSON.parse(JSON.stringify(DASH.app.state.outbox))")
 def send_ui(pg):
     pg.evaluate("DASH.app.nbOps.openOutbox()"); pg.wait_for_selector("#ob-send"); pg.click("#ob-send")
-    pg.wait_for_function("() => !document.querySelector('#samdrawer') || !document.querySelector('#ob-send') || document.querySelector('#ob-send').textContent", timeout=30000); pg.evaluate("DASH.app.flush()"); pg.wait_for_timeout(200)
+    pg.evaluate("DASH.app.nbOps.sendOutbox([])"); pg.evaluate("DASH.app.flush()")   # resolves once the send in flight settles
 def close(pg):
     if pg.query_selector("#samdrawer"): pg.keyboard.press("Escape")
 with sync_playwright() as p:
@@ -95,7 +95,7 @@ with sync_playwright() as p:
     check(not any(t in rest for t in ("Placeholder follow-up booked", "Placeholder update two", "Placeholder retry note", "Placeholder reload note", "Example retry", "Placeholder wrap-up note")), "(k) no plaintext note text in IndexedDB, localStorage or the Data folder")
     exp = json.dumps(pg.evaluate("DASH.db.exportAll()")); check("outbox" not in exp and "Placeholder" not in exp, "the Outbox is not in Export local data")
     # locked: Send disabled
-    pg.click('.mtop:has-text("File")'); pg.click('[data-act="encryption"]'); pg.click('[data-v="lock"]'); pg.wait_for_timeout(300)
+    pg.click('.mtop:has-text("File")'); pg.click('[data-act="encryption"]'); pg.click('[data-v="lock"]'); pg.wait_for_function("() => DASH.app.state.vault.locked && DASH.app.state.nb === null", timeout=30000)
     check(pg.evaluate("DASH.app.state.nb === null"), "Lock clears the notebook client")
     c.close(); b.close()
 check(not any(NH.NB_TOKEN in m for m in logs), "the token never appears in the console")

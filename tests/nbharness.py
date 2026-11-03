@@ -90,7 +90,7 @@ def encrypt(pg):
 def unlock(pg):
     pg.wait_for_function("() => document.querySelector('#vaultunlock') || (DASH.app && DASH.app.state.vault && DASH.app.state.vault.key)", timeout=60000)
     if pg.query_selector("#vaultunlock"): pg.fill("#vault-pass", PASS); pg.click("#vault-ok")
-    pg.wait_for_function("() => DASH.app.state.vault.key", timeout=60000)
+    pg.wait_for_function("() => DASH.app.state.vault.key", timeout=60000); pg.wait_for_function("() => DASH.app.state.snap", timeout=60000)
 def links(pg, repo=REPO_URL):
     pg.click('.mtop:has-text("File")'); pg.click('[data-act="links"]'); pg.wait_for_selector("#linksdlg"); pg.fill("#lk-repo", repo); pg.fill("#lk-vault", "Example Vault")
     pg.click("#lk-save"); pg.wait_for_selector("#linksdlg", state="detached", timeout=60000); pg.evaluate("DASH.app.flush()")
