@@ -165,18 +165,21 @@ with sync_playwright() as p:
     check(TOK["ipad"] not in raw and not any(s in raw for s in SECRETS) and "Owner/operator" not in raw, "iPad: no token or readable data in the browser's storage")
     # reload: reconnects with the remembered key and the encrypted token
     ipad.reload(); ready(ipad); check(ipad.evaluate("DASH.app.state.hubOnly === true") and ipad.evaluate(TOT) == pc.evaluate(TOT), "iPad reload: reconnects to GitHub by itself (remembered key, encrypted token)")
-    # 00.11.001 regression: a projects save through the hub (no Data folder).  00.10.001/00.11.000 wrote "<name>.enc.tmp", which the hub refuses.
-    got = ipad.evaluate("""(async () => { const S = DASH.app.state; S.projStore = { schema_version: 1, updated_at: '2026-01-01T00:00:00Z', plans: [] }; S.projExample = false;
-      await DASH.app.saveStore(); await DASH.app.flush();
-      const f = await (await S.dir.getFileHandle('projects-store.json.enc')).getFile();
-      return { prob: S.saveProblems['projects-store.json'] || null, all: Object.values(S.saveProblems).join(' | '), body: JSON.parse(await DASH.vault.decrypt(S.vault.key, S.vault.kr, await f.text(), 'projstore')) }; })()""")
-    check(got["prob"] is None and ".tmp" not in got["all"] and got["body"]["schema_version"] == 1 and got["body"]["updated_at"] != "2026-01-01T00:00:00Z" and hub_clean(), f"00.11.001 hub: a projects save goes through the hub with no .tmp name and reads back encrypted ({got['all']!r})")
-    # 00.11.001: edits cached on this device but never saved to the hub (the 00.10.001 refusal) are saved on their own after a reload
-    ipad.evaluate("DASH.db.set('projectsStore', { schema_version: 1, updated_at: '2026-11-02T10:57:00.000Z', plans: [] })"); ipad.reload(); ready(ipad)
-    for _ in range(3): ipad.evaluate("DASH.app.syncNow()"); ipad.evaluate("DASH.app.flush()"); ipad.wait_for_timeout(500)
-    hubst = ipad.evaluate("""(async () => { const S = DASH.app.state; const f = await (await S.dir.getFileHandle('projects-store.json.enc')).getFile();
-      return JSON.parse(await DASH.vault.decrypt(S.vault.key, S.vault.kr, await f.text(), 'projstore')).updated_at; })()""")
-    check(hubst >= "2026-11-02T10:57:00.000Z", f"00.11.001 hub: a newer cached projects store is pushed to the hub after a reload (hub updated_at {hubst})")
+    try:   # 00.11.002 (QA L5): an exception here is a clear FAIL and exit 1, not a bare traceback
+        # 00.11.001 regression: a projects save through the hub (no Data folder).  00.10.001/00.11.000 wrote "<name>.enc.tmp", which the hub refuses.
+        got = ipad.evaluate("""(async () => { const S = DASH.app.state; S.projStore = { schema_version: 1, updated_at: '2026-01-01T00:00:00Z', plans: [] }; S.projExample = false;
+          await DASH.app.saveStore(); await DASH.app.flush();
+          const f = await (await S.dir.getFileHandle('projects-store.json.enc')).getFile();
+          return { prob: S.saveProblems['projects-store.json'] || null, all: Object.values(S.saveProblems).join(' | '), body: JSON.parse(await DASH.vault.decrypt(S.vault.key, S.vault.kr, await f.text(), 'projstore')) }; })()""")
+        check(got["prob"] is None and ".tmp" not in got["all"] and got["body"]["schema_version"] == 1 and got["body"]["updated_at"] != "2026-01-01T00:00:00Z" and hub_clean(), f"00.11.001 hub: a projects save goes through the hub with no .tmp name and reads back encrypted ({got['all']!r})")
+        # 00.11.001: edits cached on this device but never saved to the hub (the 00.10.001 refusal) are saved on their own after a reload
+        ipad.evaluate("DASH.db.set('projectsStore', { schema_version: 1, updated_at: '2026-11-02T10:57:00.000Z', plans: [] })"); ipad.reload(); ready(ipad)
+        for _ in range(3): ipad.evaluate("DASH.app.syncNow()"); ipad.evaluate("DASH.app.flush()"); ipad.wait_for_timeout(500)
+        hubst = ipad.evaluate("""(async () => { const S = DASH.app.state; const f = await (await S.dir.getFileHandle('projects-store.json.enc')).getFile();
+          return JSON.parse(await DASH.vault.decrypt(S.vault.key, S.vault.kr, await f.text(), 'projstore')).updated_at; })()""")
+        check(hubst >= "2026-11-02T10:57:00.000Z", f"00.11.001 hub: a newer cached projects store is pushed to the hub after a reload (hub updated_at {hubst})")
+    except Exception as ex:
+        print(f"FAIL: t23 hub temp-file regression ({type(ex).__name__})"); sys.exit(1)
     # offline then back
     STATE["offline"] = True; ipad.evaluate("""(() => { const S = DASH.app.state; S.entries.push({ id: 'i-ipad-off', taskId: 'EX-2', eventId: null, date: '2026-10-19', minutes: 15, audience: 'Integrator/partner', subject: 'Training/education', account: 'Account D', source: 'manual', confirmed: true }); return DASH.app.commit(); })()""")
     ipad.evaluate("DASH.app.flush()"); ipad.evaluate("DASH.app.syncNow()")

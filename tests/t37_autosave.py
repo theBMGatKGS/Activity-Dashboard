@@ -28,10 +28,11 @@ def fs(op, name, text):
     if op == "read":
         if not pth.exists(): return None
         s2 = pth.stat(); return {"m": int(s2.st_mtime_ns // 1_000_000), "size": s2.st_size, "text": pth.read_text()}
+    if op == "write" and any(name.startswith(n) for n in FAILN): raise Exception("NoModificationAllowedError: file locked (test)")   # 00.11.002 (QA M1)
     if op == "write" and FAIL["on"] and name.startswith("time-"): raise Exception("NoModificationAllowedError: file locked (test)")
     if op == "write": t3 = data / f"{name}.{os.getpid()}-{time.time_ns()}.crswap"; t3.write_text(text); os.replace(t3, pth); return True
     if op == "remove": pth.unlink(missing_ok=True); return True
-FAIL = {"on": False}
+FAIL = {"on": False}; FAILN = set()
 def folder_text(): return "".join((data / n).read_text(errors="ignore") for n in os.listdir(data) if (data / n).is_file())
 def sync(pg): pg.evaluate("DASH.app.syncNow()"); pg.evaluate("DASH.app.flush()")
 def until(pg, pred, what, limit=60):
@@ -104,6 +105,52 @@ with sync_playwright() as p:
     t0 = time.time()
     while time.time() - t0 < 4 and pg.evaluate(FOLDER) != base + 5: pg.wait_for_timeout(200)   # well before the 5 s backoff
     check(pg.evaluate(FOLDER) == base + 5 and pg.evaluate("localStorage.getItem('dash-pending-v1')") is None, "a reopen retries the queued save right away (before the backoff timer)")
+    # ---------- 00.11.002: QA M1, M2, L1, L2, L3 ----------
+    PROJ = "(async () => { const S = DASH.app.state; S.projStore = { schema_version: 1, updated_at: new Date().toISOString(), plans: [] }; S.projExample = false; await DASH.app.saveStore(); await DASH.app.flush(); })()"
+    # M1 (a): a Projects write fails → kept on this computer; Reload is refused instead of dropping it
+    FAILN.add("projects-store"); pg.evaluate(PROJ); pg.evaluate("window.__t37mark = 1")
+    check(pg.evaluate("[...DASH.app.state.unsyncedStores]") == ["projects"] and pg.evaluate("localStorage.getItem('dash-unsynced-v1')") == '["projects"]', "M1: a failed Projects write is recorded (store names only in localStorage)")
+    # M2 (d): wording per store type
+    sp = pg.evaluate("DASH.app.state.saveProblems['u:projects']") or ""
+    check("will save at the next sync" in sp and "retrying on its own" not in sp and "save pending" in pg.inner_text("#sync") and "retrying save" not in pg.inner_text("#sync"), "M2: Projects → 'will save at the next sync' and chip '⚠ save pending'")
+    pg.click('.mtop:has-text("File")'); pg.click('[data-act="reload"]'); pg.wait_for_timeout(1500)
+    check(pg.evaluate("window.__t37mark") == 1 and "did not reload" in pg.inner_text("#banner") and "projects" in pg.inner_text("#banner"), "M1 (a): Reload refused while Projects is unsaved")
+    # M1 (b): locked → still refused; after unlock and a reload the store is pushed again from the persisted set
+    pg.click('.mtop:has-text("File")'); pg.click('[data-act="encryption"]'); pg.click('[data-v="lock"]'); pg.wait_for_timeout(300)
+    pg.evaluate("window.__t37mark = 2"); pg.click('.mtop:has-text("File")'); pg.click('[data-act="reload"]'); pg.wait_for_timeout(1500)
+    check(pg.evaluate("window.__t37mark") == 2 and "did not reload" in pg.inner_text("#banner"), "M1 (b): locked, Reload is still refused")
+    FAILN.clear(); pg.close(); pg = open_pg("08:20")
+    t0 = time.time()
+    while time.time() - t0 < 30 and pg.evaluate("DASH.app.state.unsyncedStores.size"): sync(pg); pg.wait_for_timeout(300)
+    check(pg.evaluate("DASH.app.state.unsyncedStores.size") == 0 and pg.evaluate("localStorage.getItem('dash-unsynced-v1')") is None and (data / "projects-store.json.enc").exists(), "M1: after the reload the persisted store is saved at the next sync and cleared")
+    # M2: a queued store (time) keeps 'retrying on its own'
+    FAIL["on"] = True; pg.evaluate(STOPPED); pg.wait_for_timeout(1500)
+    check("retrying on its own" in (pg.evaluate("DASH.app.state.saveProblems.write") or "") and "retrying save" in pg.inner_text("#sync"), "M2: time → 'retrying on its own' and chip '⟳ retrying save'")
+    # L1: a DB that closes on every op retries at 0 s once per backoff cycle, then 5, 15 s
+    pg.evaluate("DASH.app.state.retryLog.length = 0")
+    pg.evaluate("""(() => { const t = IDBDatabase.prototype.transaction; window.__t37t = t; let n = 0; IDBDatabase.prototype.transaction = function (...a) { if (a[1] === 'readwrite' && n++ % 2 === 0) this.close(); return t.apply(this, a); }; })()""")
+    for i in range(4): pg.evaluate(f"DASH.db.set('prefs', {{t37l1: {i}}}).catch(() => {{}})"); pg.wait_for_timeout(400)
+    pg.evaluate("(() => { IDBDatabase.prototype.transaction = window.__t37t; })()")
+    rl = pg.evaluate("DASH.app.state.retryLog"); n_re = pg.evaluate("DASH.db.reopenCount()")
+    check(rl.count(0) == 1 and rl[0] == 0 and all(x > 0 for x in rl[1:]), f"L1: four reopens kick exactly one 0 s retry; later retries back off ({rl})")
+    FAIL["on"] = False
+    t0 = time.time()
+    while time.time() - t0 < 60 and pg.evaluate("localStorage.getItem('dash-pending-v1')") is not None: pg.wait_for_timeout(500)
+    check(pg.evaluate("localStorage.getItem('dash-pending-v1')") is None, "L1: the queue clears once the folder works again")
+    # L2: the pending envelope is capped at 2 MB; over the cap reload is held with a problem line
+    FAIL["on"] = True
+    pg.evaluate("""(async () => { const S = DASH.app.state; S.tstore.entries['T-20261102-0fffffff'] = { id: 'T-20261102-0fffffff', date: '2026-11-02', start: null, minutes: 5, group: 'work', type: 'research', account: 'Internal', project: null, notes: 'x'.repeat(2500000), x_text: '', source: 'manual', updated_at: '2026-11-02T14:00:00Z' }; await DASH.app.timeOps.saveTime(); })()""")
+    pg.wait_for_timeout(800)
+    check("too large" in (pg.evaluate("DASH.app.state.saveProblems.pendingBig") or "") and pg.evaluate("DASH.app.state.pendingHeld"), "L2: over 2 MB → problem line 'Pending saves are too large…'")
+    pg.evaluate("window.__t37mark = 3"); pg.click('.mtop:has-text("File")'); pg.click('[data-act="reload"]'); pg.wait_for_timeout(1500)
+    check(pg.evaluate("window.__t37mark") == 3 and "too large" in pg.inner_text("#banner"), "L2: reload is held")
+    pg.evaluate("(async () => { const S = DASH.app.state; delete S.tstore.entries['T-20261102-0fffffff']; })()"); FAIL["on"] = False; pg.evaluate("DASH.app.timeOps.saveTime()"); pg.wait_for_timeout(1500)
+    check(not pg.evaluate("DASH.app.state.pendingHeld"), "L2: the hold clears once the next save succeeds")
+    # L3: one rejection through nested track() is counted once
+    n0 = pg.evaluate("DASH.app.qa.writeFailCount()")
+    pg.evaluate("(() => { const q = DASH.app.qa, p = Promise.reject(new Error('t37 L3 placeholder')); q.track(q.track(q.track(p))).catch(() => {}); })()"); pg.wait_for_timeout(300)
+    check(pg.evaluate("DASH.app.qa.writeFailCount()") - n0 == 1, "L3: a rejection passed through nested track() three times counts once")
+    pg.evaluate("DASH.app.qa.clearFails()")
     c.close(); b.close()
 check(not errors, "no page errors " + "; ".join(errors[:3]))
 print("T37 " + ("PASSED" if ok else "FAILED")); sys.exit(0 if ok else 1)

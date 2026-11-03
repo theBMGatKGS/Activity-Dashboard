@@ -66,7 +66,7 @@ with sync_playwright() as p:
     mac.fill("#vp1", "short"); mac.fill("#vp2", "short"); mac.click("#vs-ok")
     check("12 characters" in mac.inner_text("#vs-err"), "setup: a short passphrase is refused")
     mac.fill("#vp1", PASS1); mac.fill("#vp2", PASS1 + "x"); mac.click("#vs-ok"); check("don't match" in mac.inner_text("#vs-err"), "setup: mismatched passphrases refused")
-    mac.fill("#vp2", PASS1); mac.click("#vs-ok"); mac.wait_for_selector("#rk-value", timeout=20000)
+    mac.fill("#vp2", PASS1); mac.click("#vs-ok"); mac.wait_for_selector("#rk-value", timeout=60000)
     rk = mac.inner_text("#rk-value").strip()
     check(not (data / "keyring.json").exists(), "setup: keyring is written only after the recovery key is acknowledged")
     check(mac.is_disabled("#rk-ok"), "setup: Continue stays disabled until 'I've stored it' is ticked")

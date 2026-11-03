@@ -137,11 +137,11 @@ with sync_playwright() as p:
     raw = mac.evaluate("DASH.db.getRaw('links')"); check(raw and raw.get("dashCache") == 1 and "example-owner" not in json.dumps(raw), "Links are stored as an encrypted envelope")
     exp = mac.evaluate("DASH.db.exportAll().then(x => JSON.stringify(x))")
     check("example-owner" not in exp and "links" not in json.loads(exp) and "eventsStore" in json.loads(exp), "Links are never in File → Export local data (the events store is, like the accounts store)")
-    mac.click('.mtop:has-text("File")'); mac.click('[data-act="samLink"]'); mac.wait_for_selector("#samdlg")
-    hrefs = mac.eval_on_selector_all("#samdlg a.btn", "e => e.map(x => x.getAttribute('href'))")
-    check("September 2026" in mac.inner_text("#samdlg") and "obsidian://open?vault=Example%20Vault&file=reports%2Fsam-activity%2F2026-09" in hrefs and "https://github.com/example-owner/example-notebook/blob/main/reports/sam-activity/2026-09.md" in hrefs and any("crm/outbox/sam-report/2026-09/sources.md" in h for h in hrefs), f"SAM bullets: last month's notebook file and sources file, Obsidian and GitHub ({len(hrefs)} links)")
-    check(all(h.startswith(("obsidian://", "https://github.com/")) for h in hrefs) and mac.eval_on_selector_all("#samdlg a.btn", "e => e.every(x => x.rel.includes('noopener'))"), "SAM links: only obsidian:// and https://github.com/, opened with noopener")
-    mac.screenshot(path=str(SHOTS / "33g-sam-bullets.png")); mac.click("#sam-close")
+    mac.click('.mtop:has-text("File")'); mac.click('[data-act="samLink"]'); mac.wait_for_function("() => { const d = document.querySelector('#samdrawer'); return d && !d.querySelector('.sdskel'); }", timeout=20000)   # 00.11.002: the side drawer keeps the links
+    hrefs = mac.eval_on_selector_all("#samdrawer a.btn", "e => e.map(x => x.getAttribute('href'))")
+    check("September 2026" in mac.inner_text("#samdrawer") and "obsidian://open?vault=Example%20Vault&file=reports%2Fsam-activity%2F2026-09" in hrefs and "https://github.com/example-owner/example-notebook/blob/main/reports/sam-activity/2026-09.md" in hrefs and any("crm/outbox/sam-report/2026-09/sources.md" in h for h in hrefs), f"SAM bullets: last month's notebook file and sources file, Obsidian and GitHub ({len(hrefs)} links)")
+    check(all(h.startswith(("obsidian://", "https://github.com/")) for h in hrefs) and mac.eval_on_selector_all("#samdrawer a.btn", "e => e.every(x => x.rel.includes('noopener'))"), "SAM links: only obsidian:// and https://github.com/, opened with noopener")
+    mac.screenshot(path=str(SHOTS / "33g-sam-bullets.png")); mac.click("#sd-close")
     # reload: the answer and links survive; locked folder refuses the import
     mac.reload(); mac.wait_for_selector("#view-events"); mac.wait_for_function("() => DASH.app.state.vault.key && DASH.app.state.evStore", timeout=20000)   # remembered on this computer
     mac.click('.tab[data-view="events"]'); mac.wait_for_timeout(300)
